@@ -10,6 +10,7 @@ import SwiftUI
 @main
 struct LingXiApp: App {
     private let hotKeyManager = HotKeyManager()
+    private let panelManager = PanelManager()
 
     var body: some Scene {
         MenuBarExtra("LingXi", systemImage: "magnifyingglass") {
@@ -21,8 +22,8 @@ struct LingXiApp: App {
     }
 
     init() {
-        hotKeyManager.onHotKey = {
-            print("HotKey triggered: Toggle LingXi")
+        hotKeyManager.onHotKey = { [panelManager] in
+            panelManager.show()
         }
         hotKeyManager.start()
     }
