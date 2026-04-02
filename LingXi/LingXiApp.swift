@@ -9,6 +9,8 @@ import SwiftUI
 
 @main
 struct LingXiApp: App {
+    private let hotKeyManager = HotKeyManager()
+
     var body: some Scene {
         MenuBarExtra("LingXi", systemImage: "magnifyingglass") {
             Button("Quit LingXi") {
@@ -16,5 +18,12 @@ struct LingXiApp: App {
             }
             .keyboardShortcut("q")
         }
+    }
+
+    init() {
+        hotKeyManager.onHotKey = {
+            print("HotKey triggered: Toggle LingXi")
+        }
+        hotKeyManager.start()
     }
 }
