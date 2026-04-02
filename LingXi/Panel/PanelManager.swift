@@ -11,6 +11,7 @@ import SwiftUI
 @MainActor
 final class PanelManager {
     private var panel: FloatingPanel?
+    private let viewModel = SearchViewModel()
 
     func toggle() {
         if isVisible {
@@ -28,6 +29,7 @@ final class PanelManager {
         let activePanel = panel ?? createPanel()
         self.panel = activePanel
 
+        viewModel.clear()
         positionPanel(activePanel)
         activePanel.makeKeyAndOrderFront(nil)
     }
@@ -43,7 +45,9 @@ final class PanelManager {
 
     private func createPanel() -> FloatingPanel {
         let newPanel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 680, height: 60))
-        newPanel.contentView = NSHostingView(rootView: PanelContentView())
+        newPanel.contentView = NSHostingView(rootView: PanelContentView(viewModel: viewModel, onDismiss: { [weak self] in
+            self?.hide()
+        }))
         newPanel.onDismiss = { [weak self] in
             self?.hide()
         }
@@ -60,12 +64,29 @@ final class PanelManager {
 }
 
 private struct PanelContentView: View {
+    @ObservedObject var viewModel: SearchViewModel
+    var onDismiss: () -> Void
+    @FocusState private var isSearchFieldFocused: Bool
+
     var body: some View {
-        Text("LingXi")
-            .font(.system(size: 24, weight: .light))
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 18))
+                .foregroundStyle(.secondary)
+            TextField("Search...", text: $viewModel.query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 20))
+                .focused($isSearchFieldFocused)
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onExitCommand {
+            onDismiss()
+        }
+        .onAppear {
+            isSearchFieldFocused = true
+        }
     }
 }
