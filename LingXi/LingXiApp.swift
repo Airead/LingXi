@@ -10,8 +10,11 @@ import SwiftUI
 @main
 struct LingXiApp: App {
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        MenuBarExtra("LingXi", systemImage: "magnifyingglass") {
+            Button("Quit LingXi") {
+                NSApplication.shared.terminate(nil)
+            }
+            .keyboardShortcut("q")
         }
     }
 }
