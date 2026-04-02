@@ -27,6 +27,8 @@ final class FloatingPanel: NSPanel {
         hasShadow = true
     }
 
+    override var canBecomeKey: Bool { true }
+
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Esc
             onDismiss?()
