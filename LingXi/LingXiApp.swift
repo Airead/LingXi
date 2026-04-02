@@ -23,7 +23,7 @@ struct LingXiApp: App {
 
     init() {
         hotKeyManager.onHotKey = { [panelManager] in
-            panelManager.show()
+            panelManager.toggle()
         }
         hotKeyManager.start()
     }

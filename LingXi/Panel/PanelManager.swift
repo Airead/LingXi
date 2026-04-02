@@ -12,6 +12,14 @@ import SwiftUI
 final class PanelManager {
     private var panel: FloatingPanel?
 
+    func toggle() {
+        if isVisible {
+            hide()
+        } else {
+            show()
+        }
+    }
+
     func show() {
         if let panel, panel.isVisible {
             return
@@ -25,6 +33,7 @@ final class PanelManager {
     }
 
     func hide() {
+        guard isVisible else { return }
         panel?.orderOut(nil)
     }
 
@@ -35,6 +44,9 @@ final class PanelManager {
     private func createPanel() -> FloatingPanel {
         let newPanel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 680, height: 60))
         newPanel.contentView = NSHostingView(rootView: PanelContentView())
+        newPanel.onDismiss = { [weak self] in
+            self?.hide()
+        }
         return newPanel
     }
 
