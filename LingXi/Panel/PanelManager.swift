@@ -60,6 +60,15 @@ final class PanelManager {
         newPanel.onDismiss = { [weak self] in
             self?.hide()
         }
+        newPanel.onArrowUp = { [weak viewModel] in
+            viewModel?.moveUp()
+        }
+        newPanel.onArrowDown = { [weak viewModel] in
+            viewModel?.moveDown()
+        }
+        newPanel.onReturn = { [weak viewModel] in
+            viewModel?.confirm()
+        }
 
         heightObserver = viewModel.$results
             .sink { [weak self, weak newPanel] results in
@@ -117,10 +126,19 @@ private struct PanelContentView: View {
 
             if !viewModel.results.isEmpty {
                 Divider()
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(viewModel.results) { result in
-                            SearchResultRow(result: result)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, result in
+                                SearchResultRow(result: result, isSelected: index == viewModel.selectedIndex)
+                                    .id(result.id)
+                            }
+                        }
+                    }
+                    .onChange(of: viewModel.selectedIndex) { _, newIndex in
+                        guard viewModel.results.indices.contains(newIndex) else { return }
+                        withAnimation {
+                            proxy.scrollTo(viewModel.results[newIndex].id, anchor: nil)
                         }
                     }
                 }
@@ -139,12 +157,13 @@ private struct PanelContentView: View {
 
 private struct SearchResultRow: View {
     let result: SearchResult
+    var isSelected: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: result.icon)
                 .font(.system(size: 20))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: 28, alignment: .center)
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.name)
@@ -157,6 +176,8 @@ private struct SearchResultRow: View {
         }
         .padding(.horizontal, 16)
         .frame(height: PanelLayout.rowHeight)
+        .background(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
     }
 }

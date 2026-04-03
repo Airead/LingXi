@@ -9,6 +9,9 @@ import AppKit
 
 final class FloatingPanel: NSPanel {
     var onDismiss: (() -> Void)?
+    var onArrowUp: (() -> Void)?
+    var onArrowDown: (() -> Void)?
+    var onReturn: (() -> Void)?
 
     init(contentRect: NSRect) {
         super.init(
@@ -29,12 +32,26 @@ final class FloatingPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // Esc
-            onDismiss?()
-        } else {
-            super.keyDown(with: event)
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown {
+            switch event.keyCode {
+            case 53: // Esc
+                onDismiss?()
+                return
+            case 126: // ↑
+                onArrowUp?()
+                return
+            case 125: // ↓
+                onArrowDown?()
+                return
+            case 36: // Return
+                onReturn?()
+                return
+            default:
+                break
+            }
         }
+        super.sendEvent(event)
     }
 
     override func resignKey() {
