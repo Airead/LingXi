@@ -9,10 +9,11 @@ enum SearchResultType {
 
 struct SearchResult: Identifiable {
     let id = UUID()
+    let itemId: String
     let icon: NSImage?
     let name: String
     let subtitle: String
     let resultType: SearchResultType
     let url: URL?
-    let score: Double
+    var score: Double
 }

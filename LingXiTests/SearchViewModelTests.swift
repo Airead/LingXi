@@ -123,7 +123,7 @@ struct SearchViewModelTests {
     @Test func confirmReturnsTrueForApplicationWithURL() async {
         let appURL = URL(fileURLWithPath: "/Applications/Safari.app")
         let provider = StubSearchProvider(results: [
-            SearchResult(icon: nil, name: "TestApp", subtitle: "Test",
+            SearchResult(itemId: "com.test.app", icon: nil, name: "TestApp", subtitle: "Test",
                          resultType: .application, url: appURL, score: 1.0),
         ])
         let mockWorkspace = MockWorkspaceOpener()
@@ -147,5 +147,57 @@ struct SearchViewModelTests {
         #expect(vm.query.isEmpty)
         #expect(vm.results.isEmpty)
         #expect(vm.selectedIndex == 0)
+    }
+
+    // MARK: - Usage frequency integration
+
+    @Test func confirmRecordsUsage() async {
+        let appURL = URL(fileURLWithPath: "/Applications/Safari.app")
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "com.test.app", icon: nil, name: "TestApp", subtitle: "Test",
+                         resultType: .application, url: appURL, score: 1.0),
+        ])
+        let tracker = UsageTracker(databasePath: ":memory:")
+        let mockWorkspace = MockWorkspaceOpener()
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = SearchViewModel(router: router, workspace: mockWorkspace, usageTracker: tracker, debounceMilliseconds: 0)
+        vm.query = "Test"
+        await Task.yield()
+        vm.confirm()
+        #expect(tracker.score(query: "Test", itemId: "com.test.app") == 1)
+    }
+
+    @Test func usageBoostsResultOrder() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "app.first", icon: nil, name: "First", subtitle: "",
+                         resultType: .application, url: nil, score: 100.0),
+            SearchResult(itemId: "app.second", icon: nil, name: "Second", subtitle: "",
+                         resultType: .application, url: nil, score: 50.0),
+        ])
+        let tracker = UsageTracker(databasePath: ":memory:")
+        // Record enough usage for "Second" to overtake "First"
+        for _ in 0..<60 {
+            tracker.record(query: "test", itemId: "app.second")
+        }
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = SearchViewModel(router: router, usageTracker: tracker, debounceMilliseconds: 0)
+        vm.query = "test"
+        await Task.yield()
+        #expect(vm.results.first?.itemId == "app.second")
+    }
+
+    @Test func noUsageDataPreservesOriginalOrder() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "app.first", icon: nil, name: "First", subtitle: "",
+                         resultType: .application, url: nil, score: 100.0),
+            SearchResult(itemId: "app.second", icon: nil, name: "Second", subtitle: "",
+                         resultType: .application, url: nil, score: 50.0),
+        ])
+        let tracker = UsageTracker(databasePath: ":memory:")
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = SearchViewModel(router: router, usageTracker: tracker, debounceMilliseconds: 0)
+        vm.query = "test"
+        await Task.yield()
+        #expect(vm.results.first?.itemId == "app.first")
     }
 }

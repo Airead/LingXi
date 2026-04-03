@@ -55,7 +55,8 @@ final class ApplicationSearchProvider: SearchProvider {
     func search(query: String) async -> [SearchResult] {
         scoredResults(from: apps, query: query, names: \.searchableNames) { app, score in
             let icon = iconForApp(at: app.url)
-            return SearchResult(icon: icon, name: app.name, subtitle: app.url.path,
+            let itemId = app.bundleIdentifier.isEmpty ? app.url.path : app.bundleIdentifier
+            return SearchResult(itemId: itemId, icon: icon, name: app.name, subtitle: app.url.path,
                                 resultType: .application, url: app.url, score: score)
         }
     }

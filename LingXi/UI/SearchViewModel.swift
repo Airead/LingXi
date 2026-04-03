@@ -11,12 +11,17 @@ final class SearchViewModel: ObservableObject {
 
     private let router: SearchRouter
     private let workspace: WorkspaceOpening
+    private let usageTracker: UsageTracker
     private let debounceNanoseconds: UInt64
+    private let usageBoostPerUse: Double = 1.0
+    private let usageBoostCap: Int = 50
     private var searchTask: Task<Void, Never>?
 
-    init(router: SearchRouter? = nil, workspace: WorkspaceOpening = NSWorkspace.shared, debounceMilliseconds: Int = 0) {
+    init(router: SearchRouter? = nil, workspace: WorkspaceOpening = NSWorkspace.shared,
+         usageTracker: UsageTracker? = nil, debounceMilliseconds: Int = 0) {
         self.router = router ?? SearchRouter(defaultProvider: ApplicationSearchProvider())
         self.workspace = workspace
+        self.usageTracker = usageTracker ?? UsageTracker()
         self.debounceNanoseconds = UInt64(debounceMilliseconds) * 1_000_000
     }
 
@@ -41,12 +46,30 @@ final class SearchViewModel: ObservableObject {
 
         guard let url = selected.url else { return false }
 
+        let opened: Bool
         switch selected.resultType {
         case .application:
-            return workspace.open(url)
+            opened = workspace.open(url)
         default:
-            return false
+            opened = false
         }
+
+        if opened {
+            usageTracker.record(query: query, itemId: selected.itemId)
+        }
+        return opened
+    }
+
+    private func boostByUsage(results: [SearchResult], query: String) -> [SearchResult] {
+        let usageCounts = usageTracker.scores(query: query, itemIds: results.map(\.itemId))
+        guard !usageCounts.isEmpty else { return results }
+        var boosted = results
+        for i in boosted.indices {
+            let count = usageCounts[boosted[i].itemId] ?? 0
+            boosted[i].score += Double(min(count, usageBoostCap)) * usageBoostPerUse
+        }
+        boosted.sort { $0.score > $1.score }
+        return boosted
     }
 
     private func filterResults() {
@@ -66,7 +89,7 @@ final class SearchViewModel: ObservableObject {
             }
             let searchResults = await router.search(rawQuery: currentQuery)
             guard !Task.isCancelled, self.query == currentQuery else { return }
-            self.results = searchResults
+            self.results = self.boostByUsage(results: searchResults, query: currentQuery)
             self.selectedIndex = 0
         }
     }
