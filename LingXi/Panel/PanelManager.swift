@@ -71,7 +71,7 @@ final class PanelManager {
         }
 
         heightObserver = viewModel.$results
-            .sink { [weak self, weak newPanel] results in
+            .sink { [weak self, weak newPanel] (results: [SearchResult]) in
                 guard let self, let panel = newPanel else { return }
                 self.updatePanelHeight(panel, resultCount: results.count)
             }
@@ -161,10 +161,18 @@ private struct SearchResultRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: result.icon)
-                .font(.system(size: 20))
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .frame(width: 28, alignment: .center)
+            Group {
+                if let icon = result.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } else {
+                    Image(systemName: "doc")
+                        .font(.system(size: 20))
+                        .foregroundStyle(isSelected ? .primary : .secondary)
+                }
+            }
+            .frame(width: 28, height: 28, alignment: .center)
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.name)
                     .font(.system(size: 15))

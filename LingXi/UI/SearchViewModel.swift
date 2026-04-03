@@ -9,18 +9,14 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var results: [SearchResult] = []
     @Published var selectedIndex: Int = 0
 
-    private let mockData: [SearchResult] = [
-        SearchResult(icon: "safari", name: "Safari", subtitle: "Web Browser"),
-        SearchResult(icon: "note.text", name: "Notes", subtitle: "Apple Notes"),
-        SearchResult(icon: "plus.forwardslash.minus", name: "Calculator", subtitle: "Utility"),
-        SearchResult(icon: "calendar", name: "Calendar", subtitle: "Apple Calendar"),
-        SearchResult(icon: "envelope", name: "Mail", subtitle: "Apple Mail"),
-        SearchResult(icon: "map", name: "Maps", subtitle: "Apple Maps"),
-        SearchResult(icon: "gear", name: "System Settings", subtitle: "Preferences"),
-        SearchResult(icon: "terminal", name: "Terminal", subtitle: "Utility"),
-        SearchResult(icon: "music.note", name: "Music", subtitle: "Apple Music"),
-        SearchResult(icon: "photo", name: "Photos", subtitle: "Apple Photos"),
-    ]
+    private let router: SearchRouter
+    private let debounceNanoseconds: UInt64
+    private var searchTask: Task<Void, Never>?
+
+    init(router: SearchRouter? = nil, debounceMilliseconds: Int = 0) {
+        self.router = router ?? SearchRouter(defaultProvider: MockSearchProvider())
+        self.debounceNanoseconds = UInt64(debounceMilliseconds) * 1_000_000
+    }
 
     func clear() {
         query = ""
@@ -43,12 +39,24 @@ final class SearchViewModel: ObservableObject {
     }
 
     private func filterResults() {
+        searchTask?.cancel()
+
         guard !query.isEmpty else {
             results = []
             selectedIndex = 0
             return
         }
-        results = mockData.filter { $0.name.localizedCaseInsensitiveContains(query) }
-        selectedIndex = 0
+
+        let currentQuery = query
+        searchTask = Task {
+            if debounceNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: debounceNanoseconds)
+                guard !Task.isCancelled else { return }
+            }
+            let searchResults = await router.search(rawQuery: currentQuery)
+            guard !Task.isCancelled, self.query == currentQuery else { return }
+            self.results = searchResults
+            self.selectedIndex = 0
+        }
     }
 }
