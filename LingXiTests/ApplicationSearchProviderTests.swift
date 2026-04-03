@@ -84,7 +84,36 @@ struct ApplicationSearchProviderTests {
             Issue.record("Expected results for 'Sys'")
             return
         }
-        #expect(first.score == SearchScore.prefixMatch)
+        #expect(first.score == FuzzyMatch.prefixScore)
+    }
+
+    // MARK: - Fuzzy matching
+
+    @Test func initialsMatchFindsApp() async {
+        // "ss" matches initials of "System Settings"
+        let results = await Self.provider.search(query: "ss")
+        #expect(results.contains { $0.name == "System Settings" })
+        let ss = results.first { $0.name == "System Settings" }
+        #expect(ss?.score == FuzzyMatch.initialsScore)
+    }
+
+    @Test func scatteredMatchFindsApp() async {
+        // "sfri" scattered in "Safari"
+        let results = await Self.provider.search(query: "sfri")
+        #expect(results.contains { $0.name == "Safari" })
+        let safari = results.first { $0.name == "Safari" }
+        #expect(safari?.score == FuzzyMatch.scatteredScore)
+    }
+
+    @Test func fuzzyMatchRanking() async {
+        // "cal" is prefix of "Calculator" (100) but scattered in "LinkAlias" would be deduped
+        let results = await Self.provider.search(query: "cal")
+        guard let first = results.first else {
+            Issue.record("Expected results for 'cal'")
+            return
+        }
+        #expect(first.name == "Calculator")
+        #expect(first.score == FuzzyMatch.prefixScore)
     }
 
     @Test func hiddenAppsAreExcluded() async {
