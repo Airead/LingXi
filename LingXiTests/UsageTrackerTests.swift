@@ -5,8 +5,7 @@ import Testing
 struct UsageTrackerTests {
 
     private func makeTracker() -> UsageTracker {
-        // Use in-memory database for tests
-        UsageTracker(databasePath: ":memory:")
+        UsageTracker()
     }
 
     // MARK: - Basic recording and scoring
@@ -100,11 +99,13 @@ struct UsageTrackerTests {
         defer { try? FileManager.default.removeItem(atPath: dbPath) }
 
         do {
-            let tracker = UsageTracker(databasePath: dbPath)
+            let db = DatabaseManager(databasePath: dbPath)
+            let tracker = UsageTracker(database: db)
             tracker.record(query: "saf", itemId: "com.apple.Safari")
         }
 
-        let tracker = UsageTracker(databasePath: dbPath)
+        let db = DatabaseManager(databasePath: dbPath)
+        let tracker = UsageTracker(database: db)
         #expect(tracker.score(query: "saf", itemId: "com.apple.Safari") == 1)
     }
 
@@ -156,19 +157,15 @@ struct UsageTrackerTests {
 
     // MARK: - Thread safety
 
-    @Test func concurrentAccessIsThreadSafe() async {
+    @Test func concurrentAccessIsThreadSafe() {
         let tracker = makeTracker()
         let iterations = 100
 
-        await withTaskGroup(of: Void.self) { group in
-            for i in 0..<iterations {
-                group.addTask {
-                    tracker.record(query: "saf", itemId: "com.apple.Safari")
-                    _ = tracker.score(query: "saf", itemId: "com.apple.Safari")
-                    tracker.record(query: "chr", itemId: "item.\(i)")
-                    _ = tracker.scores(query: "chr", itemIds: ["item.\(i)"])
-                }
-            }
+        DispatchQueue.concurrentPerform(iterations: iterations) { i in
+            tracker.record(query: "saf", itemId: "com.apple.Safari")
+            _ = tracker.score(query: "saf", itemId: "com.apple.Safari")
+            tracker.record(query: "chr", itemId: "item.\(i)")
+            _ = tracker.scores(query: "chr", itemIds: ["item.\(i)"])
         }
 
         #expect(tracker.score(query: "saf", itemId: "com.apple.Safari") == iterations)

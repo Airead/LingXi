@@ -19,7 +19,9 @@ private enum PanelLayout {
 @MainActor
 final class PanelManager {
     private var panel: FloatingPanel?
-    private let viewModel = SearchViewModel()
+    private let viewModel = SearchViewModel(
+        database: DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
+    )
     private var heightObserver: AnyCancellable?
 
     func toggle() {

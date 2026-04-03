@@ -1,13 +1,13 @@
 import AppKit
 
-enum SearchResultType {
+enum SearchResultType: Sendable {
     case application
     case file
     case command
     case bookmark
 }
 
-enum ActionModifier: Hashable, Sendable {
+enum ActionModifier: Int, Hashable, Sendable {
     case command
     case option
     case control
@@ -18,7 +18,7 @@ struct ModifierAction: Sendable {
     let action: @MainActor @Sendable (SearchResult) -> Bool
 }
 
-struct SearchResult: Identifiable {
+struct SearchResult: Identifiable, Sendable {
     let id = UUID()
     let itemId: String
     let icon: NSImage?

@@ -4,15 +4,23 @@ import SwiftUI
 @MainActor
 final class SearchViewModel: ObservableObject {
     @Published var query: String = "" {
-        didSet { filterResults() }
+        didSet { onQueryChanged() }
     }
     @Published private(set) var results: [SearchResult] = []
     @Published var selectedIndex: Int = 0
     @Published var activeModifiers: Set<ActionModifier> = []
 
+    private struct HistoryBrowsing {
+        let entries: [String]
+        var index: Int
+    }
+
+    private var historyBrowsing: HistoryBrowsing?
+
     private let router: SearchRouter
     private let workspace: WorkspaceOpening
     private let usageTracker: UsageTracker
+    private let queryHistory: QueryHistory
     private let debounceNanoseconds: UInt64
     private let usageBoostPerUse: Double = 1.0
     private let usageBoostCap: Int = 50
@@ -22,26 +30,42 @@ final class SearchViewModel: ObservableObject {
     private var originalScores: [String: Double] = [:]
     private var cachedUsageCounts: [String: Int]?
 
+    private var isSettingHistoryQuery = false
+
     init(router: SearchRouter? = nil, workspace: WorkspaceOpening = NSWorkspace.shared,
-         usageTracker: UsageTracker? = nil, debounceMilliseconds: Int = 0) {
+         database: DatabaseManager? = nil,
+         debounceMilliseconds: Int = 0) {
+        let db = database ?? DatabaseManager()
         self.router = router ?? SearchRouter(defaultProvider: ApplicationSearchProvider())
         self.workspace = workspace
-        self.usageTracker = usageTracker ?? UsageTracker()
+        self.usageTracker = UsageTracker(database: db)
+        self.queryHistory = QueryHistory(database: db)
         self.debounceNanoseconds = UInt64(debounceMilliseconds) * 1_000_000
     }
 
     func clear() {
+        exitHistoryMode()
         query = ""
     }
 
+    var historyIndex: Int? { historyBrowsing?.index }
+
     func moveUp() {
-        guard !results.isEmpty, selectedIndex > 0 else { return }
-        selectedIndex -= 1
+        if query.isEmpty || historyBrowsing != nil {
+            historyUp()
+        } else {
+            guard !results.isEmpty, selectedIndex > 0 else { return }
+            selectedIndex -= 1
+        }
     }
 
     func moveDown() {
-        guard !results.isEmpty, selectedIndex < results.count - 1 else { return }
-        selectedIndex += 1
+        if historyBrowsing != nil {
+            historyDown()
+        } else {
+            guard !results.isEmpty, selectedIndex < results.count - 1 else { return }
+            selectedIndex += 1
+        }
     }
 
     @discardableResult
@@ -49,11 +73,12 @@ final class SearchViewModel: ObservableObject {
         guard results.indices.contains(selectedIndex) else { return false }
         let selected = results[selectedIndex]
 
+        let currentQuery = query
+        exitHistoryMode()
+
         if let modifierAction = selected.resolveModifierAction(for: modifiers) {
             let executed = modifierAction.action(selected)
-            if executed {
-                usageTracker.record(query: query, itemId: selected.itemId)
-            }
+            if executed { recordExecution(query: currentQuery, itemId: selected.itemId) }
             return executed
         }
 
@@ -67,10 +92,60 @@ final class SearchViewModel: ObservableObject {
             opened = false
         }
 
-        if opened {
-            usageTracker.record(query: query, itemId: selected.itemId)
-        }
+        if opened { recordExecution(query: currentQuery, itemId: selected.itemId) }
         return opened
+    }
+
+    private func recordExecution(query: String, itemId: String) {
+        usageTracker.record(query: query, itemId: itemId)
+        queryHistory.record(query)
+    }
+
+    // MARK: - History browsing
+
+    private func historyUp() {
+        if historyBrowsing == nil {
+            let entries = queryHistory.entries()
+            guard !entries.isEmpty else { return }
+            historyBrowsing = HistoryBrowsing(entries: entries, index: 0)
+            setQueryFromHistory()
+        } else if let browsing = historyBrowsing, browsing.index + 1 < browsing.entries.count {
+            historyBrowsing?.index = browsing.index + 1
+            setQueryFromHistory()
+        }
+    }
+
+    private func historyDown() {
+        guard let browsing = historyBrowsing else { return }
+        if browsing.index - 1 >= 0 {
+            historyBrowsing?.index = browsing.index - 1
+            setQueryFromHistory()
+        } else {
+            exitHistoryMode()
+            isSettingHistoryQuery = true
+            defer { isSettingHistoryQuery = false }
+            query = ""
+        }
+    }
+
+    private func setQueryFromHistory() {
+        guard let browsing = historyBrowsing else { return }
+        isSettingHistoryQuery = true
+        defer { isSettingHistoryQuery = false }
+        query = browsing.entries[browsing.index]
+    }
+
+    private func exitHistoryMode() {
+        historyBrowsing = nil
+    }
+
+    // MARK: - Query change handling
+
+    private func onQueryChanged() {
+        if !isSettingHistoryQuery && historyBrowsing != nil {
+            exitHistoryMode()
+        }
+        filterResults()
     }
 
     private func filterResults() {
@@ -112,14 +187,9 @@ final class SearchViewModel: ObservableObject {
         let selectedItemId = results.indices.contains(selectedIndex) ? results[selectedIndex].itemId : nil
 
         for result in incoming {
-            if let existing = originalScores[result.itemId] {
-                originalScores[result.itemId] = max(existing, result.score)
-            } else {
-                originalScores[result.itemId] = result.score
-            }
+            originalScores[result.itemId] = max(originalScores[result.itemId, default: 0], result.score)
         }
 
-        // Dedup by itemId (keep existing over incoming), then append new items
         let existingIds = Set(results.map(\.itemId))
         var merged = results
         for item in incoming where !existingIds.contains(item.itemId) {

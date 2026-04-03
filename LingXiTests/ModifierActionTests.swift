@@ -4,6 +4,7 @@ import Testing
 
 // MARK: - SearchResult.displaySubtitle tests
 
+@MainActor
 @Suite struct DisplaySubtitleTests {
 
     @Test func returnsOriginalSubtitleWhenNoModifiers() {
@@ -129,7 +130,8 @@ import Testing
 
     @Test func confirmModifierActionRecordsUsage() async {
         let appURL = URL(fileURLWithPath: "/Applications/Test.app")
-        let tracker = UsageTracker(databasePath: ":memory:")
+        let db = DatabaseManager()
+        let tracker = UsageTracker(database: db)
         let provider = StubSearchProvider(results: [
             SearchResult(
                 itemId: "test.app", icon: nil, name: "Test", subtitle: "path",
@@ -141,7 +143,7 @@ import Testing
         ])
         let workspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: workspace, usageTracker: tracker, debounceMilliseconds: 0)
+        let vm = SearchViewModel(router: router, workspace: workspace, database: db, debounceMilliseconds: 0)
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
 

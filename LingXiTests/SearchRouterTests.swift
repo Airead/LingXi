@@ -50,6 +50,7 @@ private struct TimeoutConfiguredProvider: SearchProvider {
 
 // MARK: - Basic routing tests
 
+@MainActor
 struct SearchRouterTests {
 
     @Test func routeWithNoPrefix() async {
@@ -86,6 +87,7 @@ struct SearchRouterTests {
 
 // MARK: - Multi-provider parallel tests
 
+@MainActor
 struct SearchRouterIncrementalTests {
 
     @Test func multipleDefaultProvidersReturnMergedResults() async {

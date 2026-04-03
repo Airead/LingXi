@@ -169,10 +169,11 @@ struct SearchViewModelTests {
             SearchResult(itemId: "com.test.app", icon: nil, name: "TestApp", subtitle: "Test",
                          resultType: .application, url: appURL, score: 1.0),
         ])
-        let tracker = UsageTracker(databasePath: ":memory:")
+        let db = DatabaseManager()
+        let tracker = UsageTracker(database: db)
         let mockWorkspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: mockWorkspace, usageTracker: tracker, debounceMilliseconds: 0)
+        let vm = SearchViewModel(router: router, workspace: mockWorkspace, database: db, debounceMilliseconds: 0)
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
         vm.confirm()
@@ -186,13 +187,14 @@ struct SearchViewModelTests {
             SearchResult(itemId: "app.second", icon: nil, name: "Second", subtitle: "",
                          resultType: .application, url: nil, score: 50.0),
         ])
-        let tracker = UsageTracker(databasePath: ":memory:")
+        let db = DatabaseManager()
+        let tracker = UsageTracker(database: db)
         // Record enough usage for "Second" to overtake "First" (50 + 50 boost = 100 > 80)
         for _ in 0..<60 {
             tracker.record(query: "test", itemId: "app.second")
         }
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, usageTracker: tracker, debounceMilliseconds: 0)
+        let vm = SearchViewModel(router: router, database: db, debounceMilliseconds: 0)
         vm.query = "test"
         await waitUntil { vm.results.count == 2 }
         #expect(vm.results.first?.itemId == "app.second")
@@ -205,9 +207,8 @@ struct SearchViewModelTests {
             SearchResult(itemId: "app.second", icon: nil, name: "Second", subtitle: "",
                          resultType: .application, url: nil, score: 50.0),
         ])
-        let tracker = UsageTracker(databasePath: ":memory:")
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, usageTracker: tracker, debounceMilliseconds: 0)
+        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = "test"
         await waitUntil { vm.results.count == 2 }
         #expect(vm.results.first?.itemId == "app.first")
@@ -312,5 +313,135 @@ struct SearchViewModelTests {
         await waitUntil { vm.results.isEmpty }
         #expect(vm.results.isEmpty)
         #expect(vm.selectedIndex == 0)
+    }
+
+    // MARK: - Query history browsing
+
+    private func makeHistoryViewModel(
+        historyEntries: [String],
+        provider: SearchProvider? = nil
+    ) -> SearchViewModel {
+        let db = DatabaseManager()
+        let history = QueryHistory(database: db)
+        for entry in historyEntries.reversed() {
+            history.record(entry)
+        }
+        let router = SearchRouter(defaultProvider: provider ?? MockSearchProvider())
+        return SearchViewModel(
+            router: router,
+            database: db,
+            debounceMilliseconds: 0
+        )
+    }
+
+    @Test func moveUpOnEmptyQueryBrowsesHistory() {
+        let vm = makeHistoryViewModel(historyEntries: ["recent", "older", "oldest"])
+        #expect(vm.query.isEmpty)
+
+        vm.moveUp()
+        #expect(vm.query == "recent")
+        #expect(vm.historyIndex == 0)
+
+        vm.moveUp()
+        #expect(vm.query == "older")
+        #expect(vm.historyIndex == 1)
+
+        vm.moveUp()
+        #expect(vm.query == "oldest")
+        #expect(vm.historyIndex == 2)
+    }
+
+    @Test func moveUpClampsAtOldestHistory() {
+        let vm = makeHistoryViewModel(historyEntries: ["only"])
+        vm.moveUp()
+        #expect(vm.query == "only")
+        vm.moveUp()
+        #expect(vm.query == "only")
+        #expect(vm.historyIndex == 0)
+    }
+
+    @Test func moveDownReturnsToMoreRecentHistory() {
+        let vm = makeHistoryViewModel(historyEntries: ["recent", "older"])
+        vm.moveUp() // "recent"
+        vm.moveUp() // "older"
+        vm.moveDown()
+        #expect(vm.query == "recent")
+        #expect(vm.historyIndex == 0)
+    }
+
+    @Test func moveDownPastRecentRestoresEmptyInput() {
+        let vm = makeHistoryViewModel(historyEntries: ["recent"])
+        vm.moveUp()
+        #expect(vm.query == "recent")
+        vm.moveDown()
+        #expect(vm.query.isEmpty)
+        #expect(vm.historyIndex == nil)
+    }
+
+    @Test func moveUpDoesNothingWhenNoHistory() {
+        let vm = makeHistoryViewModel(historyEntries: [])
+        vm.moveUp()
+        #expect(vm.query.isEmpty)
+        #expect(vm.historyIndex == nil)
+    }
+
+    @Test func typingDuringHistoryExitsHistoryMode() {
+        let vm = makeHistoryViewModel(historyEntries: ["recent", "older"])
+        vm.moveUp() // Enter history mode
+        #expect(vm.historyIndex != nil)
+
+        vm.query = "user typed"
+        #expect(vm.historyIndex == nil)
+    }
+
+    @Test func historyFillTriggersSearch() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "app1", icon: nil, name: "App", subtitle: "",
+                         resultType: .application, url: nil, score: 1.0),
+        ])
+        let vm = makeHistoryViewModel(historyEntries: ["App"], provider: provider)
+        vm.moveUp()
+        #expect(vm.query == "App")
+        await waitUntil { !vm.results.isEmpty }
+        #expect(!vm.results.isEmpty)
+    }
+
+    @Test func moveUpWithNonEmptyQueryNavigatesResults() async {
+        let vm = await makeViewModel(query: "a")
+        guard vm.results.count > 1 else { return }
+        vm.moveDown()
+        let indexAfterDown = vm.selectedIndex
+        vm.moveUp()
+        #expect(vm.selectedIndex == indexAfterDown - 1)
+        #expect(vm.historyIndex == nil)
+    }
+
+    @Test func confirmRecordsQueryHistory() async {
+        let appURL = URL(fileURLWithPath: "/Applications/Safari.app")
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "com.test.app", icon: nil, name: "TestApp", subtitle: "Test",
+                         resultType: .application, url: appURL, score: 1.0),
+        ])
+        let db = DatabaseManager()
+        let history = QueryHistory(database: db)
+        let mockWorkspace = MockWorkspaceOpener()
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = SearchViewModel(
+            router: router, workspace: mockWorkspace,
+            database: db, debounceMilliseconds: 0
+        )
+        vm.query = "Test"
+        await waitUntil { !vm.results.isEmpty }
+        vm.confirm()
+        #expect(history.entries() == ["Test"])
+    }
+
+    @Test func clearExitsHistoryMode() {
+        let vm = makeHistoryViewModel(historyEntries: ["recent"])
+        vm.moveUp()
+        #expect(vm.historyIndex != nil)
+        vm.clear()
+        #expect(vm.historyIndex == nil)
+        #expect(vm.query.isEmpty)
     }
 }

@@ -311,7 +311,7 @@
 
 ---
 
-### F11：查询历史
+### F11：查询历史 ✅
 
 **WenZi 参考实现：**
 - `src/wenzi/scripting/sources/query_history.py`（120 行）

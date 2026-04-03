@@ -13,5 +13,10 @@ let package = Package(
                 .define("SPM_BUILD")
             ]
         ),
+        .testTarget(
+            name: "LingXiTests",
+            dependencies: ["LingXi"],
+            path: "LingXiTests"
+        ),
     ]
 )
