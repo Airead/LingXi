@@ -66,8 +66,10 @@ final class PanelManager {
         newPanel.onArrowDown = { [weak viewModel] in
             viewModel?.moveDown()
         }
-        newPanel.onReturn = { [weak viewModel] in
-            viewModel?.confirm()
+        newPanel.onReturn = { [weak self, weak viewModel] in
+            if viewModel?.confirm() == true {
+                self?.hide()
+            }
         }
 
         heightObserver = viewModel.$results

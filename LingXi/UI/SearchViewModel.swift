@@ -10,11 +10,13 @@ final class SearchViewModel: ObservableObject {
     @Published var selectedIndex: Int = 0
 
     private let router: SearchRouter
+    private let workspace: WorkspaceOpening
     private let debounceNanoseconds: UInt64
     private var searchTask: Task<Void, Never>?
 
-    init(router: SearchRouter? = nil, debounceMilliseconds: Int = 0) {
+    init(router: SearchRouter? = nil, workspace: WorkspaceOpening = NSWorkspace.shared, debounceMilliseconds: Int = 0) {
         self.router = router ?? SearchRouter(defaultProvider: ApplicationSearchProvider())
+        self.workspace = workspace
         self.debounceNanoseconds = UInt64(debounceMilliseconds) * 1_000_000
     }
 
@@ -32,10 +34,19 @@ final class SearchViewModel: ObservableObject {
         selectedIndex += 1
     }
 
-    func confirm() {
-        guard results.indices.contains(selectedIndex) else { return }
+    @discardableResult
+    func confirm() -> Bool {
+        guard results.indices.contains(selectedIndex) else { return false }
         let selected = results[selectedIndex]
-        print("[LingXi] Selected: \(selected.name) — \(selected.subtitle)")
+
+        guard let url = selected.url else { return false }
+
+        switch selected.resultType {
+        case .application:
+            return workspace.open(url)
+        default:
+            return false
+        }
     }
 
     private func filterResults() {

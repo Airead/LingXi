@@ -1,5 +1,23 @@
+import Foundation
 import Testing
 @testable import LingXi
+
+private struct StubSearchProvider: SearchProvider {
+    let results: [SearchResult]
+
+    func search(query: String) async -> [SearchResult] {
+        results
+    }
+}
+
+private final class MockWorkspaceOpener: WorkspaceOpening {
+    private(set) var openedURLs: [URL] = []
+
+    func open(_ url: URL) -> Bool {
+        openedURLs.append(url)
+        return true
+    }
+}
 
 @MainActor
 struct SearchViewModelTests {
@@ -87,18 +105,35 @@ struct SearchViewModelTests {
 
     // MARK: - confirm
 
-    @Test func confirmDoesNotCrashWhenNoResults() {
+    @Test func confirmReturnsFalseWhenNoResults() {
         let router = SearchRouter(defaultProvider: MockSearchProvider())
         let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
-        vm.confirm()
+        #expect(vm.confirm() == false)
         #expect(vm.results.isEmpty)
     }
 
-    @Test func confirmDoesNotCrashWithValidSelection() async {
+    @Test func confirmReturnsFalseWhenSelectedResultHasNoURL() async {
+        // MockSearchProvider returns results with url: nil
         let vm = makeViewModel(query: "Safari")
         await Task.yield()
         #expect(vm.results.count == 1)
-        vm.confirm()
+        #expect(vm.confirm() == false)
+    }
+
+    @Test func confirmReturnsTrueForApplicationWithURL() async {
+        let appURL = URL(fileURLWithPath: "/Applications/Safari.app")
+        let provider = StubSearchProvider(results: [
+            SearchResult(icon: nil, name: "TestApp", subtitle: "Test",
+                         resultType: .application, url: appURL, score: 1.0),
+        ])
+        let mockWorkspace = MockWorkspaceOpener()
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = SearchViewModel(router: router, workspace: mockWorkspace, debounceMilliseconds: 0)
+        vm.query = "Test"
+        await Task.yield()
+        #expect(vm.results.count == 1)
+        #expect(vm.confirm() == true)
+        #expect(mockWorkspace.openedURLs == [appURL])
     }
 
     // MARK: - clear

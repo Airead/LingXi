@@ -3,7 +3,14 @@ import AppKit
 final class ApplicationSearchProvider: SearchProvider {
     private struct AppEntry {
         let name: String
+        let bundleIdentifier: String
         let url: URL
+
+        var searchableNames: [String] {
+            var names = [name, url.deletingPathExtension().lastPathComponent]
+            if !bundleIdentifier.isEmpty { names.append(bundleIdentifier) }
+            return names
+        }
     }
 
     static let defaultSearchPaths = [
@@ -34,8 +41,10 @@ final class ApplicationSearchProvider: SearchProvider {
                 guard !seen.contains(resolvedPath) else { continue }
                 seen.insert(resolvedPath)
 
-                let name = Self.appName(for: url)
-                entries.append(AppEntry(name: name, url: url))
+                let bundle = Bundle(url: url)
+                let name = Self.appName(from: bundle, url: url)
+                let bundleIdentifier = bundle?.bundleIdentifier ?? ""
+                entries.append(AppEntry(name: name, bundleIdentifier: bundleIdentifier, url: url))
             }
         }
 
@@ -44,7 +53,7 @@ final class ApplicationSearchProvider: SearchProvider {
     }
 
     func search(query: String) async -> [SearchResult] {
-        scoredResults(from: apps, query: query, name: \.name) { app, score in
+        scoredResults(from: apps, query: query, names: \.searchableNames) { app, score in
             let icon = iconForApp(at: app.url)
             return SearchResult(icon: icon, name: app.name, subtitle: app.url.path,
                                 resultType: .application, url: app.url, score: score)
@@ -71,8 +80,8 @@ final class ApplicationSearchProvider: SearchProvider {
         }
     }
 
-    private static func appName(for url: URL) -> String {
-        if let bundle = Bundle(url: url) {
+    private static func appName(from bundle: Bundle?, url: URL) -> String {
+        if let bundle {
             if let displayName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String, !displayName.isEmpty {
                 return displayName
             }

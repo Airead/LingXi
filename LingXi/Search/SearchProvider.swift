@@ -14,20 +14,30 @@ extension SearchProvider {
         name: (T) -> String,
         transform: (T, Double) -> SearchResult
     ) -> [SearchResult] {
+        scoredResults(from: items, query: query, names: { [name($0)] }, transform: transform)
+    }
+
+    func scoredResults<T>(
+        from items: [T],
+        query: String,
+        names: (T) -> [String],
+        transform: (T, Double) -> SearchResult
+    ) -> [SearchResult] {
         guard !query.isEmpty else { return [] }
         let q = query.lowercased()
         return items
             .compactMap { item -> SearchResult? in
-                let n = name(item).lowercased()
-                let score: Double
-                if n.hasPrefix(q) {
-                    score = SearchScore.prefixMatch
-                } else if n.contains(q) {
-                    score = SearchScore.containsMatch
-                } else {
-                    return nil
+                var bestScore: Double = 0
+                for n in names(item) {
+                    let lower = n.lowercased()
+                    if lower.hasPrefix(q) {
+                        bestScore = max(bestScore, SearchScore.prefixMatch)
+                    } else if lower.contains(q) {
+                        bestScore = max(bestScore, SearchScore.containsMatch)
+                    }
                 }
-                return transform(item, score)
+                guard bestScore > 0 else { return nil }
+                return transform(item, bestScore)
             }
             .sorted { $0.score > $1.score }
     }
