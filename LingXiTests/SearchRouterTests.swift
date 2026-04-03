@@ -6,7 +6,7 @@ struct SearchRouterTests {
     private struct StubProvider: SearchProvider {
         let label: String
         func search(query: String) async -> [SearchResult] {
-            [SearchResult(icon: nil, name: label, subtitle: query, resultType: .application, score: 1)]
+            [SearchResult(icon: nil, name: label, subtitle: query, resultType: .application, url: nil, score: 1)]
         }
     }
 

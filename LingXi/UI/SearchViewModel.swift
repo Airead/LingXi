@@ -14,7 +14,7 @@ final class SearchViewModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
 
     init(router: SearchRouter? = nil, debounceMilliseconds: Int = 0) {
-        self.router = router ?? SearchRouter(defaultProvider: MockSearchProvider())
+        self.router = router ?? SearchRouter(defaultProvider: ApplicationSearchProvider())
         self.debounceNanoseconds = UInt64(debounceMilliseconds) * 1_000_000
     }
 

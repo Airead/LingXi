@@ -13,6 +13,6 @@ struct SearchResult: Identifiable {
     let name: String
     let subtitle: String
     let resultType: SearchResultType
-    let url: URL? = nil
-    var score: Double = 0
+    let url: URL?
+    let score: Double
 }

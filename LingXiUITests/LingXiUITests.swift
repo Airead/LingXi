@@ -23,11 +23,6 @@ final class LingXiUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        throw XCTSkip("Menu bar app has no main window; re-enable when a settings window is added")
-    }
-
-    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
