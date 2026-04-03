@@ -5,6 +5,10 @@ DerivedData/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 
+# Swift Package Manager
+.build/
+.swiftpm/
+
 # macOS
 .DS_Store
 

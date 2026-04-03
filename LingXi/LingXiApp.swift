@@ -7,7 +7,9 @@
 
 import SwiftUI
 
+#if !SPM_BUILD
 @main
+#endif
 struct LingXiApp: App {
     private let hotKeyManager = HotKeyManager()
     private let panelManager = PanelManager()
