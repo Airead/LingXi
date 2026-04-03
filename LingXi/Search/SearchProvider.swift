@@ -1,5 +1,12 @@
-protocol SearchProvider {
+protocol SearchProvider: Sendable {
     func search(query: String) async -> [SearchResult]
+    var debounceMilliseconds: Int { get }
+    var timeoutMilliseconds: Int { get }
+}
+
+extension SearchProvider {
+    var debounceMilliseconds: Int { 0 }
+    var timeoutMilliseconds: Int { 5000 }
 }
 
 extension SearchProvider {

@@ -1,6 +1,6 @@
 import AppKit
 
-final class ApplicationSearchProvider: SearchProvider {
+final class ApplicationSearchProvider: SearchProvider, @unchecked Sendable {
     private struct AppEntry {
         let name: String
         let bundleIdentifier: String
