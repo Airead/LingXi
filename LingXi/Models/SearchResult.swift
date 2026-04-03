@@ -7,6 +7,17 @@ enum SearchResultType {
     case bookmark
 }
 
+enum ActionModifier: Hashable, Sendable {
+    case command
+    case option
+    case control
+}
+
+struct ModifierAction: Sendable {
+    let subtitle: String
+    let action: @MainActor @Sendable (SearchResult) -> Bool
+}
+
 struct SearchResult: Identifiable {
     let id = UUID()
     let itemId: String
@@ -16,6 +27,22 @@ struct SearchResult: Identifiable {
     let resultType: SearchResultType
     let url: URL?
     var score: Double
+    var modifierActions: [ActionModifier: ModifierAction] = [:]
+
+    private static let modifierPriority: [ActionModifier] = [.command, .option, .control]
+
+    func resolveModifierAction(for modifiers: Set<ActionModifier>) -> ModifierAction? {
+        for modifier in Self.modifierPriority where modifiers.contains(modifier) {
+            if let action = modifierActions[modifier] {
+                return action
+            }
+        }
+        return nil
+    }
+
+    func displaySubtitle(for modifiers: Set<ActionModifier>) -> String {
+        resolveModifierAction(for: modifiers)?.subtitle ?? subtitle
+    }
 }
 
 extension Array where Element == SearchResult {

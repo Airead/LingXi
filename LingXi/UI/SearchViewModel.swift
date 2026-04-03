@@ -8,6 +8,7 @@ final class SearchViewModel: ObservableObject {
     }
     @Published private(set) var results: [SearchResult] = []
     @Published var selectedIndex: Int = 0
+    @Published var activeModifiers: Set<ActionModifier> = []
 
     private let router: SearchRouter
     private let workspace: WorkspaceOpening
@@ -44,9 +45,17 @@ final class SearchViewModel: ObservableObject {
     }
 
     @discardableResult
-    func confirm() -> Bool {
+    func confirm(modifiers: Set<ActionModifier> = []) -> Bool {
         guard results.indices.contains(selectedIndex) else { return false }
         let selected = results[selectedIndex]
+
+        if let modifierAction = selected.resolveModifierAction(for: modifiers) {
+            let executed = modifierAction.action(selected)
+            if executed {
+                usageTracker.record(query: query, itemId: selected.itemId)
+            }
+            return executed
+        }
 
         guard let url = selected.url else { return false }
 

@@ -66,10 +66,14 @@ final class PanelManager {
         newPanel.onArrowDown = { [weak viewModel] in
             viewModel?.moveDown()
         }
-        newPanel.onReturn = { [weak self, weak viewModel] in
-            if viewModel?.confirm() == true {
+        newPanel.onReturn = { [weak self, weak viewModel] modifiers in
+            if viewModel?.confirm(modifiers: modifiers) == true {
                 self?.hide()
             }
+        }
+        newPanel.onModifiersChanged = { [weak viewModel] modifiers in
+            guard viewModel?.activeModifiers != modifiers else { return }
+            viewModel?.activeModifiers = modifiers
         }
 
         heightObserver = viewModel.$results
@@ -132,8 +136,12 @@ private struct PanelContentView: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, result in
-                                SearchResultRow(result: result, isSelected: index == viewModel.selectedIndex)
-                                    .id(result.id)
+                                SearchResultRow(
+                                    result: result,
+                                    isSelected: index == viewModel.selectedIndex,
+                                    activeModifiers: viewModel.activeModifiers
+                                )
+                                .id(result.id)
                             }
                         }
                     }
@@ -160,6 +168,7 @@ private struct PanelContentView: View {
 private struct SearchResultRow: View {
     let result: SearchResult
     var isSelected: Bool = false
+    var activeModifiers: Set<ActionModifier> = []
 
     var body: some View {
         HStack(spacing: 12) {
@@ -178,7 +187,7 @@ private struct SearchResultRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.name)
                     .font(.system(size: 15))
-                Text(result.subtitle)
+                Text(isSelected ? result.displaySubtitle(for: activeModifiers) : result.subtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }

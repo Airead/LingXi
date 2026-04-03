@@ -11,7 +11,8 @@ final class FloatingPanel: NSPanel {
     var onDismiss: (() -> Void)?
     var onArrowUp: (() -> Void)?
     var onArrowDown: (() -> Void)?
-    var onReturn: (() -> Void)?
+    var onReturn: ((Set<ActionModifier>) -> Void)?
+    var onModifiersChanged: ((Set<ActionModifier>) -> Void)?
 
     init(contentRect: NSRect) {
         super.init(
@@ -45,13 +46,24 @@ final class FloatingPanel: NSPanel {
                 onArrowDown?()
                 return
             case 36: // Return
-                onReturn?()
+                onReturn?(Self.activeModifiers(from: event.modifierFlags))
                 return
             default:
                 break
             }
         }
+        if event.type == .flagsChanged {
+            onModifiersChanged?(Self.activeModifiers(from: event.modifierFlags))
+        }
         super.sendEvent(event)
+    }
+
+    private static func activeModifiers(from flags: NSEvent.ModifierFlags) -> Set<ActionModifier> {
+        var result = Set<ActionModifier>()
+        if flags.contains(.command) { result.insert(.command) }
+        if flags.contains(.option) { result.insert(.option) }
+        if flags.contains(.control) { result.insert(.control) }
+        return result
     }
 
     override func resignKey() {

@@ -20,6 +20,14 @@ final class ApplicationSearchProvider: SearchProvider, @unchecked Sendable {
         NSHomeDirectory() + "/Applications",
     ]
 
+    private static let modifierActions: [ActionModifier: ModifierAction] = [
+        .command: ModifierAction(subtitle: "Show in Finder") { result in
+            guard let url = result.url else { return false }
+            NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: "")
+            return true
+        },
+    ]
+
     private let apps: [AppEntry]
     private var iconCache: [URL: NSImage] = [:]
     private let iconCacheLock = NSLock()
@@ -56,8 +64,11 @@ final class ApplicationSearchProvider: SearchProvider, @unchecked Sendable {
         scoredResults(from: apps, query: query, names: \.searchableNames) { app, score in
             let icon = iconForApp(at: app.url)
             let itemId = app.bundleIdentifier.isEmpty ? app.url.path : app.bundleIdentifier
-            return SearchResult(itemId: itemId, icon: icon, name: app.name, subtitle: app.url.path,
-                                resultType: .application, url: app.url, score: score)
+            return SearchResult(
+                itemId: itemId, icon: icon, name: app.name, subtitle: app.url.path,
+                resultType: .application, url: app.url, score: score,
+                modifierActions: Self.modifierActions
+            )
         }
     }
 
