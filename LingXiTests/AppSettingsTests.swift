@@ -69,6 +69,35 @@ struct AppSettingsTests {
         #expect(settings2.bookmarkSearchEnabled == false)
     }
 
+    @Test func defaultPrefixValues() {
+        let settings = makeSettings()
+        #expect(settings.fileSearchPrefix == "f")
+        #expect(settings.folderSearchPrefix == "fd")
+        #expect(settings.bookmarkSearchPrefix == "bm")
+    }
+
+    @Test func emptyPrefixRevertsToOldValue() {
+        let settings = makeSettings()
+        settings.fileSearchPrefix = "fi"
+        settings.fileSearchPrefix = ""
+        #expect(settings.fileSearchPrefix == "fi")
+        settings.fileSearchPrefix = "   "
+        #expect(settings.fileSearchPrefix == "fi")
+    }
+
+    @Test func persistsDataSourcePrefixes() {
+        let defaults = makeDefaults()
+        let settings1 = AppSettings(defaults: defaults)
+        settings1.fileSearchPrefix = "fi"
+        settings1.folderSearchPrefix = "dir"
+        settings1.bookmarkSearchPrefix = "b"
+
+        let settings2 = AppSettings(defaults: defaults)
+        #expect(settings2.fileSearchPrefix == "fi")
+        #expect(settings2.folderSearchPrefix == "dir")
+        #expect(settings2.bookmarkSearchPrefix == "b")
+    }
+
     @Test func hotKeyDisplayString() {
         let display = AppSettings.displayString(
             keyCode: UInt32(kVK_Space),

@@ -56,6 +56,24 @@ final class AppSettings {
     var bookmarkSearchEnabled: Bool {
         didSet { guard bookmarkSearchEnabled != oldValue else { return }; save(.bookmarkSearchEnabled, value: bookmarkSearchEnabled) }
     }
+    var fileSearchPrefix: String {
+        didSet {
+            if fileSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { fileSearchPrefix = oldValue; return }
+            guard fileSearchPrefix != oldValue else { return }; save(.fileSearchPrefix, value: fileSearchPrefix)
+        }
+    }
+    var folderSearchPrefix: String {
+        didSet {
+            if folderSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { folderSearchPrefix = oldValue; return }
+            guard folderSearchPrefix != oldValue else { return }; save(.folderSearchPrefix, value: folderSearchPrefix)
+        }
+    }
+    var bookmarkSearchPrefix: String {
+        didSet {
+            if bookmarkSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { bookmarkSearchPrefix = oldValue; return }
+            guard bookmarkSearchPrefix != oldValue else { return }; save(.bookmarkSearchPrefix, value: bookmarkSearchPrefix)
+        }
+    }
 
     // MARK: - Appearance mode
 
@@ -87,6 +105,9 @@ final class AppSettings {
         case fileSearchEnabled = "io.github.airead.lingxi.fileSearchEnabled"
         case folderSearchEnabled = "io.github.airead.lingxi.folderSearchEnabled"
         case bookmarkSearchEnabled = "io.github.airead.lingxi.bookmarkSearchEnabled"
+        case fileSearchPrefix = "io.github.airead.lingxi.fileSearchPrefix"
+        case folderSearchPrefix = "io.github.airead.lingxi.folderSearchPrefix"
+        case bookmarkSearchPrefix = "io.github.airead.lingxi.bookmarkSearchPrefix"
     }
 
     // MARK: - Defaults
@@ -109,6 +130,9 @@ final class AppSettings {
         fileSearchEnabled = Self.load(defaults, .fileSearchEnabled) ?? true
         folderSearchEnabled = Self.load(defaults, .folderSearchEnabled) ?? true
         bookmarkSearchEnabled = Self.load(defaults, .bookmarkSearchEnabled) ?? true
+        fileSearchPrefix = Self.load(defaults, .fileSearchPrefix) ?? "f"
+        folderSearchPrefix = Self.load(defaults, .folderSearchPrefix) ?? "fd"
+        bookmarkSearchPrefix = Self.load(defaults, .bookmarkSearchPrefix) ?? "bm"
 
         let modeRaw: String? = Self.load(defaults, .appearanceMode)
         appearanceMode = modeRaw.flatMap { AppearanceMode(rawValue: $0) } ?? .system

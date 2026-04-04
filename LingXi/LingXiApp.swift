@@ -48,6 +48,9 @@ struct LingXiApp: App {
             _ = s.fileSearchEnabled
             _ = s.folderSearchEnabled
             _ = s.bookmarkSearchEnabled
+            _ = s.fileSearchPrefix
+            _ = s.folderSearchPrefix
+            _ = s.bookmarkSearchPrefix
         }, action: {
             pm.applySettings(s)
         })

@@ -27,9 +27,9 @@ final class PanelManager {
     init(settings: AppSettings) {
         let db = DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
         let router = SearchRouter(defaultProvider: ApplicationSearchProvider(), maxResults: settings.maxSearchResults)
-        router.register(prefix: "fd ", id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
-        router.register(prefix: "f ", id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
-        router.register(prefix: "bm ", id: "bookmark", provider: BookmarkSearchProvider())
+        router.register(prefix: settings.folderSearchPrefix, id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
+        router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
+        router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
         self.router = router
         self.viewModel = SearchViewModel(router: router, database: db)
 
@@ -42,6 +42,9 @@ final class PanelManager {
         router.setEnabled(settings.fileSearchEnabled, forId: "file")
         router.setEnabled(settings.folderSearchEnabled, forId: "folder")
         router.setEnabled(settings.bookmarkSearchEnabled, forId: "bookmark")
+        router.updatePrefix(settings.fileSearchPrefix, forId: "file")
+        router.updatePrefix(settings.folderSearchPrefix, forId: "folder")
+        router.updatePrefix(settings.bookmarkSearchPrefix, forId: "bookmark")
     }
 
     func toggle() {

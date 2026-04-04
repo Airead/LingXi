@@ -22,11 +22,26 @@ struct SearchSettingsView: View {
 
             Section("Data Sources") {
                 Toggle("Application Search", isOn: $settings.applicationSearchEnabled)
-                Toggle("File Search (f )", isOn: $settings.fileSearchEnabled)
-                Toggle("Folder Search (fd )", isOn: $settings.folderSearchEnabled)
-                Toggle("Bookmark Search (bm )", isOn: $settings.bookmarkSearchEnabled)
+                dataSourceRow("File Search", prefix: $settings.fileSearchPrefix, enabled: $settings.fileSearchEnabled)
+                dataSourceRow("Folder Search", prefix: $settings.folderSearchPrefix, enabled: $settings.folderSearchEnabled)
+                dataSourceRow("Bookmark Search", prefix: $settings.bookmarkSearchPrefix, enabled: $settings.bookmarkSearchEnabled)
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func dataSourceRow(_ title: String, prefix: Binding<String>, enabled: Binding<Bool>) -> some View {
+        LabeledContent {
+            HStack(spacing: 8) {
+                TextField("", text: prefix)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+                    .multilineTextAlignment(.center)
+                Toggle("", isOn: enabled)
+                    .labelsHidden()
+            }
+        } label: {
+            Text(title)
+        }
     }
 }

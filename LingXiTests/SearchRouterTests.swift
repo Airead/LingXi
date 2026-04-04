@@ -102,6 +102,27 @@ struct SearchRouterTests {
         #expect(results.first?.name == "cmd")
         #expect(results.first?.subtitle == "open file")
     }
+
+    @Test func updatePrefixChangesRouting() async {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "f ", id: "file", provider: StubProvider(label: "file"))
+
+        router.updatePrefix("fi", forId: "file")
+
+        let results = await router.search(rawQuery: "fi readme")
+        #expect(results.first?.name == "file")
+        #expect(results.first?.subtitle == "readme")
+
+        // Old prefix should no longer match
+        let oldResults = await router.search(rawQuery: "f readme")
+        #expect(oldResults.first?.name == "default")
+    }
+
+    @Test func updatePrefixForNonExistentIdIsNoOp() {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.updatePrefix("x", forId: "nonexistent")
+        // No crash, no change
+    }
 }
 
 // MARK: - Multi-provider parallel tests

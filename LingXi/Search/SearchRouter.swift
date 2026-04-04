@@ -5,7 +5,7 @@ final class SearchRouter {
     struct ProviderEntry: Sendable {
         let id: String
         let provider: SearchProvider
-        let prefix: String?
+        var prefix: String?
     }
 
     private var entries: [ProviderEntry] = []
@@ -33,12 +33,25 @@ final class SearchRouter {
         !disabledIds.contains(id)
     }
 
+    func updatePrefix(_ newPrefix: String, forId id: String) {
+        guard let index = entries.firstIndex(where: { $0.id == id }),
+              let normalized = Self.normalizePrefix(newPrefix) else { return }
+        entries[index].prefix = normalized
+    }
+
     func registerDefault(id: String, provider: SearchProvider) {
         entries.append(ProviderEntry(id: id, provider: provider, prefix: nil))
     }
 
     func register(prefix: String, id: String? = nil, provider: SearchProvider) {
-        entries.append(ProviderEntry(id: id ?? prefix, provider: provider, prefix: prefix))
+        guard let normalized = Self.normalizePrefix(prefix) else { return }
+        entries.append(ProviderEntry(id: id ?? prefix, provider: provider, prefix: normalized))
+    }
+
+    private static func normalizePrefix(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed + " "
     }
 
     func search(rawQuery: String) async -> [SearchResult] {
