@@ -23,6 +23,14 @@ struct ModifierAction: Sendable {
         return true
     }
 
+    static let copyURL = ModifierAction(subtitle: "Copy URL") { result in
+        guard let url = result.url else { return false }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(url.absoluteString, forType: .string)
+        return true
+    }
+
     static let defaultFileActions: [ActionModifier: ModifierAction] = [
         .command: .revealInFinder,
     ]
@@ -38,6 +46,7 @@ struct SearchResult: Identifiable, Sendable {
     let url: URL?
     var score: Double
     var modifierActions: [ActionModifier: ModifierAction] = [:]
+    var openWithBundleId: String?
 
     private static let modifierPriority: [ActionModifier] = [.command, .option, .control]
 

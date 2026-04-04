@@ -12,9 +12,20 @@ struct StubSearchProvider: SearchProvider {
 
 final class MockWorkspaceOpener: WorkspaceOpening {
     private(set) var openedURLs: [URL] = []
+    private(set) var openedWithApp: [(urls: [URL], appURL: URL)] = []
+    var bundleURLs: [String: URL] = [:]
 
     func open(_ url: URL) -> Bool {
         openedURLs.append(url)
+        return true
+    }
+
+    func urlForApplication(withBundleIdentifier bundleId: String) -> URL? {
+        bundleURLs[bundleId]
+    }
+
+    func open(_ urls: [URL], withApplicationAt appURL: URL) -> Bool {
+        openedWithApp.append((urls: urls, appURL: appURL))
         return true
     }
 }

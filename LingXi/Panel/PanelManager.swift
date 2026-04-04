@@ -24,6 +24,7 @@ final class PanelManager {
         let router = SearchRouter(defaultProvider: ApplicationSearchProvider())
         router.register(prefix: "fd ", id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
         router.register(prefix: "f ", id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
+        router.register(prefix: "bm ", id: "bookmark", provider: BookmarkSearchProvider())
         return SearchViewModel(router: router, database: db)
     }()
     private let inputSourceManager = InputSourceManager()

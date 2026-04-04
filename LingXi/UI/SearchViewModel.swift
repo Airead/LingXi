@@ -89,12 +89,22 @@ final class SearchViewModel: ObservableObject {
         switch selected.resultType {
         case .application, .file:
             opened = workspace.open(url)
+        case .bookmark:
+            opened = openBookmark(url: url, bundleId: selected.openWithBundleId)
         default:
             opened = false
         }
 
         if opened { recordExecution(query: currentQuery, itemId: selected.itemId) }
         return opened
+    }
+
+    private func openBookmark(url: URL, bundleId: String?) -> Bool {
+        if let bundleId,
+           let appURL = workspace.urlForApplication(withBundleIdentifier: bundleId) {
+            return workspace.open([url], withApplicationAt: appURL)
+        }
+        return workspace.open(url)
     }
 
     private func recordExecution(query: String, itemId: String) {

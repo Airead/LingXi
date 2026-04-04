@@ -228,7 +228,7 @@
 
 ---
 
-### F08：书签搜索
+### F08：书签搜索 ✅
 
 **WenZi 参考实现：**
 - `src/wenzi/scripting/sources/bookmark_source.py`（557 行）
