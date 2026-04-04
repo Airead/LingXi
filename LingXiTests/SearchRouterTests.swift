@@ -215,6 +215,60 @@ struct SearchRouterIncrementalTests {
     }
 }
 
+// MARK: - Enable/disable tests
+
+@MainActor
+struct SearchRouterEnableDisableTests {
+
+    @Test func disableDefaultProvider() async {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.setEnabled(false, forId: "default")
+        let results = await router.search(rawQuery: "hello")
+        #expect(results.isEmpty)
+    }
+
+    @Test func disablePrefixProvider() async {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "f ", id: "file", provider: StubProvider(label: "file"))
+        router.setEnabled(false, forId: "file")
+
+        let results = await router.search(rawQuery: "f readme")
+        // Falls back to default since prefix provider is disabled
+        #expect(results.first?.name == "default")
+    }
+
+    @Test func reEnableProvider() async {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "f ", id: "file", provider: StubProvider(label: "file"))
+        router.setEnabled(false, forId: "file")
+        router.setEnabled(true, forId: "file")
+
+        let results = await router.search(rawQuery: "f readme")
+        #expect(results.first?.name == "file")
+    }
+
+    @Test func isEnabledReflectsState() {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        #expect(router.isEnabled(id: "default") == true)
+        router.setEnabled(false, forId: "default")
+        #expect(router.isEnabled(id: "default") == false)
+        router.setEnabled(true, forId: "default")
+        #expect(router.isEnabled(id: "default") == true)
+    }
+
+    @Test func setMaxResults() async {
+        var items: [SearchResult] = []
+        for i in 0..<30 {
+            items.append(SearchResult(itemId: "item\(i)", icon: nil, name: "Item\(i)", subtitle: "",
+                                      resultType: .application, url: nil, score: Double(30 - i)))
+        }
+        let router = SearchRouter(defaultProvider: MultiResultProvider(items: items), maxResults: 50)
+        router.setMaxResults(10)
+        let results = await router.search(rawQuery: "test")
+        #expect(results.count == 10)
+    }
+}
+
 // MARK: - Test callback collector
 
 private actor CallbackCollector {

@@ -458,7 +458,7 @@
 
 ---
 
-### F16：设置界面
+### F16：设置界面 ✅
 
 **WenZi 参考实现：**
 - `src/wenzi/ui/settings_window_web.py` + `src/wenzi/ui/templates/settings_window_web.html`（3080 行）

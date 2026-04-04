@@ -16,16 +16,21 @@ final class HotKeyManager {
     private static var instance: HotKeyManager?
     var onHotKey: (() -> Void)?
 
+    private var keyCode: UInt32
+    private var modifiers: UInt32
+
+    init(keyCode: UInt32 = AppSettings.defaultHotKeyKeyCode, modifiers: UInt32 = AppSettings.defaultHotKeyModifiers) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+    }
+
     func start() {
         requestAccessibilityPermission()
         registerHotKey()
     }
 
     func stop() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
-        }
+        unregisterHotKey()
         if let eventHandlerRef {
             RemoveEventHandler(eventHandlerRef)
             self.eventHandlerRef = nil
@@ -33,25 +38,42 @@ final class HotKeyManager {
         HotKeyManager.instance = nil
     }
 
+    func updateHotKey(keyCode: UInt32, modifiers: UInt32) {
+        guard keyCode != self.keyCode || modifiers != self.modifiers else { return }
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+        unregisterHotKey()
+        registerHotKey()
+    }
+
+    private func unregisterHotKey() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+    }
+
     private func registerHotKey() {
         HotKeyManager.instance = self
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x4C586B79), id: 1) // "LXky"
 
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        if eventHandlerRef == nil {
+            var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
-        let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
-            Task { @MainActor in
-                HotKeyManager.instance?.onHotKey?()
+            let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
+                Task { @MainActor in
+                    HotKeyManager.instance?.onHotKey?()
+                }
+                return noErr
             }
-            return noErr
+
+            InstallEventHandler(GetApplicationEventTarget(), handler, 1, &eventType, nil, &eventHandlerRef)
         }
 
-        InstallEventHandler(GetApplicationEventTarget(), handler, 1, &eventType, nil, &eventHandlerRef)
-
         let status = RegisterEventHotKey(
-            UInt32(kVK_Space),
-            UInt32(optionKey),
+            keyCode,
+            modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,

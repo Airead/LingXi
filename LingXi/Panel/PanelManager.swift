@@ -19,16 +19,30 @@ private enum PanelLayout {
 @MainActor
 final class PanelManager {
     private var panel: FloatingPanel?
-    private let viewModel: SearchViewModel = {
+    private let router: SearchRouter
+    private let viewModel: SearchViewModel
+    private let inputSourceManager = InputSourceManager()
+    private var heightObserver: AnyCancellable?
+
+    init(settings: AppSettings) {
         let db = DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
-        let router = SearchRouter(defaultProvider: ApplicationSearchProvider())
+        let router = SearchRouter(defaultProvider: ApplicationSearchProvider(), maxResults: settings.maxSearchResults)
         router.register(prefix: "fd ", id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
         router.register(prefix: "f ", id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
         router.register(prefix: "bm ", id: "bookmark", provider: BookmarkSearchProvider())
-        return SearchViewModel(router: router, database: db)
-    }()
-    private let inputSourceManager = InputSourceManager()
-    private var heightObserver: AnyCancellable?
+        self.router = router
+        self.viewModel = SearchViewModel(router: router, database: db)
+
+        applySettings(settings)
+    }
+
+    func applySettings(_ settings: AppSettings) {
+        router.setMaxResults(settings.maxSearchResults)
+        router.setEnabled(settings.applicationSearchEnabled, forId: "default")
+        router.setEnabled(settings.fileSearchEnabled, forId: "file")
+        router.setEnabled(settings.folderSearchEnabled, forId: "folder")
+        router.setEnabled(settings.bookmarkSearchEnabled, forId: "bookmark")
+    }
 
     func toggle() {
         if isVisible {
@@ -69,6 +83,9 @@ final class PanelManager {
         }))
         newPanel.onDismiss = { [weak self] in
             self?.hide()
+        }
+        newPanel.onCommandComma = {
+            AppDelegate.showSettings()
         }
         newPanel.onArrowUp = { [weak viewModel] in
             viewModel?.moveUp()

@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 
 final class FloatingPanel: NSPanel {
     var onDismiss: (() -> Void)?
@@ -13,6 +14,7 @@ final class FloatingPanel: NSPanel {
     var onArrowDown: (() -> Void)?
     var onReturn: ((Set<ActionModifier>) -> Void)?
     var onModifiersChanged: ((Set<ActionModifier>) -> Void)?
+    var onCommandComma: (() -> Void)?
 
     init(contentRect: NSRect) {
         super.init(
@@ -35,17 +37,21 @@ final class FloatingPanel: NSPanel {
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown {
-            switch event.keyCode {
-            case 53: // Esc
+            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," {
+                onCommandComma?()
+                return
+            }
+            switch Int(event.keyCode) {
+            case kVK_Escape:
                 onDismiss?()
                 return
-            case 126: // ↑
+            case kVK_UpArrow:
                 onArrowUp?()
                 return
-            case 125: // ↓
+            case kVK_DownArrow:
                 onArrowDown?()
                 return
-            case 36: // Return
+            case kVK_Return:
                 onReturn?(Self.activeModifiers(from: event.modifierFlags))
                 return
             default:

@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 final class SearchRouter {
     struct ProviderEntry: Sendable {
         let id: String
@@ -8,11 +9,28 @@ final class SearchRouter {
     }
 
     private var entries: [ProviderEntry] = []
-    let maxResults: Int
+    private(set) var maxResults: Int
+    private var disabledIds: Set<String> = []
 
     init(defaultProvider: SearchProvider, maxResults: Int = 50) {
         entries.append(ProviderEntry(id: "default", provider: defaultProvider, prefix: nil))
         self.maxResults = maxResults
+    }
+
+    func setMaxResults(_ value: Int) {
+        maxResults = value
+    }
+
+    func setEnabled(_ enabled: Bool, forId id: String) {
+        if enabled {
+            disabledIds.remove(id)
+        } else {
+            disabledIds.insert(id)
+        }
+    }
+
+    func isEnabled(id: String) -> Bool {
+        !disabledIds.contains(id)
     }
 
     func registerDefault(id: String, provider: SearchProvider) {
@@ -75,12 +93,13 @@ final class SearchRouter {
     }
 
     private func matchedEntries(for rawQuery: String) -> [ProviderEntry] {
-        let prefixMatched = entries.filter { entry in
+        let active = entries.filter { isEnabled(id: $0.id) }
+        let prefixMatched = active.filter { entry in
             guard let prefix = entry.prefix else { return false }
             return rawQuery.hasPrefix(prefix)
         }
         if prefixMatched.isEmpty {
-            return entries.filter { $0.prefix == nil }
+            return active.filter { $0.prefix == nil }
         }
         let longestLen = prefixMatched.compactMap { $0.prefix?.count }.max() ?? 0
         return prefixMatched.filter { $0.prefix?.count == longestLen }
