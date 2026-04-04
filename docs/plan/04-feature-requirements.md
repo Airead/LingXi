@@ -163,7 +163,7 @@
 
 ---
 
-### F06：文件搜索
+### F06：文件搜索 ✅
 
 **WenZi 参考实现：**
 - `src/wenzi/scripting/sources/file_source.py`（403 行）
