@@ -16,6 +16,16 @@ enum ActionModifier: Int, Hashable, Sendable {
 struct ModifierAction: Sendable {
     let subtitle: String
     let action: @MainActor @Sendable (SearchResult) -> Bool
+
+    static let revealInFinder = ModifierAction(subtitle: "Reveal in Finder") { result in
+        guard let url = result.url else { return false }
+        NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: "")
+        return true
+    }
+
+    static let defaultFileActions: [ActionModifier: ModifierAction] = [
+        .command: .revealInFinder,
+    ]
 }
 
 struct SearchResult: Identifiable, Sendable {

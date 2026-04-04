@@ -76,6 +76,25 @@ struct SearchRouterTests {
         #expect(results.first?.subtitle == "> ls")
     }
 
+    @Test func longestPrefixMatchWins() async {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "f ", provider: StubProvider(label: "file"))
+        router.register(prefix: "fd ", provider: StubProvider(label: "folder"))
+        let results = await router.search(rawQuery: "fd docs")
+        #expect(results.count == 1)
+        #expect(results.first?.name == "folder")
+        #expect(results.first?.subtitle == "docs")
+    }
+
+    @Test func shorterPrefixStillWorksWhenLongerDoesNotMatch() async {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "f ", provider: StubProvider(label: "file"))
+        router.register(prefix: "fd ", provider: StubProvider(label: "folder"))
+        let results = await router.search(rawQuery: "f readme")
+        #expect(results.count == 1)
+        #expect(results.first?.name == "file")
+    }
+
     @Test func routeStripsOnlyPrefix() async {
         let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
         router.register(prefix: "> ", provider: StubProvider(label: "cmd"))

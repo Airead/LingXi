@@ -86,7 +86,7 @@ final class SearchViewModel: ObservableObject {
 
         let opened: Bool
         switch selected.resultType {
-        case .application:
+        case .application, .file:
             opened = workspace.open(url)
         default:
             opened = false

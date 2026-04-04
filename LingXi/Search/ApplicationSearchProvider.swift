@@ -20,13 +20,7 @@ final class ApplicationSearchProvider: SearchProvider, @unchecked Sendable {
         NSHomeDirectory() + "/Applications",
     ]
 
-    private static let modifierActions: [ActionModifier: ModifierAction] = [
-        .command: ModifierAction(subtitle: "Show in Finder") { result in
-            guard let url = result.url else { return false }
-            NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: "")
-            return true
-        },
-    ]
+    private static let modifierActions = ModifierAction.defaultFileActions
 
     private let apps: [AppEntry]
     private var iconCache: [URL: NSImage] = [:]

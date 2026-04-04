@@ -79,10 +79,11 @@ final class SearchRouter {
             guard let prefix = entry.prefix else { return false }
             return rawQuery.hasPrefix(prefix)
         }
-        if !prefixMatched.isEmpty {
-            return prefixMatched
+        if prefixMatched.isEmpty {
+            return entries.filter { $0.prefix == nil }
         }
-        return entries.filter { $0.prefix == nil }
+        let longestLen = prefixMatched.compactMap { $0.prefix?.count }.max() ?? 0
+        return prefixMatched.filter { $0.prefix?.count == longestLen }
     }
 
     private func strippedQuery(rawQuery: String, entries: [ProviderEntry]) -> String {

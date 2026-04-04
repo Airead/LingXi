@@ -19,9 +19,13 @@ private enum PanelLayout {
 @MainActor
 final class PanelManager {
     private var panel: FloatingPanel?
-    private let viewModel = SearchViewModel(
-        database: DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
-    )
+    private let viewModel: SearchViewModel = {
+        let db = DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
+        let router = SearchRouter(defaultProvider: ApplicationSearchProvider())
+        router.register(prefix: "fd ", id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
+        router.register(prefix: "f ", id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
+        return SearchViewModel(router: router, database: db)
+    }()
     private var heightObserver: AnyCancellable?
 
     func toggle() {
