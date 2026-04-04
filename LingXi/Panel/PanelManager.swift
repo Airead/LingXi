@@ -26,6 +26,7 @@ final class PanelManager {
         router.register(prefix: "f ", id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
         return SearchViewModel(router: router, database: db)
     }()
+    private let inputSourceManager = InputSourceManager()
     private var heightObserver: AnyCancellable?
 
     func toggle() {
@@ -44,6 +45,7 @@ final class PanelManager {
         let activePanel = panel ?? createPanel()
         self.panel = activePanel
 
+        inputSourceManager.saveAndSwitchToASCII()
         viewModel.clear()
         positionPanel(activePanel)
         activePanel.makeKeyAndOrderFront(nil)
@@ -51,6 +53,7 @@ final class PanelManager {
 
     func hide() {
         guard isVisible else { return }
+        inputSourceManager.restore()
         panel?.orderOut(nil)
     }
 
