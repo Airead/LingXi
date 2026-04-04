@@ -31,6 +31,7 @@ final class SearchViewModel: ObservableObject {
     private var cachedUsageCounts: [String: Int]?
 
     private var isSettingHistoryQuery = false
+    private var lastReplacedGeneration: Int = -1
 
     init(router: SearchRouter? = nil, workspace: WorkspaceOpening = NSWorkspace.shared,
          database: DatabaseManager? = nil,
@@ -158,7 +159,6 @@ final class SearchViewModel: ObservableObject {
             return
         }
 
-        results = []
         selectedIndex = 0
         originalScores = [:]
         cachedUsageCounts = nil
@@ -184,16 +184,25 @@ final class SearchViewModel: ObservableObject {
     }
 
     private func mergeResults(_ incoming: [SearchResult], query: String, maxResults: Int) {
-        let selectedItemId = results.indices.contains(selectedIndex) ? results[selectedIndex].itemId : nil
+        let isReplacement = (generation != lastReplacedGeneration)
+        if isReplacement { lastReplacedGeneration = generation }
+
+        let selectedItemId = isReplacement ? nil
+            : (results.indices.contains(selectedIndex) ? results[selectedIndex].itemId : nil)
 
         for result in incoming {
             originalScores[result.itemId] = max(originalScores[result.itemId, default: 0], result.score)
         }
 
-        let existingIds = Set(results.map(\.itemId))
-        var merged = results
-        for item in incoming where !existingIds.contains(item.itemId) {
-            merged.append(item)
+        var merged: [SearchResult]
+        if isReplacement {
+            merged = incoming
+        } else {
+            let existingIds = Set(results.map(\.itemId))
+            merged = results
+            for item in incoming where !existingIds.contains(item.itemId) {
+                merged.append(item)
+            }
         }
         results = applyUsageBoost(results: merged, query: query, maxResults: maxResults)
 

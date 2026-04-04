@@ -436,6 +436,45 @@ struct SearchViewModelTests {
         #expect(history.entries() == ["Test"])
     }
 
+    @Test func queryChangeDoesNotFlashEmptyResults() async {
+        let providerA = StubSearchProvider(results: [
+            SearchResult(itemId: "a1", icon: nil, name: "Alpha", subtitle: "",
+                         resultType: .application, url: nil, score: 80),
+        ])
+        let router = SearchRouter(defaultProvider: providerA)
+        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "alpha"
+        await waitUntil { !vm.results.isEmpty }
+        #expect(vm.results.count == 1)
+
+        // Changing query should NOT clear results to empty before new results arrive
+        vm.query = "beta"
+        // Immediately after setting query, results should still contain the old result
+        #expect(!vm.results.isEmpty, "Results should not flash empty on query change")
+    }
+
+    @Test func queryChangeReplacesResultsOnFirstMerge() async {
+        let provider = QueryAwareProvider(
+            resultsByQuery: [
+                "old": [SearchResult(itemId: "old_item", icon: nil, name: "Old", subtitle: "",
+                                     resultType: .application, url: nil, score: 50)],
+                "new": [SearchResult(itemId: "new_item", icon: nil, name: "New", subtitle: "",
+                                     resultType: .application, url: nil, score: 50)],
+            ]
+        )
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "old"
+        await waitUntil { !vm.results.isEmpty }
+        #expect(vm.results.first?.itemId == "old_item")
+
+        vm.query = "new"
+        await waitUntil { vm.results.first?.itemId == "new_item" }
+        // Old results should be fully replaced, not merged
+        let itemIds = vm.results.map(\.itemId)
+        #expect(!itemIds.contains("old_item"))
+    }
+
     @Test func clearExitsHistoryMode() {
         let vm = makeHistoryViewModel(historyEntries: ["recent"])
         vm.moveUp()
