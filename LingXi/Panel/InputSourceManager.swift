@@ -12,8 +12,11 @@ final class InputSourceManager {
     private var savedInputSource: TISInputSource?
     private lazy var asciiSource: TISInputSource? = Self.findASCIICapableSource()
 
-    func saveAndSwitchToASCII() {
+    func save() {
         savedInputSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+    }
+
+    func switchToASCII() {
         if let asciiSource {
             TISSelectInputSource(asciiSource)
         }

@@ -4,6 +4,7 @@ import Testing
 
 struct StubSearchProvider: SearchProvider {
     let results: [SearchResult]
+    var supportsPreview: Bool = false
 
     func search(query: String) async -> [SearchResult] {
         results

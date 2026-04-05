@@ -4,151 +4,155 @@ import Testing
 
 struct QueryHistoryTests {
 
-    private func makeHistory(capacity: Int = 100) -> QueryHistory {
-        QueryHistory(capacity: capacity)
+    private func makeHistory(capacity: Int = 100) async -> QueryHistory {
+        QueryHistory(database: await DatabaseManager(), capacity: capacity)
     }
 
     // MARK: - Basic recording
 
-    @Test func entriesEmptyByDefault() {
-        let history = makeHistory()
-        #expect(history.entries().isEmpty)
+    @Test func entriesEmptyByDefault() async {
+        let history = await makeHistory()
+        #expect(await history.entries().isEmpty)
     }
 
-    @Test func recordAddsEntry() {
-        let history = makeHistory()
-        history.record("safari")
-        #expect(history.entries() == ["safari"])
+    @Test func recordAddsEntry() async {
+        let history = await makeHistory()
+        await history.record("safari")
+        #expect(await history.entries() == ["safari"])
     }
 
-    @Test func entriesOrderedMostRecentFirst() {
-        let history = makeHistory()
-        history.record("first")
-        history.record("second")
-        history.record("third")
-        #expect(history.entries() == ["third", "second", "first"])
+    @Test func entriesOrderedMostRecentFirst() async {
+        let history = await makeHistory()
+        await history.record("first")
+        await history.record("second")
+        await history.record("third")
+        #expect(await history.entries() == ["third", "second", "first"])
     }
 
     // MARK: - Deduplication
 
-    @Test func duplicateMovesToMostRecent() {
-        let history = makeHistory()
-        history.record("alpha")
-        history.record("beta")
-        history.record("alpha")
-        let entries = history.entries()
+    @Test func duplicateMovesToMostRecent() async {
+        let history = await makeHistory()
+        await history.record("alpha")
+        await history.record("beta")
+        await history.record("alpha")
+        let entries = await history.entries()
         #expect(entries == ["alpha", "beta"])
     }
 
-    @Test func duplicateIsCasePreserving() {
-        let history = makeHistory()
-        history.record("Safari")
-        history.record("chrome")
-        history.record("Safari")
-        #expect(history.entries() == ["Safari", "chrome"])
+    @Test func duplicateIsCasePreserving() async {
+        let history = await makeHistory()
+        await history.record("Safari")
+        await history.record("chrome")
+        await history.record("Safari")
+        #expect(await history.entries() == ["Safari", "chrome"])
     }
 
     // MARK: - Capacity
 
-    @Test func capacityLimitsEntries() {
-        let history = makeHistory(capacity: 3)
-        history.record("a")
-        history.record("b")
-        history.record("c")
-        history.record("d")
-        let entries = history.entries()
+    @Test func capacityLimitsEntries() async {
+        let history = await makeHistory(capacity: 3)
+        await history.record("a")
+        await history.record("b")
+        await history.record("c")
+        await history.record("d")
+        let entries = await history.entries()
         #expect(entries.count == 3)
         #expect(entries == ["d", "c", "b"])
     }
 
-    @Test func capacityOneKeepsOnlyLatest() {
-        let history = makeHistory(capacity: 1)
-        history.record("old")
-        history.record("new")
-        #expect(history.entries() == ["new"])
+    @Test func capacityOneKeepsOnlyLatest() async {
+        let history = await makeHistory(capacity: 1)
+        await history.record("old")
+        await history.record("new")
+        #expect(await history.entries() == ["new"])
     }
 
     // MARK: - Edge cases
 
-    @Test func emptyQueryIsIgnored() {
-        let history = makeHistory()
-        history.record("")
-        history.record("   ")
-        #expect(history.entries().isEmpty)
+    @Test func emptyQueryIsIgnored() async {
+        let history = await makeHistory()
+        await history.record("")
+        await history.record("   ")
+        #expect(await history.entries().isEmpty)
     }
 
-    @Test func whitespaceIsTrimmed() {
-        let history = makeHistory()
-        history.record("  safari  ")
-        #expect(history.entries() == ["safari"])
+    @Test func whitespaceIsTrimmed() async {
+        let history = await makeHistory()
+        await history.record("  safari  ")
+        #expect(await history.entries() == ["safari"])
     }
 
-    @Test func trimmedDuplicateIsDeduped() {
-        let history = makeHistory()
-        history.record("safari")
-        history.record("  safari  ")
-        #expect(history.entries().count == 1)
+    @Test func trimmedDuplicateIsDeduped() async {
+        let history = await makeHistory()
+        await history.record("safari")
+        await history.record("  safari  ")
+        #expect(await history.entries().count == 1)
     }
 
     // MARK: - Clear
 
-    @Test func clearAllRemovesAllEntries() {
-        let history = makeHistory()
-        history.record("a")
-        history.record("b")
-        history.clearAll()
-        #expect(history.entries().isEmpty)
+    @Test func clearAllRemovesAllEntries() async {
+        let history = await makeHistory()
+        await history.record("a")
+        await history.record("b")
+        await history.clearAll()
+        #expect(await history.entries().isEmpty)
     }
 
     // MARK: - Persistence
 
-    @Test func dataPersistsAcrossInstances() {
+    @Test func dataPersistsAcrossInstances() async {
         let tempDir = FileManager.default.temporaryDirectory
         let dbPath = tempDir.appendingPathComponent("test_history_\(UUID().uuidString).db").path
         defer { try? FileManager.default.removeItem(atPath: dbPath) }
 
         do {
-            let db = DatabaseManager(databasePath: dbPath)
+            let db = await DatabaseManager(databasePath: dbPath)
             let history = QueryHistory(database: db)
-            history.record("persisted query")
+            await history.record("persisted query")
         }
 
-        let db = DatabaseManager(databasePath: dbPath)
+        let db = await DatabaseManager(databasePath: dbPath)
         let history = QueryHistory(database: db)
-        #expect(history.entries() == ["persisted query"])
+        #expect(await history.entries() == ["persisted query"])
     }
 
     // MARK: - Shared database
 
-    @Test func worksWithSharedDatabaseManager() {
-        let db = DatabaseManager()
+    @Test func worksWithSharedDatabaseManager() async {
+        let db = await DatabaseManager()
         let history = QueryHistory(database: db)
-        history.record("shared")
-        #expect(history.entries() == ["shared"])
+        await history.record("shared")
+        #expect(await history.entries() == ["shared"])
     }
 
-    @Test func coexistsWithUsageTrackerInSameDatabase() {
-        let db = DatabaseManager()
+    @Test func coexistsWithUsageTrackerInSameDatabase() async {
+        let db = await DatabaseManager()
         let history = QueryHistory(database: db)
         let tracker = UsageTracker(database: db)
 
-        history.record("test query")
-        tracker.record(query: "test", itemId: "com.test.app")
+        await history.record("test query")
+        await tracker.record(query: "test", itemId: "com.test.app")
 
-        #expect(history.entries() == ["test query"])
-        #expect(tracker.score(query: "test", itemId: "com.test.app") == 1)
+        #expect(await history.entries() == ["test query"])
+        #expect(await tracker.score(query: "test", itemId: "com.test.app") == 1)
     }
 
     // MARK: - Thread safety
 
-    @Test func concurrentAccessIsThreadSafe() {
-        let history = makeHistory()
+    @Test func concurrentAccessIsThreadSafe() async {
+        let history = await makeHistory()
 
-        DispatchQueue.concurrentPerform(iterations: 100) { i in
-            history.record("query_\(i)")
-            _ = history.entries()
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<100 {
+                group.addTask {
+                    await history.record("query_\(i)")
+                    _ = await history.entries()
+                }
+            }
         }
 
-        #expect(history.entries().count == 100)
+        #expect(await history.entries().count == 100)
     }
 }

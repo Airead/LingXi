@@ -1,11 +1,11 @@
 import Foundation
 
-struct FuzzyMatchResult {
+nonisolated struct FuzzyMatchResult {
     let score: Double
     let matchedIndices: [Int]
 }
 
-enum FuzzyMatch {
+nonisolated enum FuzzyMatch {
     static let prefixScore: Double = 100
     static let initialsScore: Double = 75
     static let containsScore: Double = 50
@@ -142,7 +142,7 @@ enum FuzzyMatch {
 
 // MARK: - Character extension
 
-private extension Character {
+nonisolated private extension Character {
     var isWordBoundary: Bool {
         self == " " || self == "-" || self == "_" || self == "."
     }

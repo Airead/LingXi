@@ -1,19 +1,25 @@
 import AppKit
 
-enum SearchResultType: Sendable {
+nonisolated enum PreviewData: Sendable {
+    case text(String)
+    case image(path: URL, description: String)
+}
+
+nonisolated enum SearchResultType: Sendable {
     case application
     case file
     case command
     case bookmark
+    case clipboard
 }
 
-enum ActionModifier: Int, Hashable, Sendable {
+nonisolated enum ActionModifier: Int, Hashable, Sendable {
     case command
     case option
     case control
 }
 
-struct ModifierAction: Sendable {
+nonisolated struct ModifierAction: Sendable {
     let subtitle: String
     let action: @MainActor @Sendable (SearchResult) -> Bool
 
@@ -36,7 +42,7 @@ struct ModifierAction: Sendable {
     ]
 }
 
-struct SearchResult: Identifiable, Sendable {
+nonisolated struct SearchResult: Identifiable, Sendable {
     let id = UUID()
     let itemId: String
     let icon: NSImage?
@@ -45,8 +51,10 @@ struct SearchResult: Identifiable, Sendable {
     let resultType: SearchResultType
     let url: URL?
     var score: Double
+    var previewData: PreviewData?
     var modifierActions: [ActionModifier: ModifierAction] = [:]
     var openWithBundleId: String?
+    var thumbnailURL: URL?
 
     private static let modifierPriority: [ActionModifier] = [.command, .option, .control]
 

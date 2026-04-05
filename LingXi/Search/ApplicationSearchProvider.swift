@@ -1,6 +1,6 @@
 import AppKit
 
-final class ApplicationSearchProvider: SearchProvider, @unchecked Sendable {
+actor ApplicationSearchProvider: SearchProvider {
     private struct AppEntry {
         let name: String
         let bundleIdentifier: String
@@ -13,18 +13,17 @@ final class ApplicationSearchProvider: SearchProvider, @unchecked Sendable {
         }
     }
 
-    static let defaultSearchPaths = [
+    static nonisolated let defaultSearchPaths = [
         "/Applications",
         "/System/Applications",
         "/System/Applications/Utilities",
         NSHomeDirectory() + "/Applications",
     ]
 
-    private static let modifierActions = ModifierAction.defaultFileActions
+    private nonisolated static let modifierActions = ModifierAction.defaultFileActions
 
     private let apps: [AppEntry]
     private var iconCache: [URL: NSImage] = [:]
-    private let iconCacheLock = NSLock()
 
     init(searchPaths: [String] = ApplicationSearchProvider.defaultSearchPaths) {
         let fileManager = FileManager.default
@@ -51,11 +50,11 @@ final class ApplicationSearchProvider: SearchProvider, @unchecked Sendable {
         }
 
         self.apps = entries
-        preloadIcons()
+        Task { await self.preloadIcons() }
     }
 
     func search(query: String) async -> [SearchResult] {
-        scoredResults(from: apps, query: query, names: \.searchableNames) { app, score in
+        scoredItems(from: apps, query: query, names: \.searchableNames).map { app, score in
             let icon = iconForApp(at: app.url)
             let itemId = app.bundleIdentifier.isEmpty ? app.url.path : app.bundleIdentifier
             return SearchResult(
@@ -67,22 +66,19 @@ final class ApplicationSearchProvider: SearchProvider, @unchecked Sendable {
     }
 
     private func iconForApp(at url: URL) -> NSImage {
-        iconCacheLock.lock()
-        let cached = iconCache[url]
-        iconCacheLock.unlock()
-        if let cached { return cached }
+        if let cached = iconCache[url] {
+            return cached
+        }
         return NSWorkspace.shared.icon(forFile: url.path)
     }
 
-    private func preloadIcons() {
+    private func preloadIcons() async {
         let urls = apps.map(\.url)
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            for url in urls {
-                let icon = NSWorkspace.shared.icon(forFile: url.path)
-                self?.iconCacheLock.lock()
-                self?.iconCache[url] = icon
-                self?.iconCacheLock.unlock()
-            }
+        let loaded = await Task.detached {
+            urls.map { ($0, NSWorkspace.shared.icon(forFile: $0.path)) }
+        }.value
+        for (url, icon) in loaded {
+            iconCache[url] = icon
         }
     }
 

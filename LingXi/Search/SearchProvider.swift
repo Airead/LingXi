@@ -2,36 +2,36 @@ protocol SearchProvider: Sendable {
     func search(query: String) async -> [SearchResult]
     var debounceMilliseconds: Int { get }
     var timeoutMilliseconds: Int { get }
+    var supportsPreview: Bool { get }
 }
 
 extension SearchProvider {
     var debounceMilliseconds: Int { 0 }
     var timeoutMilliseconds: Int { 5000 }
+    var supportsPreview: Bool { false }
 }
 
 extension SearchProvider {
-    func scoredResults<T>(
+    nonisolated func scoredItems<T>(
         from items: [T],
         query: String,
-        name: (T) -> String,
-        transform: (T, Double) -> SearchResult
-    ) -> [SearchResult] {
-        scoredResults(from: items, query: query, names: { [name($0)] }, transform: transform)
+        name: (T) -> String
+    ) -> [(item: T, score: Double)] {
+        scoredItems(from: items, query: query, names: { [name($0)] })
     }
 
-    func scoredResults<T>(
+    nonisolated func scoredItems<T>(
         from items: [T],
         query: String,
-        names: (T) -> [String],
-        transform: (T, Double) -> SearchResult
-    ) -> [SearchResult] {
+        names: (T) -> [String]
+    ) -> [(item: T, score: Double)] {
         guard !query.isEmpty else { return [] }
         return items
-            .compactMap { item -> SearchResult? in
+            .compactMap { item -> (item: T, score: Double)? in
                 guard let score = FuzzyMatch.matchFields(query: query, fields: names(item)) else {
                     return nil
                 }
-                return transform(item, score)
+                return (item, score)
             }
             .sorted { $0.score > $1.score }
     }

@@ -5,6 +5,7 @@ import Testing
 
 private struct StubProvider: SearchProvider {
     let label: String
+    var supportsPreview: Bool = false
     func search(query: String) async -> [SearchResult] {
         [SearchResult(itemId: label, icon: nil, name: label, subtitle: query, resultType: .application, url: nil, score: 1)]
     }
@@ -287,6 +288,36 @@ struct SearchRouterEnableDisableTests {
         router.setMaxResults(10)
         let results = await router.search(rawQuery: "test")
         #expect(results.count == 10)
+    }
+}
+
+// MARK: - hasPreviewProvider tests
+
+@MainActor
+struct SearchRouterHasPreviewProviderTests {
+
+    @Test func falseWhenNoPreviewProviders() {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        #expect(router.hasPreviewProvider(for: "hello") == false)
+    }
+
+    @Test func trueWhenPrefixMatchesPreviewProvider() {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "cb", id: "clipboard", provider: StubProvider(label: "clipboard", supportsPreview: true))
+        #expect(router.hasPreviewProvider(for: "cb test") == true)
+    }
+
+    @Test func falseWhenPreviewProviderDisabled() {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "cb", id: "clipboard", provider: StubProvider(label: "clipboard", supportsPreview: true))
+        router.setEnabled(false, forId: "clipboard")
+        #expect(router.hasPreviewProvider(for: "cb test") == false)
+    }
+
+    @Test func falseWhenQueryDoesNotMatchPreviewProvider() {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "cb", id: "clipboard", provider: StubProvider(label: "clipboard", supportsPreview: true))
+        #expect(router.hasPreviewProvider(for: "hello") == false)
     }
 }
 

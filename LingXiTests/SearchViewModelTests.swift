@@ -42,7 +42,7 @@ struct SearchViewModelTests {
 
     private func makeViewModel(query: String = "a") async -> SearchViewModel {
         let router = SearchRouter(defaultProvider: MockSearchProvider())
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = query
         await waitUntil { !vm.results.isEmpty }
         return vm
@@ -88,9 +88,9 @@ struct SearchViewModelTests {
         #expect(vm.selectedIndex == count - 1)
     }
 
-    @Test func moveDownDoesNothingWhenNoResults() {
+    @Test func moveDownDoesNothingWhenNoResults() async {
         let router = SearchRouter(defaultProvider: MockSearchProvider())
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.moveDown()
         #expect(vm.selectedIndex == 0)
     }
@@ -111,18 +111,18 @@ struct SearchViewModelTests {
         #expect(vm.selectedIndex == 0)
     }
 
-    @Test func moveUpDoesNothingWhenNoResults() {
+    @Test func moveUpDoesNothingWhenNoResults() async {
         let router = SearchRouter(defaultProvider: MockSearchProvider())
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.moveUp()
         #expect(vm.selectedIndex == 0)
     }
 
     // MARK: - confirm
 
-    @Test func confirmReturnsFalseWhenNoResults() {
+    @Test func confirmReturnsFalseWhenNoResults() async {
         let router = SearchRouter(defaultProvider: MockSearchProvider())
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         #expect(vm.confirm() == false)
         #expect(vm.results.isEmpty)
     }
@@ -141,7 +141,7 @@ struct SearchViewModelTests {
         ])
         let mockWorkspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: mockWorkspace, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, workspace: mockWorkspace, debounceMilliseconds: 0)
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
         #expect(vm.results.count == 1)
@@ -169,15 +169,17 @@ struct SearchViewModelTests {
             SearchResult(itemId: "com.test.app", icon: nil, name: "TestApp", subtitle: "Test",
                          resultType: .application, url: appURL, score: 1.0),
         ])
-        let db = DatabaseManager()
+        let db = await DatabaseManager()
         let tracker = UsageTracker(database: db)
         let mockWorkspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: mockWorkspace, database: db, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, workspace: mockWorkspace, database: db, debounceMilliseconds: 0)
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
         vm.confirm()
-        #expect(tracker.score(query: "Test", itemId: "com.test.app") == 1)
+        // recordExecution is fire-and-forget, give it time to complete
+        try? await Task.sleep(nanoseconds: 50 * 1_000_000)
+        #expect(await tracker.score(query: "Test", itemId: "com.test.app") == 1)
     }
 
     @Test func usageBoostsResultOrder() async {
@@ -187,14 +189,14 @@ struct SearchViewModelTests {
             SearchResult(itemId: "app.second", icon: nil, name: "Second", subtitle: "",
                          resultType: .application, url: nil, score: 50.0),
         ])
-        let db = DatabaseManager()
+        let db = await DatabaseManager()
         let tracker = UsageTracker(database: db)
         // Record enough usage for "Second" to overtake "First" (50 + 50 boost = 100 > 80)
         for _ in 0..<60 {
-            tracker.record(query: "test", itemId: "app.second")
+            await tracker.record(query: "test", itemId: "app.second")
         }
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, database: db, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, database: db, debounceMilliseconds: 0)
         vm.query = "test"
         await waitUntil { vm.results.count == 2 }
         #expect(vm.results.first?.itemId == "app.second")
@@ -208,7 +210,7 @@ struct SearchViewModelTests {
                          resultType: .application, url: nil, score: 50.0),
         ])
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = "test"
         await waitUntil { vm.results.count == 2 }
         #expect(vm.results.first?.itemId == "app.first")
@@ -228,7 +230,7 @@ struct SearchViewModelTests {
 
         let router = SearchRouter(defaultProvider: fast)
         router.registerDefault(id: "slow", provider: slow)
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = "test"
 
         await waitUntil(timeout: 2000) { vm.results.count == 2 }
@@ -250,7 +252,7 @@ struct SearchViewModelTests {
 
         let router = SearchRouter(defaultProvider: fast)
         router.registerDefault(id: "slow", provider: slow)
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = "test"
 
         // Wait for fast provider
@@ -282,7 +284,7 @@ struct SearchViewModelTests {
         )
 
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = "old"
 
         // Quickly change query before old search completes
@@ -306,7 +308,7 @@ struct SearchViewModelTests {
                          resultType: .application, url: nil, score: 1),
         ])
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = "test"
         await waitUntil { !vm.results.isEmpty }
         vm.query = ""
@@ -320,75 +322,79 @@ struct SearchViewModelTests {
     private func makeHistoryViewModel(
         historyEntries: [String],
         provider: SearchProvider? = nil
-    ) -> SearchViewModel {
-        let db = DatabaseManager()
+    ) async -> SearchViewModel {
+        let db = await DatabaseManager()
         let history = QueryHistory(database: db)
         for entry in historyEntries.reversed() {
-            history.record(entry)
+            await history.record(entry)
         }
         let router = SearchRouter(defaultProvider: provider ?? MockSearchProvider())
-        return SearchViewModel(
+        return await SearchViewModel(
             router: router,
             database: db,
             debounceMilliseconds: 0
         )
     }
 
-    @Test func moveUpOnEmptyQueryBrowsesHistory() {
-        let vm = makeHistoryViewModel(historyEntries: ["recent", "older", "oldest"])
+    @Test func moveUpOnEmptyQueryBrowsesHistory() async {
+        let vm = await makeHistoryViewModel(historyEntries: ["recent", "older", "oldest"])
         #expect(vm.query.isEmpty)
 
         vm.moveUp()
-        #expect(vm.query == "recent")
+        await waitUntil { vm.query == "recent" }
         #expect(vm.historyIndex == 0)
 
         vm.moveUp()
-        #expect(vm.query == "older")
+        await waitUntil { vm.query == "older" }
         #expect(vm.historyIndex == 1)
 
         vm.moveUp()
-        #expect(vm.query == "oldest")
+        await waitUntil { vm.query == "oldest" }
         #expect(vm.historyIndex == 2)
     }
 
-    @Test func moveUpClampsAtOldestHistory() {
-        let vm = makeHistoryViewModel(historyEntries: ["only"])
+    @Test func moveUpClampsAtOldestHistory() async {
+        let vm = await makeHistoryViewModel(historyEntries: ["only"])
         vm.moveUp()
-        #expect(vm.query == "only")
+        await waitUntil { vm.query == "only" }
         vm.moveUp()
+        await waitUntil { vm.historyIndex == 0 }
         #expect(vm.query == "only")
-        #expect(vm.historyIndex == 0)
     }
 
-    @Test func moveDownReturnsToMoreRecentHistory() {
-        let vm = makeHistoryViewModel(historyEntries: ["recent", "older"])
-        vm.moveUp() // "recent"
-        vm.moveUp() // "older"
+    @Test func moveDownReturnsToMoreRecentHistory() async {
+        let vm = await makeHistoryViewModel(historyEntries: ["recent", "older"])
+        vm.moveUp()
+        await waitUntil { vm.query == "recent" }
+        vm.moveUp()
+        await waitUntil { vm.query == "older" }
         vm.moveDown()
         #expect(vm.query == "recent")
         #expect(vm.historyIndex == 0)
     }
 
-    @Test func moveDownPastRecentRestoresEmptyInput() {
-        let vm = makeHistoryViewModel(historyEntries: ["recent"])
+    @Test func moveDownPastRecentRestoresEmptyInput() async {
+        let vm = await makeHistoryViewModel(historyEntries: ["recent"])
         vm.moveUp()
-        #expect(vm.query == "recent")
+        await waitUntil { vm.query == "recent" }
         vm.moveDown()
         #expect(vm.query.isEmpty)
         #expect(vm.historyIndex == nil)
     }
 
-    @Test func moveUpDoesNothingWhenNoHistory() {
-        let vm = makeHistoryViewModel(historyEntries: [])
+    @Test func moveUpDoesNothingWhenNoHistory() async {
+        let vm = await makeHistoryViewModel(historyEntries: [])
         vm.moveUp()
+        // Give the internal Task a chance to run
+        try? await Task.sleep(nanoseconds: 20 * 1_000_000)
         #expect(vm.query.isEmpty)
         #expect(vm.historyIndex == nil)
     }
 
-    @Test func typingDuringHistoryExitsHistoryMode() {
-        let vm = makeHistoryViewModel(historyEntries: ["recent", "older"])
-        vm.moveUp() // Enter history mode
-        #expect(vm.historyIndex != nil)
+    @Test func typingDuringHistoryExitsHistoryMode() async {
+        let vm = await makeHistoryViewModel(historyEntries: ["recent", "older"])
+        vm.moveUp()
+        await waitUntil { vm.historyIndex != nil }
 
         vm.query = "user typed"
         #expect(vm.historyIndex == nil)
@@ -399,9 +405,9 @@ struct SearchViewModelTests {
             SearchResult(itemId: "app1", icon: nil, name: "App", subtitle: "",
                          resultType: .application, url: nil, score: 1.0),
         ])
-        let vm = makeHistoryViewModel(historyEntries: ["App"], provider: provider)
+        let vm = await makeHistoryViewModel(historyEntries: ["App"], provider: provider)
         vm.moveUp()
-        #expect(vm.query == "App")
+        await waitUntil { vm.query == "App" }
         await waitUntil { !vm.results.isEmpty }
         #expect(!vm.results.isEmpty)
     }
@@ -422,18 +428,20 @@ struct SearchViewModelTests {
             SearchResult(itemId: "com.test.app", icon: nil, name: "TestApp", subtitle: "Test",
                          resultType: .application, url: appURL, score: 1.0),
         ])
-        let db = DatabaseManager()
+        let db = await DatabaseManager()
         let history = QueryHistory(database: db)
         let mockWorkspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(
+        let vm = await SearchViewModel(
             router: router, workspace: mockWorkspace,
             database: db, debounceMilliseconds: 0
         )
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
         vm.confirm()
-        #expect(history.entries() == ["Test"])
+        // recordExecution is fire-and-forget, give it time to complete
+        try? await Task.sleep(nanoseconds: 50 * 1_000_000)
+        #expect(await history.entries() == ["Test"])
     }
 
     @Test func queryChangeDoesNotFlashEmptyResults() async {
@@ -442,7 +450,7 @@ struct SearchViewModelTests {
                          resultType: .application, url: nil, score: 80),
         ])
         let router = SearchRouter(defaultProvider: providerA)
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = "alpha"
         await waitUntil { !vm.results.isEmpty }
         #expect(vm.results.count == 1)
@@ -451,6 +459,144 @@ struct SearchViewModelTests {
         vm.query = "beta"
         // Immediately after setting query, results should still contain the old result
         #expect(!vm.results.isEmpty, "Results should not flash empty on query change")
+    }
+
+    // MARK: - Clipboard confirm
+
+    @Test func confirmClipboardCallsPasteCallback() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:42", icon: nil, name: "Hello", subtitle: "Safari",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var pastedItemId: String?
+        vm.onClipboardPaste = { itemId in pastedItemId = itemId }
+        vm.query = "Hello"
+        await waitUntil { !vm.results.isEmpty }
+        let result = vm.confirm()
+        #expect(result == true)
+        #expect(pastedItemId == "clipboard:42")
+    }
+
+    @Test func confirmClipboardWithCommandUsesModifierAction() async {
+        var copiedId: Int?
+        let copyAction = ModifierAction(subtitle: "Copy to Clipboard") { result in
+            if let id = ClipboardHistoryProvider.extractId(from: result.itemId) {
+                copiedId = id
+            }
+            return true
+        }
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:7", icon: nil, name: "Text", subtitle: "Notes",
+                         resultType: .clipboard, url: nil, score: 1.0,
+                         modifierActions: [.command: copyAction]),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var pastedItemId: String?
+        vm.onClipboardPaste = { itemId in pastedItemId = itemId }
+        vm.query = "Text"
+        await waitUntil { !vm.results.isEmpty }
+        let result = vm.confirm(modifiers: [.command])
+        #expect(result == true)
+        #expect(copiedId == 7)
+        #expect(pastedItemId == nil)
+    }
+
+    @Test func confirmClipboardPassesRawItemId() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:invalid", icon: nil, name: "Bad", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var pastedItemId: String?
+        vm.onClipboardPaste = { itemId in pastedItemId = itemId }
+        vm.query = "Bad"
+        await waitUntil { !vm.results.isEmpty }
+        #expect(vm.confirm() == true)
+        #expect(pastedItemId == "clipboard:invalid")
+    }
+
+    @Test func extractClipboardIdParsesValidId() {
+        #expect(ClipboardHistoryProvider.extractId(from: "clipboard:123") == 123)
+        #expect(ClipboardHistoryProvider.extractId(from: "clipboard:0") == 0)
+        #expect(ClipboardHistoryProvider.extractId(from: "clipboard:abc") == nil)
+        #expect(ClipboardHistoryProvider.extractId(from: "other:123") == nil)
+        #expect(ClipboardHistoryProvider.extractId(from: "") == nil)
+    }
+
+    // MARK: - Delete
+
+    @Test func deleteSelectedRemovesClipboardItem() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:10", icon: nil, name: "First", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 2.0),
+            SearchResult(itemId: "clipboard:20", icon: nil, name: "Second", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var deletedItemId: String?
+        vm.onDeleteItem = { itemId in deletedItemId = itemId }
+        vm.query = "clip"
+        await waitUntil { vm.results.count == 2 }
+        vm.selectedIndex = 0
+        vm.deleteSelected()
+        #expect(deletedItemId == "clipboard:10")
+        #expect(vm.results.count == 1)
+        #expect(vm.results[0].itemId == "clipboard:20")
+        #expect(vm.selectedIndex == 0)
+    }
+
+    @Test func deleteSelectedAdjustsIndexWhenLastItem() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:1", icon: nil, name: "A", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 2.0),
+            SearchResult(itemId: "clipboard:2", icon: nil, name: "B", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.onDeleteItem = { _ in }
+        vm.query = "clip"
+        await waitUntil { vm.results.count == 2 }
+        vm.selectedIndex = 1
+        vm.deleteSelected()
+        #expect(vm.results.count == 1)
+        #expect(vm.selectedIndex == 0)
+    }
+
+    @Test func deleteSelectedIgnoresNonClipboardItem() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "app:1", icon: nil, name: "App", subtitle: "",
+                         resultType: .application, url: URL(string: "file:///app")!, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var deletedItemId: String?
+        vm.onDeleteItem = { itemId in deletedItemId = itemId }
+        vm.query = "App"
+        await waitUntil { !vm.results.isEmpty }
+        vm.deleteSelected()
+        #expect(deletedItemId == nil)
+        #expect(vm.results.count == 1)
+    }
+
+    @Test func deleteSelectedLastRemainingItemClearsList() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:99", icon: nil, name: "Only", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.onDeleteItem = { _ in }
+        vm.query = "Only"
+        await waitUntil { !vm.results.isEmpty }
+        vm.deleteSelected()
+        #expect(vm.results.isEmpty)
+        #expect(vm.selectedIndex == 0)
     }
 
     @Test func queryChangeReplacesResultsOnFirstMerge() async {
@@ -463,7 +609,7 @@ struct SearchViewModelTests {
             ]
         )
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.query = "old"
         await waitUntil { !vm.results.isEmpty }
         #expect(vm.results.first?.itemId == "old_item")
@@ -475,12 +621,112 @@ struct SearchViewModelTests {
         #expect(!itemIds.contains("old_item"))
     }
 
-    @Test func clearExitsHistoryMode() {
-        let vm = makeHistoryViewModel(historyEntries: ["recent"])
+    @Test func prefixSwitchReplacesResults() async {
+        let defaultProvider = StubSearchProvider(results: [
+            SearchResult(itemId: "app:1", icon: nil, name: "AppOne", subtitle: "",
+                         resultType: .application, url: nil, score: 80),
+        ])
+        let clipboardProvider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:1", icon: nil, name: "ClipText", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 0),
+        ])
+        let router = SearchRouter(defaultProvider: defaultProvider)
+        router.register(prefix: "cb", id: "clipboard", provider: clipboardProvider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+
+        // Type "cb" (no space) → default provider matches
+        vm.query = "cb"
+        await waitUntil { !vm.results.isEmpty }
+        // Default provider may or may not match "cb"; either way, proceed
+
+        // Type "cb " (with space) → clipboard prefix matches
+        vm.query = "cb "
+        await waitUntil { vm.results.contains(where: { $0.resultType == .clipboard }) }
+        let itemIds = vm.results.map(\.itemId)
+        #expect(itemIds.contains("clipboard:1"))
+        #expect(!itemIds.contains("app:1"), "App results should be replaced by clipboard results")
+    }
+
+    // MARK: - Number key shortcut (Cmd+1~9)
+
+    @Test func confirmAtSpecificIndexSelectsAndConfirms() async {
+        let urls = (0..<5).map { URL(fileURLWithPath: "/Applications/App\($0).app") }
+        let provider = StubSearchProvider(results: (0..<5).map { i in
+            SearchResult(itemId: "app:\(i)", icon: nil, name: "App\(i)", subtitle: "",
+                         resultType: .application, url: urls[i], score: Double(100 - i))
+        })
+        let mockWorkspace = MockWorkspaceOpener()
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, workspace: mockWorkspace, debounceMilliseconds: 0)
+        vm.query = "App"
+        await waitUntil { vm.results.count == 5 }
+
+        // Simulate Cmd+3: set selectedIndex to 2 and confirm
+        vm.selectedIndex = 2
+        let result = vm.confirm()
+        #expect(result == true)
+        #expect(mockWorkspace.openedURLs == [urls[2]])
+    }
+
+    @Test func confirmAtOutOfBoundsIndexReturnsFalse() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "app:0", icon: nil, name: "App0", subtitle: "",
+                         resultType: .application, url: URL(fileURLWithPath: "/Applications/A.app"), score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "App"
+        await waitUntil { !vm.results.isEmpty }
+
+        // Simulate Cmd+9 when only 1 result exists
+        vm.selectedIndex = 8
+        let result = vm.confirm()
+        #expect(result == false)
+    }
+
+    @Test func clearExitsHistoryMode() async {
+        let vm = await makeHistoryViewModel(historyEntries: ["recent"])
         vm.moveUp()
-        #expect(vm.historyIndex != nil)
+        await waitUntil { vm.historyIndex != nil }
         vm.clear()
         #expect(vm.historyIndex == nil)
         #expect(vm.query.isEmpty)
+    }
+
+    // MARK: - hasPreview
+
+    @Test func hasPreviewTrueWhenPreviewProviderMatched() async {
+        let router = SearchRouter(defaultProvider: MockSearchProvider())
+        router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "cb "
+        #expect(vm.hasPreview == true)
+    }
+
+    @Test func hasPreviewFalseForDefaultProvider() async {
+        let router = SearchRouter(defaultProvider: MockSearchProvider())
+        router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "hello"
+        #expect(vm.hasPreview == false)
+    }
+
+    @Test func hasPreviewFalseWhenCleared() async {
+        let router = SearchRouter(defaultProvider: MockSearchProvider())
+        router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "cb test"
+        #expect(vm.hasPreview == true)
+        vm.clear()
+        #expect(vm.hasPreview == false)
+    }
+
+    @Test func hasPreviewFalseWhenPreviewProviderDisabled() async {
+        let router = SearchRouter(defaultProvider: MockSearchProvider())
+        router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
+        router.setEnabled(false, forId: "clipboard")
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "cb "
+        #expect(vm.hasPreview == false)
     }
 }

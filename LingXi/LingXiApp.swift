@@ -14,53 +14,101 @@ struct LingXiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let settings = AppSettings.shared
     private let hotKeyManager: HotKeyManager
-    private let panelManager: PanelManager
+    private let panelHolder = PanelHolder()
+
+    @MainActor
+    private final class PanelHolder {
+        var panelManager: PanelManager?
+    }
 
     var body: some Scene {
-        MenuBarExtra("LingXi", systemImage: "magnifyingglass") {
+        MenuBarExtra("LingXi", systemImage: "sparkles") {
             MenuBarMenuView()
         }
     }
 
     init() {
         let s = settings
-        hotKeyManager = HotKeyManager(keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers)
-        panelManager = PanelManager(settings: s)
+        let hotKeyManager = HotKeyManager()
+        self.hotKeyManager = hotKeyManager
 
-        hotKeyManager.onHotKey = { [panelManager] in
-            panelManager.toggle()
-        }
+        let holder = panelHolder
+
         hotKeyManager.start()
 
+        let showPanel: (String?) -> Void = { prefix in
+            if holder.panelManager?.isVisible == false {
+                holder.panelManager?.saveInputSource()
+            }
+            if let prefix {
+                holder.panelManager?.showWithPrefix(prefix)
+            } else {
+                holder.panelManager?.toggle()
+            }
+        }
+
+        let mainHotKeyId = hotKeyManager.register(keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers) {
+            showPanel(nil)
+        }
+
+        let sourceEntries: [(KeyPath<AppSettings, UInt32>, KeyPath<AppSettings, UInt32>, KeyPath<AppSettings, String>)] = [
+            (\.fileSearchHotKeyKeyCode, \.fileSearchHotKeyModifiers, \.fileSearchPrefix),
+            (\.folderSearchHotKeyKeyCode, \.folderSearchHotKeyModifiers, \.folderSearchPrefix),
+            (\.bookmarkSearchHotKeyKeyCode, \.bookmarkSearchHotKeyModifiers, \.bookmarkSearchPrefix),
+            (\.clipboardSearchHotKeyKeyCode, \.clipboardSearchHotKeyModifiers, \.clipboardSearchPrefix),
+        ]
+
+        let sourceHotKeyIds = sourceEntries.map { kcPath, modPath, prefixPath in
+            hotKeyManager.register(keyCode: s[keyPath: kcPath], modifiers: s[keyPath: modPath]) {
+                showPanel(s[keyPath: prefixPath])
+            }
+        }
+
         let hk = hotKeyManager
-        let pm = panelManager
 
         observeForever({
             _ = s.hotKeyKeyCode
             _ = s.hotKeyModifiers
         }, action: {
-            hk.updateHotKey(keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers)
+            hk.update(id: mainHotKeyId, keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers)
         })
 
-        observeForever({
-            _ = s.maxSearchResults
-            _ = s.applicationSearchEnabled
-            _ = s.fileSearchEnabled
-            _ = s.folderSearchEnabled
-            _ = s.bookmarkSearchEnabled
-            _ = s.fileSearchPrefix
-            _ = s.folderSearchPrefix
-            _ = s.bookmarkSearchPrefix
-        }, action: {
-            pm.applySettings(s)
-        })
+        for ((kcPath, modPath, _), hotKeyId) in zip(sourceEntries, sourceHotKeyIds) {
+            observeForever({
+                _ = s[keyPath: kcPath]
+                _ = s[keyPath: modPath]
+            }, action: {
+                hk.update(id: hotKeyId, keyCode: s[keyPath: kcPath], modifiers: s[keyPath: modPath])
+            })
+        }
 
         observeForever({
             _ = s.appearanceMode
         }, action: {
             applyAppearance(s.appearanceMode)
         })
+
+        Task { @MainActor in
+            let pm = await PanelManager(settings: s)
+            holder.panelManager = pm
+            observeForever({
+                _ = s.maxSearchResults
+                _ = s.applicationSearchEnabled
+                _ = s.fileSearchEnabled
+                _ = s.folderSearchEnabled
+                _ = s.bookmarkSearchEnabled
+                _ = s.clipboardHistoryEnabled
+                _ = s.fileSearchPrefix
+                _ = s.folderSearchPrefix
+                _ = s.bookmarkSearchPrefix
+                _ = s.clipboardSearchPrefix
+                _ = s.clipboardHistoryCapacity
+            }, action: {
+                pm.applySettings(s)
+            })
+        }
     }
+
 }
 
 private struct MenuBarMenuView: View {

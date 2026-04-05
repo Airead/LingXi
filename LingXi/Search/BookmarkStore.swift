@@ -1,6 +1,6 @@
 import Foundation
 
-struct Bookmark: Sendable {
+nonisolated struct Bookmark: Sendable {
     let title: String
     let url: URL
     let browserBundleId: String
@@ -10,7 +10,7 @@ struct Bookmark: Sendable {
     }
 }
 
-struct ChromiumBrowser: Sendable {
+nonisolated struct ChromiumBrowser: Sendable {
     let bundleId: String
     let baseDir: String
 
@@ -29,63 +29,74 @@ struct ChromiumBrowser: Sendable {
     }()
 }
 
-final class BookmarkStore: @unchecked Sendable {
-    private let lock = NSLock()
-    private var cachedBookmarks: [Bookmark] = []
-    private var fileSources: [DispatchSourceFileSystemObject] = []
+actor BookmarkStore {
+    private var cachedBookmarks: [Bookmark]
+    // Written in startWatching() (actor-isolated) and read in deinit (nonisolated).
+    private nonisolated(unsafe) var fileSources: [DispatchSourceFileSystemObject] = []
 
     private let safariPath: String
     private let chromiumBrowsers: [ChromiumBrowser]
 
-    private let watchQueue = DispatchQueue(label: "io.github.airead.lingxi.bookmarkwatch")
-    private var pendingReload: DispatchWorkItem?
+    private nonisolated(unsafe) var pendingReloadTask: Task<Void, Never>?
+    private nonisolated(unsafe) var watchTask: Task<Void, Never>?
 
     static let defaultSafariPath: String = {
         NSHomeDirectory() + "/Library/Safari/Bookmarks.plist"
     }()
 
-    convenience init() {
-        self.init(safariPath: Self.defaultSafariPath, chromiumBrowsers: ChromiumBrowser.defaultBrowsers, watch: true)
+    init() {
+        self.safariPath = Self.defaultSafariPath
+        self.chromiumBrowsers = ChromiumBrowser.defaultBrowsers
+        self.cachedBookmarks = Self.loadAllBookmarks(
+            safariPath: safariPath, chromiumBrowsers: chromiumBrowsers
+        )
+        self.watchTask = Task { await self.startWatching() }
     }
 
     init(safariPath: String, chromiumBrowsers: [ChromiumBrowser] = [], watch: Bool = false) {
         self.safariPath = safariPath
         self.chromiumBrowsers = chromiumBrowsers
-        reload()
+        self.cachedBookmarks = Self.loadAllBookmarks(
+            safariPath: safariPath, chromiumBrowsers: chromiumBrowsers
+        )
         if watch {
-            startWatching()
+            self.watchTask = Task { await self.startWatching() }
         }
     }
 
     deinit {
+        watchTask?.cancel()
+        pendingReloadTask?.cancel()
         for source in fileSources {
             source.cancel()
         }
     }
 
     var bookmarks: [Bookmark] {
-        lock.lock()
-        defer { lock.unlock() }
-        return cachedBookmarks
+        cachedBookmarks
     }
 
     func reload() {
+        cachedBookmarks = Self.loadAllBookmarks(
+            safariPath: safariPath, chromiumBrowsers: chromiumBrowsers
+        )
+    }
+
+    private nonisolated static func loadAllBookmarks(
+        safariPath: String, chromiumBrowsers: [ChromiumBrowser]
+    ) -> [Bookmark] {
         var all: [Bookmark] = []
-        all.append(contentsOf: loadSafariBookmarks())
+        all.append(contentsOf: loadSafariBookmarks(path: safariPath))
         for browser in chromiumBrowsers {
             all.append(contentsOf: loadChromiumBookmarks(browser: browser))
         }
-        all = dedup(all)
-
-        lock.lock()
-        cachedBookmarks = all
-        lock.unlock()
+        return dedup(all)
     }
 
     // MARK: - Safari
 
-    private func loadSafariBookmarks() -> [Bookmark] {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: safariPath)),
+    private static func loadSafariBookmarks(path: String) -> [Bookmark] {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               let children = plist["Children"] as? [[String: Any]]
         else { return [] }
@@ -100,7 +111,7 @@ final class BookmarkStore: @unchecked Sendable {
         return results
     }
 
-    private func collectSafariBookmarks(from node: [String: Any], into results: inout [Bookmark]) {
+    private static func collectSafariBookmarks(from node: [String: Any], into results: inout [Bookmark]) {
         let type = node["WebBookmarkType"] as? String
 
         if type == "WebBookmarkTypeLeaf",
@@ -130,15 +141,15 @@ final class BookmarkStore: @unchecked Sendable {
         name == "Default" || name == "Guest Profile" || name == "System Profile" || name.hasPrefix("Profile ")
     }
 
-    private func loadChromiumBookmarks(browser: ChromiumBrowser) -> [Bookmark] {
+    private static func loadChromiumBookmarks(browser: ChromiumBrowser) -> [Bookmark] {
         let baseDir = browser.baseDir
         let fm = FileManager.default
         guard let contents = try? fm.contentsOfDirectory(atPath: baseDir) else { return [] }
 
         var results: [Bookmark] = []
-        for dirName in contents where Self.isChromiumProfileDir(dirName) {
+        for dirName in contents where isChromiumProfileDir(dirName) {
             let profileDir = (baseDir as NSString).appendingPathComponent(dirName)
-            for fileName in Self.chromiumBookmarkFileNames {
+            for fileName in chromiumBookmarkFileNames {
                 let bookmarksFile = (profileDir as NSString).appendingPathComponent(fileName)
                 guard let data = try? Data(contentsOf: URL(fileURLWithPath: bookmarksFile)),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -155,7 +166,7 @@ final class BookmarkStore: @unchecked Sendable {
         return results
     }
 
-    private func collectChromiumBookmarks(from node: [String: Any], browser: ChromiumBrowser, into results: inout [Bookmark]) {
+    private static func collectChromiumBookmarks(from node: [String: Any], browser: ChromiumBrowser, into results: inout [Bookmark]) {
         let type = node["type"] as? String
 
         if type == "url",
@@ -177,7 +188,7 @@ final class BookmarkStore: @unchecked Sendable {
 
     // MARK: - Dedup
 
-    private func dedup(_ bookmarks: [Bookmark]) -> [Bookmark] {
+    private static func dedup(_ bookmarks: [Bookmark]) -> [Bookmark] {
         var seen = Set<String>()
         return bookmarks.filter { bookmark in
             var key = bookmark.url.absoluteString.lowercased()
@@ -217,12 +228,12 @@ final class BookmarkStore: @unchecked Sendable {
     }
 
     private func scheduleReload() {
-        pendingReload?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.reload()
+        pendingReloadTask?.cancel()
+        pendingReloadTask = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            reload()
         }
-        pendingReload = work
-        watchQueue.asyncAfter(deadline: .now() + .milliseconds(300), execute: work)
     }
 
     private func makeFileSource(path: String) -> DispatchSourceFileSystemObject? {
@@ -232,10 +243,11 @@ final class BookmarkStore: @unchecked Sendable {
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: [.write, .rename],
-            queue: watchQueue
+            queue: nil
         )
         source.setEventHandler { [weak self] in
-            self?.scheduleReload()
+            guard let self else { return }
+            Task { await self.scheduleReload() }
         }
         source.setCancelHandler {
             close(fd)

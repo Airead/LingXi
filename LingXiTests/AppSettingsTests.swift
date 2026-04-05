@@ -113,4 +113,33 @@ struct AppSettingsTests {
         )
         #expect(display == "\u{21E7}\u{2318}Space")
     }
+
+    @Test func sourceHotKeyDefaultsToUnset() {
+        let settings = makeSettings()
+        #expect(settings.fileSearchHotKeyKeyCode == 0)
+        #expect(settings.fileSearchHotKeyModifiers == 0)
+        #expect(settings.folderSearchHotKeyKeyCode == 0)
+        #expect(settings.folderSearchHotKeyModifiers == 0)
+        #expect(settings.bookmarkSearchHotKeyKeyCode == 0)
+        #expect(settings.bookmarkSearchHotKeyModifiers == 0)
+        #expect(settings.clipboardSearchHotKeyKeyCode == 0)
+        #expect(settings.clipboardSearchHotKeyModifiers == 0)
+    }
+
+    @Test func persistsSourceHotKeys() {
+        let defaults = makeDefaults()
+        let settings1 = AppSettings(defaults: defaults)
+        settings1.clipboardSearchHotKeyKeyCode = UInt32(kVK_ANSI_V)
+        settings1.clipboardSearchHotKeyModifiers = UInt32(optionKey) | UInt32(cmdKey)
+
+        let settings2 = AppSettings(defaults: defaults)
+        #expect(settings2.clipboardSearchHotKeyKeyCode == UInt32(kVK_ANSI_V))
+        #expect(settings2.clipboardSearchHotKeyModifiers == UInt32(optionKey) | UInt32(cmdKey))
+    }
+
+    @Test func isHotKeySet() {
+        #expect(AppSettings.isHotKeySet(keyCode: 0, modifiers: 0) == false)
+        #expect(AppSettings.isHotKeySet(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(cmdKey)) == true)
+        #expect(AppSettings.isHotKeySet(keyCode: 0, modifiers: UInt32(cmdKey)) == true)
+    }
 }

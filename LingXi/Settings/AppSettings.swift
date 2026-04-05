@@ -74,6 +74,50 @@ final class AppSettings {
             guard bookmarkSearchPrefix != oldValue else { return }; save(.bookmarkSearchPrefix, value: bookmarkSearchPrefix)
         }
     }
+    var clipboardHistoryEnabled: Bool {
+        didSet { guard clipboardHistoryEnabled != oldValue else { return }; save(.clipboardHistoryEnabled, value: clipboardHistoryEnabled) }
+    }
+    var clipboardSearchPrefix: String {
+        didSet {
+            if clipboardSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { clipboardSearchPrefix = oldValue; return }
+            guard clipboardSearchPrefix != oldValue else { return }; save(.clipboardSearchPrefix, value: clipboardSearchPrefix)
+        }
+    }
+    var clipboardHistoryCapacity: Int {
+        didSet {
+            let clamped = max(10, min(clipboardHistoryCapacity, 1000))
+            if clamped != clipboardHistoryCapacity { clipboardHistoryCapacity = clamped; return }
+            guard clipboardHistoryCapacity != oldValue else { return }
+            save(.clipboardHistoryCapacity, value: clipboardHistoryCapacity)
+        }
+    }
+
+    // MARK: - Source hotkeys (0/0 = not set)
+
+    var fileSearchHotKeyKeyCode: UInt32 {
+        didSet { guard fileSearchHotKeyKeyCode != oldValue else { return }; save(.fileSearchHotKeyKeyCode, value: fileSearchHotKeyKeyCode) }
+    }
+    var fileSearchHotKeyModifiers: UInt32 {
+        didSet { guard fileSearchHotKeyModifiers != oldValue else { return }; save(.fileSearchHotKeyModifiers, value: fileSearchHotKeyModifiers) }
+    }
+    var folderSearchHotKeyKeyCode: UInt32 {
+        didSet { guard folderSearchHotKeyKeyCode != oldValue else { return }; save(.folderSearchHotKeyKeyCode, value: folderSearchHotKeyKeyCode) }
+    }
+    var folderSearchHotKeyModifiers: UInt32 {
+        didSet { guard folderSearchHotKeyModifiers != oldValue else { return }; save(.folderSearchHotKeyModifiers, value: folderSearchHotKeyModifiers) }
+    }
+    var bookmarkSearchHotKeyKeyCode: UInt32 {
+        didSet { guard bookmarkSearchHotKeyKeyCode != oldValue else { return }; save(.bookmarkSearchHotKeyKeyCode, value: bookmarkSearchHotKeyKeyCode) }
+    }
+    var bookmarkSearchHotKeyModifiers: UInt32 {
+        didSet { guard bookmarkSearchHotKeyModifiers != oldValue else { return }; save(.bookmarkSearchHotKeyModifiers, value: bookmarkSearchHotKeyModifiers) }
+    }
+    var clipboardSearchHotKeyKeyCode: UInt32 {
+        didSet { guard clipboardSearchHotKeyKeyCode != oldValue else { return }; save(.clipboardSearchHotKeyKeyCode, value: clipboardSearchHotKeyKeyCode) }
+    }
+    var clipboardSearchHotKeyModifiers: UInt32 {
+        didSet { guard clipboardSearchHotKeyModifiers != oldValue else { return }; save(.clipboardSearchHotKeyModifiers, value: clipboardSearchHotKeyModifiers) }
+    }
 
     // MARK: - Appearance mode
 
@@ -108,6 +152,17 @@ final class AppSettings {
         case fileSearchPrefix = "io.github.airead.lingxi.fileSearchPrefix"
         case folderSearchPrefix = "io.github.airead.lingxi.folderSearchPrefix"
         case bookmarkSearchPrefix = "io.github.airead.lingxi.bookmarkSearchPrefix"
+        case clipboardHistoryEnabled = "io.github.airead.lingxi.clipboardHistoryEnabled"
+        case clipboardSearchPrefix = "io.github.airead.lingxi.clipboardSearchPrefix"
+        case clipboardHistoryCapacity = "io.github.airead.lingxi.clipboardHistoryCapacity"
+        case fileSearchHotKeyKeyCode = "io.github.airead.lingxi.fileSearchHotKeyKeyCode"
+        case fileSearchHotKeyModifiers = "io.github.airead.lingxi.fileSearchHotKeyModifiers"
+        case folderSearchHotKeyKeyCode = "io.github.airead.lingxi.folderSearchHotKeyKeyCode"
+        case folderSearchHotKeyModifiers = "io.github.airead.lingxi.folderSearchHotKeyModifiers"
+        case bookmarkSearchHotKeyKeyCode = "io.github.airead.lingxi.bookmarkSearchHotKeyKeyCode"
+        case bookmarkSearchHotKeyModifiers = "io.github.airead.lingxi.bookmarkSearchHotKeyModifiers"
+        case clipboardSearchHotKeyKeyCode = "io.github.airead.lingxi.clipboardSearchHotKeyKeyCode"
+        case clipboardSearchHotKeyModifiers = "io.github.airead.lingxi.clipboardSearchHotKeyModifiers"
     }
 
     // MARK: - Defaults
@@ -133,6 +188,18 @@ final class AppSettings {
         fileSearchPrefix = Self.load(defaults, .fileSearchPrefix) ?? "f"
         folderSearchPrefix = Self.load(defaults, .folderSearchPrefix) ?? "fd"
         bookmarkSearchPrefix = Self.load(defaults, .bookmarkSearchPrefix) ?? "bm"
+        clipboardHistoryEnabled = Self.load(defaults, .clipboardHistoryEnabled) ?? true
+        clipboardSearchPrefix = Self.load(defaults, .clipboardSearchPrefix) ?? "cb"
+        clipboardHistoryCapacity = Self.load(defaults, .clipboardHistoryCapacity) ?? 200
+
+        fileSearchHotKeyKeyCode = Self.load(defaults, .fileSearchHotKeyKeyCode) ?? 0
+        fileSearchHotKeyModifiers = Self.load(defaults, .fileSearchHotKeyModifiers) ?? 0
+        folderSearchHotKeyKeyCode = Self.load(defaults, .folderSearchHotKeyKeyCode) ?? 0
+        folderSearchHotKeyModifiers = Self.load(defaults, .folderSearchHotKeyModifiers) ?? 0
+        bookmarkSearchHotKeyKeyCode = Self.load(defaults, .bookmarkSearchHotKeyKeyCode) ?? 0
+        bookmarkSearchHotKeyModifiers = Self.load(defaults, .bookmarkSearchHotKeyModifiers) ?? 0
+        clipboardSearchHotKeyKeyCode = Self.load(defaults, .clipboardSearchHotKeyKeyCode) ?? 0
+        clipboardSearchHotKeyModifiers = Self.load(defaults, .clipboardSearchHotKeyModifiers) ?? 0
 
         let modeRaw: String? = Self.load(defaults, .appearanceMode)
         appearanceMode = modeRaw.flatMap { AppearanceMode(rawValue: $0) } ?? .system
@@ -194,6 +261,10 @@ final class AppSettings {
         UInt32(kVK_F10): "F10", UInt32(kVK_F11): "F11", UInt32(kVK_F12): "F12",
     ]
 
+    static func isHotKeySet(keyCode: UInt32, modifiers: UInt32) -> Bool {
+        keyCode != 0 || modifiers != 0
+    }
+
     private static var translatedKeyCodeCache: [UInt32: String] = [:]
 
     static func keyCodeName(_ keyCode: UInt32) -> String {
@@ -207,7 +278,12 @@ final class AppSettings {
 
     private static func translateKeyCode(_ keyCode: UInt32) -> String {
         let source = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
-        guard let layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+        var layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+        if layoutData == nil {
+            let asciiSource = TISCopyCurrentASCIICapableKeyboardLayoutInputSource().takeRetainedValue()
+            layoutData = TISGetInputSourceProperty(asciiSource, kTISPropertyUnicodeKeyLayoutData)
+        }
+        guard let layoutData else {
             return "?"
         }
         let data = unsafeBitCast(layoutData, to: CFData.self) as Data

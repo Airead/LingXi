@@ -11,8 +11,8 @@ test-unit:
 		-project $(PROJECT) \
 		-scheme $(SCHEME) \
 		-destination '$(DESTINATION)' \
-		-only-testing LingXiTests \
-		| xcbeautify || true
+		-parallel-testing-enabled NO \
+		-only-testing LingXiTests
 
 build:
 	xcodebuild build \
