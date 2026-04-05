@@ -91,6 +91,18 @@ final class AppSettings {
             save(.clipboardHistoryCapacity, value: clipboardHistoryCapacity)
         }
     }
+    var snippetSearchEnabled: Bool {
+        didSet { guard snippetSearchEnabled != oldValue else { return }; save(.snippetSearchEnabled, value: snippetSearchEnabled) }
+    }
+    var snippetAutoExpandEnabled: Bool {
+        didSet { guard snippetAutoExpandEnabled != oldValue else { return }; save(.snippetAutoExpandEnabled, value: snippetAutoExpandEnabled) }
+    }
+    var snippetSearchPrefix: String {
+        didSet {
+            if snippetSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { snippetSearchPrefix = oldValue; return }
+            guard snippetSearchPrefix != oldValue else { return }; save(.snippetSearchPrefix, value: snippetSearchPrefix)
+        }
+    }
 
     // MARK: - Source hotkeys (0/0 = not set)
 
@@ -117,6 +129,12 @@ final class AppSettings {
     }
     var clipboardSearchHotKeyModifiers: UInt32 {
         didSet { guard clipboardSearchHotKeyModifiers != oldValue else { return }; save(.clipboardSearchHotKeyModifiers, value: clipboardSearchHotKeyModifiers) }
+    }
+    var snippetSearchHotKeyKeyCode: UInt32 {
+        didSet { guard snippetSearchHotKeyKeyCode != oldValue else { return }; save(.snippetSearchHotKeyKeyCode, value: snippetSearchHotKeyKeyCode) }
+    }
+    var snippetSearchHotKeyModifiers: UInt32 {
+        didSet { guard snippetSearchHotKeyModifiers != oldValue else { return }; save(.snippetSearchHotKeyModifiers, value: snippetSearchHotKeyModifiers) }
     }
 
     // MARK: - Appearance mode
@@ -163,6 +181,11 @@ final class AppSettings {
         case bookmarkSearchHotKeyModifiers = "io.github.airead.lingxi.bookmarkSearchHotKeyModifiers"
         case clipboardSearchHotKeyKeyCode = "io.github.airead.lingxi.clipboardSearchHotKeyKeyCode"
         case clipboardSearchHotKeyModifiers = "io.github.airead.lingxi.clipboardSearchHotKeyModifiers"
+        case snippetSearchEnabled = "io.github.airead.lingxi.snippetSearchEnabled"
+        case snippetAutoExpandEnabled = "io.github.airead.lingxi.snippetAutoExpandEnabled"
+        case snippetSearchPrefix = "io.github.airead.lingxi.snippetSearchPrefix"
+        case snippetSearchHotKeyKeyCode = "io.github.airead.lingxi.snippetSearchHotKeyKeyCode"
+        case snippetSearchHotKeyModifiers = "io.github.airead.lingxi.snippetSearchHotKeyModifiers"
     }
 
     // MARK: - Defaults
@@ -191,6 +214,9 @@ final class AppSettings {
         clipboardHistoryEnabled = Self.load(defaults, .clipboardHistoryEnabled) ?? true
         clipboardSearchPrefix = Self.load(defaults, .clipboardSearchPrefix) ?? "cb"
         clipboardHistoryCapacity = Self.load(defaults, .clipboardHistoryCapacity) ?? 200
+        snippetSearchEnabled = Self.load(defaults, .snippetSearchEnabled) ?? true
+        snippetAutoExpandEnabled = Self.load(defaults, .snippetAutoExpandEnabled) ?? true
+        snippetSearchPrefix = Self.load(defaults, .snippetSearchPrefix) ?? "sn"
 
         fileSearchHotKeyKeyCode = Self.load(defaults, .fileSearchHotKeyKeyCode) ?? 0
         fileSearchHotKeyModifiers = Self.load(defaults, .fileSearchHotKeyModifiers) ?? 0
@@ -200,6 +226,8 @@ final class AppSettings {
         bookmarkSearchHotKeyModifiers = Self.load(defaults, .bookmarkSearchHotKeyModifiers) ?? 0
         clipboardSearchHotKeyKeyCode = Self.load(defaults, .clipboardSearchHotKeyKeyCode) ?? 0
         clipboardSearchHotKeyModifiers = Self.load(defaults, .clipboardSearchHotKeyModifiers) ?? 0
+        snippetSearchHotKeyKeyCode = Self.load(defaults, .snippetSearchHotKeyKeyCode) ?? 0
+        snippetSearchHotKeyModifiers = Self.load(defaults, .snippetSearchHotKeyModifiers) ?? 0
 
         let modeRaw: String? = Self.load(defaults, .appearanceMode)
         appearanceMode = modeRaw.flatMap { AppearanceMode(rawValue: $0) } ?? .system

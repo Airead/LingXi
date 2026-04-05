@@ -26,6 +26,9 @@ final class PanelManager {
     private let router: SearchRouter
     private let viewModel: SearchViewModel
     private let clipboardStore: ClipboardStore
+    private let snippetStore: SnippetStore
+    private let snippetExpander: SnippetExpander
+    private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
     private var previousApp: NSRunningApplication?
@@ -42,6 +45,10 @@ final class PanelManager {
         router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
         router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
         router.register(prefix: settings.clipboardSearchPrefix, id: "clipboard", provider: ClipboardHistoryProvider(store: clipboardStore, copyHandler: copyHandler))
+        let snippetStore = SnippetStore()
+        self.snippetStore = snippetStore
+        self.snippetExpander = SnippetExpander(store: snippetStore)
+        router.register(prefix: settings.snippetSearchPrefix, id: "snippet", provider: SnippetSearchProvider(store: snippetStore))
         self.router = router
         self.viewModel = await SearchViewModel(router: router, database: db)
 
@@ -55,14 +62,29 @@ final class PanelManager {
             let target = self.previousApp
             Task {
                 await self.clipboardStore.writeToClipboard(itemId: id)
-                target?.activate()
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                Self.simulatePaste()
+                self.pasteAndActivate(target: target)
+            }
+        }
+
+        viewModel.onSnippetPaste = { [weak self] itemId in
+            guard let self else { return }
+            guard let snippetId = SnippetSearchProvider.extractId(from: itemId) else { return }
+            let target = self.previousApp
+            Task {
+                guard let snippet = await self.snippetStore.findById(snippetId) else { return }
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(snippet.resolvedContent(), forType: .string)
+                self.pasteAndActivate(target: target)
             }
         }
 
         applySettings(settings)
         self.panel = createPanel()
+
+        if settings.snippetAutoExpandEnabled {
+            snippetExpander.start()
+        }
     }
 
     func applySettings(_ settings: AppSettings) {
@@ -76,6 +98,8 @@ final class PanelManager {
         router.updatePrefix(settings.folderSearchPrefix, forId: "folder")
         router.updatePrefix(settings.bookmarkSearchPrefix, forId: "bookmark")
         router.updatePrefix(settings.clipboardSearchPrefix, forId: "clipboard")
+        router.setEnabled(settings.snippetSearchEnabled, forId: "snippet")
+        router.updatePrefix(settings.snippetSearchPrefix, forId: "snippet")
 
         let enabled = settings.clipboardHistoryEnabled
         let capacity = settings.clipboardHistoryCapacity
@@ -106,6 +130,7 @@ final class PanelManager {
     }
 
     func showWithPrefix(_ prefix: String?) {
+        snippetExpander.suppress()
         let prefixQuery = prefix.map { $0 + " " }
 
         if let panel, panel.isVisible {
@@ -139,6 +164,15 @@ final class PanelManager {
         panel?.orderOut(nil)
         inputSourceManager.restore()
         previousApp = nil
+        snippetExpander.resume()
+    }
+
+    func setAutoExpandEnabled(_ enabled: Bool) {
+        if enabled {
+            snippetExpander.start()
+        } else {
+            snippetExpander.stop()
+        }
     }
 
     var isVisible: Bool {
@@ -155,6 +189,14 @@ final class PanelManager {
         }
         newPanel.onCommandComma = {
             AppDelegate.showSettings()
+        }
+        newPanel.onCommandN = { [weak self] in
+            guard let self else { return }
+            guard self.router.hasActiveProvider(id: "snippet", for: self.viewModel.query) else { return }
+            self.hide()
+            self.snippetEditorPanel.show {
+                Task { await self.snippetExpander.refreshSnippets() }
+            }
         }
         newPanel.onArrowUp = { [weak viewModel] in
             viewModel?.moveUp()
@@ -223,14 +265,12 @@ final class PanelManager {
         ClipboardHistoryProvider.extractId(from: itemId)
     }
 
-    private static func simulatePaste() {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true)
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+    private func pasteAndActivate(target: NSRunningApplication?) {
+        target?.activate()
+        Task {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            KeyboardUtils.simulatePaste()
+        }
     }
 
     private func positionPanel(_ panel: FloatingPanel) {

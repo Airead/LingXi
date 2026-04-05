@@ -56,6 +56,7 @@ struct LingXiApp: App {
             (\.folderSearchHotKeyKeyCode, \.folderSearchHotKeyModifiers, \.folderSearchPrefix),
             (\.bookmarkSearchHotKeyKeyCode, \.bookmarkSearchHotKeyModifiers, \.bookmarkSearchPrefix),
             (\.clipboardSearchHotKeyKeyCode, \.clipboardSearchHotKeyModifiers, \.clipboardSearchPrefix),
+            (\.snippetSearchHotKeyKeyCode, \.snippetSearchHotKeyModifiers, \.snippetSearchPrefix),
         ]
 
         let sourceHotKeyIds = sourceEntries.map { kcPath, modPath, prefixPath in
@@ -103,8 +104,15 @@ struct LingXiApp: App {
                 _ = s.bookmarkSearchPrefix
                 _ = s.clipboardSearchPrefix
                 _ = s.clipboardHistoryCapacity
+                _ = s.snippetSearchEnabled
+                _ = s.snippetSearchPrefix
             }, action: {
                 pm.applySettings(s)
+            })
+            observeForever({
+                _ = s.snippetAutoExpandEnabled
+            }, action: {
+                pm.setAutoExpandEnabled(s.snippetAutoExpandEnabled)
             })
         }
     }
