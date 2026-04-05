@@ -54,6 +54,7 @@ nonisolated struct SearchResult: Identifiable, Sendable {
     var previewData: PreviewData?
     var modifierActions: [ActionModifier: ModifierAction] = [:]
     var openWithBundleId: String?
+    var thumbnailURL: URL?
 
     private static let modifierPriority: [ActionModifier] = [.command, .option, .control]
 

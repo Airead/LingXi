@@ -315,7 +315,11 @@ private struct PreviewPane: View {
             }
         case .image(let path, let description):
             VStack(spacing: 12) {
-                LocalImageView(url: path)
+                CachedImageView(url: path) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 12)
                     .padding(.top, 12)
@@ -329,9 +333,17 @@ private struct PreviewPane: View {
     }
 }
 
-private struct LocalImageView: View {
+private struct CachedImageView<Placeholder: View>: View {
     let url: URL
+    let maxPixelSize: Int?
+    @ViewBuilder let placeholder: Placeholder
     @State private var nsImage: NSImage?
+
+    init(url: URL, maxPixelSize: Int? = nil, @ViewBuilder placeholder: () -> Placeholder) {
+        self.url = url
+        self.maxPixelSize = maxPixelSize
+        self.placeholder = placeholder()
+    }
 
     var body: some View {
         if let nsImage {
@@ -340,17 +352,17 @@ private struct LocalImageView: View {
                 .aspectRatio(contentMode: .fit)
                 .task(id: url, loadImage)
         } else {
-            Image(systemName: "photo")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
+            placeholder
                 .task(id: url, loadImage)
         }
     }
 
     @Sendable private func loadImage() async {
-        let loadURL = url
-        let image = await Task.detached { NSImage(contentsOf: loadURL) }.value
-        nsImage = image
+        if let maxPixelSize {
+            nsImage = await ThumbnailCache.shared.loadThumbnail(for: url, maxPixelSize: maxPixelSize)
+        } else {
+            nsImage = await ThumbnailCache.shared.loadImage(for: url)
+        }
     }
 }
 
@@ -367,6 +379,12 @@ private struct SearchResultRow: View {
                     Image(nsImage: icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
+                } else if let thumbURL = result.thumbnailURL {
+                    CachedImageView(url: thumbURL, maxPixelSize: 56) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Image(systemName: "doc")
                         .font(.system(size: 20))

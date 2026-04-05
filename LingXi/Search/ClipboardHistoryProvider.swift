@@ -60,6 +60,7 @@ actor ClipboardHistoryProvider: SearchProvider {
         let name: String
         let icon: NSImage?
         let preview: PreviewData
+        var thumbURL: URL?
 
         switch item.contentType {
         case .text:
@@ -68,10 +69,11 @@ actor ClipboardHistoryProvider: SearchProvider {
             preview = .text(item.textContent)
         case .image:
             name = "Image: \(item.imageWidth)×\(item.imageHeight) (\(Self.formattedSize(item.imageSize)))"
-            icon = Self.loadThumbnail(imagePath: item.imagePath)
+            icon = nil
             let imageURL = ClipboardStore.imageDirectory.appendingPathComponent(item.imagePath)
             let desc = "\(item.imageWidth)×\(item.imageHeight) · \(Self.formattedSize(item.imageSize))"
             preview = .image(path: imageURL, description: desc)
+            thumbURL = imageURL
         }
 
         let subtitle = Self.buildSubtitle(sourceApp: item.sourceApp, timestamp: item.timestamp)
@@ -92,18 +94,13 @@ actor ClipboardHistoryProvider: SearchProvider {
                     capturedHandler(itemId)
                     return true
                 },
-            ]
+            ],
+            thumbnailURL: thumbURL
         )
     }
 
     private func appIcon(for bundleId: String) -> NSImage? {
         iconCache.icon(for: bundleId)
-    }
-
-    private nonisolated static func loadThumbnail(imagePath: String) -> NSImage? {
-        guard !imagePath.isEmpty else { return nil }
-        let url = ClipboardStore.imageDirectory.appendingPathComponent(imagePath)
-        return NSImage(contentsOf: url)
     }
 
     nonisolated static func truncatedPreview(_ text: String, maxLength: Int) -> String {
