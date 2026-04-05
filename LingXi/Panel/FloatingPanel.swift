@@ -13,6 +13,7 @@ final class FloatingPanel: NSPanel {
     var onArrowUp: (() -> Void)?
     var onArrowDown: (() -> Void)?
     var onReturn: ((Set<ActionModifier>) -> Void)?
+    var onDelete: (() -> Void)?
     var onModifiersChanged: ((Set<ActionModifier>) -> Void)?
     var onCommandComma: (() -> Void)?
 
@@ -39,6 +40,10 @@ final class FloatingPanel: NSPanel {
         if event.type == .keyDown {
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," {
                 onCommandComma?()
+                return
+            }
+            if event.modifierFlags.contains(.command), Int(event.keyCode) == kVK_Delete {
+                onDelete?()
                 return
             }
             switch Int(event.keyCode) {

@@ -470,13 +470,13 @@ struct SearchViewModelTests {
         ])
         let router = SearchRouter(defaultProvider: provider)
         let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
-        var pastedId: Int?
-        vm.onClipboardPaste = { id in pastedId = id }
+        var pastedItemId: String?
+        vm.onClipboardPaste = { itemId in pastedItemId = itemId }
         vm.query = "Hello"
         await waitUntil { !vm.results.isEmpty }
         let result = vm.confirm()
         #expect(result == true)
-        #expect(pastedId == 42)
+        #expect(pastedItemId == "clipboard:42")
     }
 
     @Test func confirmClipboardWithCommandUsesModifierAction() async {
@@ -494,26 +494,29 @@ struct SearchViewModelTests {
         ])
         let router = SearchRouter(defaultProvider: provider)
         let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
-        var pastedId: Int?
-        vm.onClipboardPaste = { id in pastedId = id }
+        var pastedItemId: String?
+        vm.onClipboardPaste = { itemId in pastedItemId = itemId }
         vm.query = "Text"
         await waitUntil { !vm.results.isEmpty }
         let result = vm.confirm(modifiers: [.command])
         #expect(result == true)
         #expect(copiedId == 7)
-        #expect(pastedId == nil)
+        #expect(pastedItemId == nil)
     }
 
-    @Test func confirmClipboardReturnsFalseForInvalidId() async {
+    @Test func confirmClipboardPassesRawItemId() async {
         let provider = StubSearchProvider(results: [
             SearchResult(itemId: "clipboard:invalid", icon: nil, name: "Bad", subtitle: "",
                          resultType: .clipboard, url: nil, score: 1.0),
         ])
         let router = SearchRouter(defaultProvider: provider)
         let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var pastedItemId: String?
+        vm.onClipboardPaste = { itemId in pastedItemId = itemId }
         vm.query = "Bad"
         await waitUntil { !vm.results.isEmpty }
-        #expect(vm.confirm() == false)
+        #expect(vm.confirm() == true)
+        #expect(pastedItemId == "clipboard:invalid")
     }
 
     @Test func extractClipboardIdParsesValidId() {
@@ -522,6 +525,78 @@ struct SearchViewModelTests {
         #expect(ClipboardHistoryProvider.extractId(from: "clipboard:abc") == nil)
         #expect(ClipboardHistoryProvider.extractId(from: "other:123") == nil)
         #expect(ClipboardHistoryProvider.extractId(from: "") == nil)
+    }
+
+    // MARK: - Delete
+
+    @Test func deleteSelectedRemovesClipboardItem() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:10", icon: nil, name: "First", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 2.0),
+            SearchResult(itemId: "clipboard:20", icon: nil, name: "Second", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var deletedItemId: String?
+        vm.onDeleteItem = { itemId in deletedItemId = itemId }
+        vm.query = "clip"
+        await waitUntil { vm.results.count == 2 }
+        vm.selectedIndex = 0
+        vm.deleteSelected()
+        #expect(deletedItemId == "clipboard:10")
+        #expect(vm.results.count == 1)
+        #expect(vm.results[0].itemId == "clipboard:20")
+        #expect(vm.selectedIndex == 0)
+    }
+
+    @Test func deleteSelectedAdjustsIndexWhenLastItem() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:1", icon: nil, name: "A", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 2.0),
+            SearchResult(itemId: "clipboard:2", icon: nil, name: "B", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.onDeleteItem = { _ in }
+        vm.query = "clip"
+        await waitUntil { vm.results.count == 2 }
+        vm.selectedIndex = 1
+        vm.deleteSelected()
+        #expect(vm.results.count == 1)
+        #expect(vm.selectedIndex == 0)
+    }
+
+    @Test func deleteSelectedIgnoresNonClipboardItem() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "app:1", icon: nil, name: "App", subtitle: "",
+                         resultType: .application, url: URL(string: "file:///app")!, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var deletedItemId: String?
+        vm.onDeleteItem = { itemId in deletedItemId = itemId }
+        vm.query = "App"
+        await waitUntil { !vm.results.isEmpty }
+        vm.deleteSelected()
+        #expect(deletedItemId == nil)
+        #expect(vm.results.count == 1)
+    }
+
+    @Test func deleteSelectedLastRemainingItemClearsList() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:99", icon: nil, name: "Only", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.onDeleteItem = { _ in }
+        vm.query = "Only"
+        await waitUntil { !vm.results.isEmpty }
+        vm.deleteSelected()
+        #expect(vm.results.isEmpty)
+        #expect(vm.selectedIndex == 0)
     }
 
     @Test func queryChangeReplacesResultsOnFirstMerge() async {

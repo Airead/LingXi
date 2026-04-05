@@ -42,10 +42,15 @@ final class PanelManager {
         self.router = router
         self.viewModel = await SearchViewModel(router: router, database: db)
 
+        viewModel.onDeleteItem = { [weak self] itemId in
+            guard let self, let id = self.clipboardId(from: itemId) else { return }
+            Task { await self.clipboardStore.delete(itemId: id) }
+        }
+
         viewModel.onClipboardPaste = { [weak self] itemId in
-            guard let self else { return }
+            guard let self, let id = self.clipboardId(from: itemId) else { return }
             Task {
-                await self.clipboardStore.writeToClipboard(itemId: itemId)
+                await self.clipboardStore.writeToClipboard(itemId: id)
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 Self.simulatePaste()
             }
@@ -142,6 +147,9 @@ final class PanelManager {
                 self?.hide()
             }
         }
+        newPanel.onDelete = { [weak viewModel] in
+            viewModel?.deleteSelected()
+        }
         newPanel.onModifiersChanged = { [weak viewModel] modifiers in
             guard viewModel?.activeModifiers != modifiers else { return }
             viewModel?.activeModifiers = modifiers
@@ -171,6 +179,10 @@ final class PanelManager {
             height: newHeight
         )
         panel.setFrame(newFrame, display: true, animate: false)
+    }
+
+    private func clipboardId(from itemId: String) -> Int? {
+        ClipboardHistoryProvider.extractId(from: itemId)
     }
 
     private static func simulatePaste() {

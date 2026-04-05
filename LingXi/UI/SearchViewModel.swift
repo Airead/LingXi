@@ -24,7 +24,8 @@ final class SearchViewModel: ObservableObject {
     private let debounceNanoseconds: UInt64
     private let usageBoostPerUse: Double = 1.0
     private let usageBoostCap: Int = 50
-    var onClipboardPaste: ((Int) -> Void)?
+    var onClipboardPaste: ((String) -> Void)?
+    var onDeleteItem: ((String) -> Void)?
 
     private var searchTask: Task<Void, Never>?
     private var generation: Int = 0
@@ -91,8 +92,7 @@ final class SearchViewModel: ObservableObject {
         }
 
         if selected.resultType == .clipboard {
-            guard let clipboardId = ClipboardHistoryProvider.extractId(from: selected.itemId) else { return false }
-            onClipboardPaste?(clipboardId)
+            onClipboardPaste?(selected.itemId)
             recordExecution(query: currentQuery, itemId: selected.itemId)
             return true
         }
@@ -111,6 +111,22 @@ final class SearchViewModel: ObservableObject {
 
         if opened { recordExecution(query: currentQuery, itemId: selected.itemId) }
         return opened
+    }
+
+    func deleteSelected() {
+        guard results.indices.contains(selectedIndex) else { return }
+        let selected = results[selectedIndex]
+        guard selected.resultType == .clipboard else { return }
+        onDeleteItem?(selected.itemId)
+        results.remove(at: selectedIndex)
+        clampSelectedIndex()
+    }
+
+    private func clampSelectedIndex() {
+        let clamped = min(selectedIndex, max(results.count - 1, 0))
+        if selectedIndex != clamped {
+            selectedIndex = clamped
+        }
     }
 
     private func openBookmark(url: URL, bundleId: String?) -> Bool {
@@ -235,7 +251,7 @@ final class SearchViewModel: ObservableObject {
            let newIndex = results.firstIndex(where: { $0.itemId == selectedItemId }) {
             selectedIndex = newIndex
         } else {
-            selectedIndex = min(selectedIndex, max(results.count - 1, 0))
+            clampSelectedIndex()
         }
     }
 
