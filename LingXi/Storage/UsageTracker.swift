@@ -27,8 +27,8 @@ nonisolated final class UsageTracker: Sendable {
         let sql = "INSERT INTO usage (prefix, item_id, count) VALUES (?, ?, 1) ON CONFLICT(prefix, item_id) DO UPDATE SET count = count + 1"
 
         _ = await db.transaction { tx in
-            let ok1 = tx.execute(sql, bindings: [prefix, itemId])
-            let ok2 = !prefix.isEmpty ? tx.execute(sql, bindings: ["", itemId]) : true
+            let ok1 = tx.execute(sql, bindings: [.text(prefix), .text(itemId)])
+            let ok2 = !prefix.isEmpty ? tx.execute(sql, bindings: [.text(""), .text(itemId)]) : true
             return ok1 && ok2
         }
     }
@@ -44,7 +44,7 @@ nonisolated final class UsageTracker: Sendable {
         let prefix = queryPrefix(query)
         let placeholders = itemIds.map { _ in "?" }.joined(separator: ",")
         let sql = "SELECT item_id, count FROM usage WHERE prefix = ? AND item_id IN (\(placeholders))"
-        let bindings = [prefix] + itemIds
+        let bindings: [DatabaseValue] = [.text(prefix)] + itemIds.map { .text($0) }
 
         let rows = await db.query(sql, bindings: bindings) { row -> (String, Int) in
             (row.string(at: 0), row.int(at: 1))

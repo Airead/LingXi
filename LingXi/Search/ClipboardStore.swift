@@ -148,7 +148,7 @@ actor ClipboardStore {
 
         await db.execute(
             "DELETE FROM clipboard_history WHERE id = ?",
-            bindings: [String(itemId)]
+            bindings: [.integer(itemId)]
         )
     }
 
@@ -211,7 +211,8 @@ actor ClipboardStore {
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 bindings: [
-                    ClipboardItem.ContentType.text.rawValue, trimmed, String(timestamp), sourceApp, sourceBundleId,
+                    .text(ClipboardItem.ContentType.text.rawValue), .text(trimmed), .real(timestamp),
+                    .text(sourceApp), .text(sourceBundleId),
                 ]
             )
             if inserted {
@@ -289,9 +290,9 @@ actor ClipboardStore {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 bindings: [
-                    ClipboardItem.ContentType.image.rawValue, "", String(timestamp),
-                    sourceApp, sourceBundleId,
-                    filename, String(width), String(height), String(fileSize),
+                    .text(ClipboardItem.ContentType.image.rawValue), .text(""), .real(timestamp),
+                    .text(sourceApp), .text(sourceBundleId),
+                    .text(filename), .integer(width), .integer(height), .integer(fileSize),
                 ]
             )
             if inserted { newId = tx.lastInsertRowId }
@@ -365,7 +366,7 @@ actor ClipboardStore {
             ORDER BY timestamp DESC
             LIMIT ?
             """,
-            bindings: [String(_capacity)]
+            bindings: [.integer(_capacity)]
         ) { row in
             ClipboardItem(
                 id: row.int(at: 0),
@@ -455,13 +456,14 @@ actor ClipboardStore {
                     SELECT id FROM clipboard_history ORDER BY timestamp DESC LIMIT ?
                 )
                 """,
-                bindings: [String(capacity)]
+                bindings: [.integer(capacity)]
             ) { row in (id: row.int(at: 0), imagePath: row.string(at: 1)) }
 
             guard !deletedEntries.isEmpty else { return true }
 
-            let ids = deletedEntries.map { String($0.id) }.joined(separator: ",")
-            tx.execute("DELETE FROM clipboard_history WHERE id IN (\(ids))")
+            let placeholders = deletedEntries.map { _ in "?" }.joined(separator: ",")
+            let bindings: [DatabaseValue] = deletedEntries.map { .integer($0.id) }
+            tx.execute("DELETE FROM clipboard_history WHERE id IN (\(placeholders))", bindings: bindings)
             return true
         }
 
@@ -496,7 +498,7 @@ actor ClipboardStore {
 
         await db.execute(
             "UPDATE clipboard_history SET ocr_text = ? WHERE id = ?",
-            bindings: [text, String(itemId)]
+            bindings: [.text(text), .integer(itemId)]
         )
     }
 

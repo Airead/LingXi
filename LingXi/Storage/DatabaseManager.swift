@@ -12,12 +12,20 @@ nonisolated struct Row {
     }
 
     nonisolated func int(at index: Int32) -> Int {
-        Int(sqlite3_column_int(stmt, index))
+        Int(sqlite3_column_int64(stmt, index))
     }
 
     nonisolated func double(at index: Int32) -> Double {
         sqlite3_column_double(stmt, index)
     }
+}
+
+/// Type-safe SQL binding value.
+enum DatabaseValue: Sendable {
+    case text(String)
+    case integer(Int)
+    case real(Double)
+    case null
 }
 
 actor DatabaseManager {
@@ -38,7 +46,7 @@ actor DatabaseManager {
     // MARK: - Public API
 
     @discardableResult
-    func execute(_ sql: String, bindings: [String] = []) -> Bool {
+    func execute(_ sql: String, bindings: [DatabaseValue] = []) -> Bool {
         guard let stmt = prepareStatement(sql, bindings: bindings) else { return false }
         defer { sqlite3_finalize(stmt) }
         let result = sqlite3_step(stmt)
@@ -53,7 +61,7 @@ actor DatabaseManager {
         return success
     }
 
-    func query<T>(_ sql: String, bindings: [String] = [], map: (Row) -> T) -> [T] {
+    func query<T>(_ sql: String, bindings: [DatabaseValue] = [], map: (Row) -> T) -> [T] {
         guard let stmt = prepareStatement(sql, bindings: bindings) else { return [] }
         defer { sqlite3_finalize(stmt) }
 
@@ -80,13 +88,28 @@ actor DatabaseManager {
 
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    private func prepareStatement(_ sql: String, bindings: [String]) -> OpaquePointer? {
+    private func prepareStatement(_ sql: String, bindings: [DatabaseValue]) -> OpaquePointer? {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
 
         for (index, value) in bindings.enumerated() {
-            _ = value.withCString { cString in
-                sqlite3_bind_text(stmt, Int32(index + 1), cString, -1, Self.sqliteTransient)
+            let pos = Int32(index + 1)
+            let result: Int32
+            switch value {
+            case .text(let str):
+                result = str.withCString { cString in
+                    sqlite3_bind_text(stmt, pos, cString, -1, Self.sqliteTransient)
+                }
+            case .integer(let num):
+                result = sqlite3_bind_int64(stmt, pos, Int64(num))
+            case .real(let dbl):
+                result = sqlite3_bind_double(stmt, pos, dbl)
+            case .null:
+                result = sqlite3_bind_null(stmt, pos)
+            }
+            guard result == SQLITE_OK else {
+                sqlite3_finalize(stmt)
+                return nil
             }
         }
         return stmt
