@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import SwiftUI
 
@@ -24,18 +25,31 @@ final class PanelManager {
     private let clipboardStore: ClipboardStore
     private let inputSourceManager = InputSourceManager()
     private var heightObserver: AnyCancellable?
+    private var previousApp: NSRunningApplication?
 
     init(settings: AppSettings) async {
         let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
         let clipboardStore = ClipboardStore(database: db, capacity: settings.clipboardHistoryCapacity)
         self.clipboardStore = clipboardStore
+        let copyHandler: @MainActor @Sendable (Int) -> Void = { itemId in
+            Task { await clipboardStore.writeToClipboard(itemId: itemId) }
+        }
         let router = SearchRouter(defaultProvider: ApplicationSearchProvider(), maxResults: settings.maxSearchResults)
         router.register(prefix: settings.folderSearchPrefix, id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
         router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
         router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
-        router.register(prefix: settings.clipboardSearchPrefix, id: "clipboard", provider: ClipboardHistoryProvider(store: clipboardStore))
+        router.register(prefix: settings.clipboardSearchPrefix, id: "clipboard", provider: ClipboardHistoryProvider(store: clipboardStore, copyHandler: copyHandler))
         self.router = router
         self.viewModel = await SearchViewModel(router: router, database: db)
+
+        viewModel.onClipboardPaste = { [weak self] itemId in
+            guard let self else { return }
+            Task {
+                await self.clipboardStore.writeToClipboard(itemId: itemId)
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                Self.simulatePaste()
+            }
+        }
 
         applySettings(settings)
         self.panel = createPanel()
@@ -82,6 +96,8 @@ final class PanelManager {
             return
         }
 
+        previousApp = NSWorkspace.shared.frontmostApplication
+
         let activePanel = panel ?? createPanel()
         self.panel = activePanel
 
@@ -96,6 +112,8 @@ final class PanelManager {
         guard isVisible else { return }
         panel?.orderOut(nil)
         inputSourceManager.restore()
+        previousApp?.activate()
+        previousApp = nil
     }
 
     var isVisible: Bool {
@@ -153,6 +171,16 @@ final class PanelManager {
             height: newHeight
         )
         panel.setFrame(newFrame, display: true, animate: false)
+    }
+
+    private static func simulatePaste() {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)
+        keyDown?.flags = .maskCommand
+        keyUp?.flags = .maskCommand
+        keyDown?.post(tap: .cghidEventTap)
+        keyUp?.post(tap: .cghidEventTap)
     }
 
     private func positionPanel(_ panel: FloatingPanel) {

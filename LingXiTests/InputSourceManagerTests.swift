@@ -21,7 +21,8 @@ private func inputSourceID(_ source: TISInputSource) -> String {
 struct InputSourceManagerTests {
     @Test func saveAndSwitchToASCII_switchesToASCIICapableSource() {
         let manager = InputSourceManager()
-        manager.saveAndSwitchToASCII()
+        manager.save()
+        manager.switchToASCII()
 
         let current = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         let isASCII = unsafeBitCast(
@@ -35,7 +36,8 @@ struct InputSourceManagerTests {
         let manager = InputSourceManager()
         let originalID = inputSourceID(TISCopyCurrentKeyboardInputSource().takeRetainedValue())
 
-        manager.saveAndSwitchToASCII()
+        manager.save()
+        manager.switchToASCII()
         manager.restore()
 
         let restoredID = inputSourceID(TISCopyCurrentKeyboardInputSource().takeRetainedValue())

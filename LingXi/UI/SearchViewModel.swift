@@ -24,6 +24,8 @@ final class SearchViewModel: ObservableObject {
     private let debounceNanoseconds: UInt64
     private let usageBoostPerUse: Double = 1.0
     private let usageBoostCap: Int = 50
+    var onClipboardPaste: ((Int) -> Void)?
+
     private var searchTask: Task<Void, Never>?
     private var generation: Int = 0
     /// Pre-boost scores; prevents boost from compounding across incremental merges.
@@ -86,6 +88,13 @@ final class SearchViewModel: ObservableObject {
             let executed = modifierAction.action(selected)
             if executed { recordExecution(query: currentQuery, itemId: selected.itemId) }
             return executed
+        }
+
+        if selected.resultType == .clipboard {
+            guard let clipboardId = ClipboardHistoryProvider.extractId(from: selected.itemId) else { return false }
+            onClipboardPaste?(clipboardId)
+            recordExecution(query: currentQuery, itemId: selected.itemId)
+            return true
         }
 
         guard let url = selected.url else { return false }

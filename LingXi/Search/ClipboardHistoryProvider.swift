@@ -1,14 +1,23 @@
 import AppKit
 
 actor ClipboardHistoryProvider: SearchProvider {
+    static let itemIdPrefix = "clipboard:"
+
+    nonisolated static func extractId(from itemId: String) -> Int? {
+        guard itemId.hasPrefix(itemIdPrefix) else { return nil }
+        return Int(itemId.dropFirst(itemIdPrefix.count))
+    }
+
     private let store: ClipboardStore
     private let iconCache = AppIconCache()
+    private let copyHandler: @MainActor @Sendable (Int) -> Void
 
     private var cachedEmptyResults: [SearchResult] = []
     private var cachedVersion: Int = -1
 
-    init(store: ClipboardStore) {
+    init(store: ClipboardStore, copyHandler: @escaping @MainActor @Sendable (Int) -> Void = { _ in }) {
         self.store = store
+        self.copyHandler = copyHandler
     }
 
     func search(query: String) async -> [SearchResult] {
@@ -59,15 +68,23 @@ actor ClipboardHistoryProvider: SearchProvider {
         }
 
         let subtitle = Self.buildSubtitle(sourceApp: item.sourceApp, timestamp: item.timestamp)
+        let itemId = item.id
+        let capturedHandler = copyHandler
 
         return SearchResult(
-            itemId: "clipboard:\(item.id)",
+            itemId: "\(Self.itemIdPrefix)\(item.id)",
             icon: icon,
             name: name,
             subtitle: subtitle,
             resultType: .clipboard,
             url: nil,
-            score: 0
+            score: 0,
+            modifierActions: [
+                .command: ModifierAction(subtitle: "Copy to Clipboard") { _ in
+                    capturedHandler(itemId)
+                    return true
+                },
+            ]
         )
     }
 

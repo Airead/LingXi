@@ -461,6 +461,69 @@ struct SearchViewModelTests {
         #expect(!vm.results.isEmpty, "Results should not flash empty on query change")
     }
 
+    // MARK: - Clipboard confirm
+
+    @Test func confirmClipboardCallsPasteCallback() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:42", icon: nil, name: "Hello", subtitle: "Safari",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var pastedId: Int?
+        vm.onClipboardPaste = { id in pastedId = id }
+        vm.query = "Hello"
+        await waitUntil { !vm.results.isEmpty }
+        let result = vm.confirm()
+        #expect(result == true)
+        #expect(pastedId == 42)
+    }
+
+    @Test func confirmClipboardWithCommandUsesModifierAction() async {
+        var copiedId: Int?
+        let copyAction = ModifierAction(subtitle: "Copy to Clipboard") { result in
+            if let id = ClipboardHistoryProvider.extractId(from: result.itemId) {
+                copiedId = id
+            }
+            return true
+        }
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:7", icon: nil, name: "Text", subtitle: "Notes",
+                         resultType: .clipboard, url: nil, score: 1.0,
+                         modifierActions: [.command: copyAction]),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        var pastedId: Int?
+        vm.onClipboardPaste = { id in pastedId = id }
+        vm.query = "Text"
+        await waitUntil { !vm.results.isEmpty }
+        let result = vm.confirm(modifiers: [.command])
+        #expect(result == true)
+        #expect(copiedId == 7)
+        #expect(pastedId == nil)
+    }
+
+    @Test func confirmClipboardReturnsFalseForInvalidId() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:invalid", icon: nil, name: "Bad", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "Bad"
+        await waitUntil { !vm.results.isEmpty }
+        #expect(vm.confirm() == false)
+    }
+
+    @Test func extractClipboardIdParsesValidId() {
+        #expect(ClipboardHistoryProvider.extractId(from: "clipboard:123") == 123)
+        #expect(ClipboardHistoryProvider.extractId(from: "clipboard:0") == 0)
+        #expect(ClipboardHistoryProvider.extractId(from: "clipboard:abc") == nil)
+        #expect(ClipboardHistoryProvider.extractId(from: "other:123") == nil)
+        #expect(ClipboardHistoryProvider.extractId(from: "") == nil)
+    }
+
     @Test func queryChangeReplacesResultsOnFirstMerge() async {
         let provider = QueryAwareProvider(
             resultsByQuery: [
