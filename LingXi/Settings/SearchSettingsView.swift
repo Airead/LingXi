@@ -50,6 +50,13 @@ struct SearchSettingsView: View {
                     hotKeyKeyCode: $settings.clipboardSearchHotKeyKeyCode,
                     hotKeyModifiers: $settings.clipboardSearchHotKeyModifiers
                 )
+                dataSourceRow(
+                    "Snippet Search",
+                    prefix: $settings.snippetSearchPrefix,
+                    enabled: $settings.snippetSearchEnabled,
+                    hotKeyKeyCode: $settings.snippetSearchHotKeyKeyCode,
+                    hotKeyModifiers: $settings.snippetSearchHotKeyModifiers
+                )
                 LabeledContent("Clipboard Capacity") {
                     TextField("", value: $settings.clipboardHistoryCapacity, format: .number)
                         .frame(width: 60)

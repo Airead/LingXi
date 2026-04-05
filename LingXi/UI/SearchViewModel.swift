@@ -26,6 +26,7 @@ final class SearchViewModel: ObservableObject {
     private let usageBoostPerUse: Double = 1.0
     private let usageBoostCap: Int = 50
     var onClipboardPaste: ((String) -> Void)?
+    var onSnippetPaste: ((String) -> Void)?
     var onDeleteItem: ((String) -> Void)?
 
     private var searchTask: Task<Void, Never>?
@@ -92,8 +93,13 @@ final class SearchViewModel: ObservableObject {
             return executed
         }
 
-        if selected.resultType == .clipboard {
-            onClipboardPaste?(selected.itemId)
+        let pasteHandler: ((String) -> Void)? = switch selected.resultType {
+        case .clipboard: onClipboardPaste
+        case .snippet: onSnippetPaste
+        default: nil
+        }
+        if let pasteHandler {
+            pasteHandler(selected.itemId)
             recordExecution(query: currentQuery, itemId: selected.itemId)
             return true
         }
