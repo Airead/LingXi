@@ -52,8 +52,10 @@ final class PanelManager {
 
         viewModel.onClipboardPaste = { [weak self] itemId in
             guard let self, let id = self.clipboardId(from: itemId) else { return }
+            let target = self.previousApp
             Task {
                 await self.clipboardStore.writeToClipboard(itemId: id)
+                target?.activate()
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 Self.simulatePaste()
             }
@@ -120,7 +122,6 @@ final class PanelManager {
         guard isVisible else { return }
         panel?.orderOut(nil)
         inputSourceManager.restore()
-        previousApp?.activate()
         previousApp = nil
     }
 
