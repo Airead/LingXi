@@ -352,6 +352,81 @@ struct ClipboardStoreTests {
         await cleanupImageFiles(store)
     }
 
+    // MARK: - OCR
+
+    private func makePNGDataWithText(_ text: String, width: Int = 200, height: Int = 200) -> Data {
+        let image = NSImage(size: NSSize(width: width, height: height))
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 24),
+            .foregroundColor: NSColor.black,
+        ]
+        (text as NSString).draw(at: NSPoint(x: 10, y: height / 2), withAttributes: attrs)
+        image.unlockFocus()
+        let tiffData = image.tiffRepresentation!
+        let rep = NSBitmapImageRep(data: tiffData)!
+        return rep.representation(using: .png, properties: [:])!
+    }
+
+    @Test func ocrTriggeredForLargeImage() async {
+        let store = await makeStore()
+        let png = makePNGDataWithText("Hello World")
+        await store.addImageEntry(pngData: png)
+        let itemId = await store.items[0].id
+        await store.awaitPendingOCR(itemId: itemId)
+
+        let item = await store.items[0]
+        #expect(!item.ocrText.isEmpty)
+        await cleanupImageFiles(store)
+    }
+
+    @Test func ocrNotTriggeredForSmallImage() async {
+        let store = await makeStore()
+        let png = makePNGData(width: 50, height: 50)
+        await store.addImageEntry(pngData: png)
+        let item = await store.items[0]
+        #expect(item.ocrText.isEmpty)
+        await cleanupImageFiles(store)
+    }
+
+    @Test func ocrResultPersistedToDatabase() async {
+        let tempDir = FileManager.default.temporaryDirectory
+        let dbPath = tempDir.appendingPathComponent(
+            "test_ocr_\(UUID().uuidString).db"
+        ).path
+        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+
+        var imagePath = ""
+        do {
+            let db = await DatabaseManager(databasePath: dbPath)
+            let store = ClipboardStore(database: db)
+            let png = makePNGDataWithText("Persist OCR")
+            await store.addImageEntry(pngData: png)
+            let itemId = await store.items[0].id
+            await store.awaitPendingOCR(itemId: itemId)
+            let item = await store.items[0]
+            #expect(!item.ocrText.isEmpty)
+            imagePath = item.imagePath
+        }
+
+        // Reload from database
+        let db = await DatabaseManager(databasePath: dbPath)
+        let store = ClipboardStore(database: db)
+        // Trigger setupTask completion via a store operation
+        await store.addTextEntry("trigger_setup")
+        let items = await store.items.filter { $0.contentType == .image }
+        #expect(items.count == 1)
+        #expect(!items[0].ocrText.isEmpty)
+
+        // Cleanup
+        if !imagePath.isEmpty {
+            let path = ClipboardStore.imageDirectory.appendingPathComponent(imagePath).path
+            try? FileManager.default.removeItem(atPath: path)
+        }
+    }
+
     // MARK: - Thread safety
 
     @Test func concurrentAccessIsThreadSafe() async {

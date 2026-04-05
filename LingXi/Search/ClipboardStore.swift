@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import OSLog
+import Vision
 
 nonisolated struct ClipboardItem: Sendable {
     let id: Int
@@ -26,12 +27,14 @@ actor ClipboardStore {
     deinit {
         setupTask?.cancel()
         timer?.cancel()
+        for task in ocrTasks.values { task.cancel() }
     }
 
     // MARK: - Constants
 
     private let maxTextLength = 10240
     private let pollInterval: TimeInterval = 0.5
+    private let minOCRDimension = 100
 
     private static let concealedTypeRaw = "org.nspasteboard.ConcealedType"
     private static let transientTypeRaw = "org.nspasteboard.TransientType"
@@ -58,6 +61,7 @@ actor ClipboardStore {
     private var lastChangeCount: Int = 0
     private var skipUntilChangeCount: Int = 0
     private nonisolated(unsafe) var timer: DispatchSourceTimer?
+    private nonisolated(unsafe) var ocrTasks: [Int: Task<Void, Never>] = [:]
 
     private static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "io.github.airead.lingxi",
@@ -130,6 +134,8 @@ actor ClipboardStore {
 
     func delete(itemId: Int) async {
         await setupTask?.value
+        ocrTasks[itemId]?.cancel()
+        ocrTasks[itemId] = nil
         guard let index = cachedItems.firstIndex(where: { $0.id == itemId }) else { return }
         let item = cachedItems.remove(at: index)
         _version += 1
@@ -317,6 +323,13 @@ actor ClipboardStore {
         if cachedItems.count > _capacity {
             await enforceCapacity()
         }
+
+        if width >= minOCRDimension, height >= minOCRDimension {
+            ocrTasks[newId] = Task {
+                await performOCR(itemId: newId, imageURL: fileURL)
+                ocrTasks[newId] = nil
+            }
+        }
     }
 
     // MARK: - Private
@@ -454,14 +467,53 @@ actor ClipboardStore {
 
         guard ok, !deletedEntries.isEmpty else { return }
 
-        for entry in deletedEntries where !entry.imagePath.isEmpty {
-            let fullPath = Self.imageDirectory
-                .appendingPathComponent(entry.imagePath).path
-            try? FileManager.default.removeItem(atPath: fullPath)
+        for entry in deletedEntries {
+            ocrTasks[entry.id]?.cancel()
+            ocrTasks[entry.id] = nil
+
+            if !entry.imagePath.isEmpty {
+                let fullPath = Self.imageDirectory
+                    .appendingPathComponent(entry.imagePath).path
+                try? FileManager.default.removeItem(atPath: fullPath)
+            }
         }
 
         cachedItems = Array(cachedItems.prefix(capacity))
         _version += 1
+    }
+
+    func awaitPendingOCR(itemId: Int) async {
+        await ocrTasks[itemId]?.value
+    }
+
+    private func performOCR(itemId: Int, imageURL: URL) async {
+        let text = await Self.recognizeText(at: imageURL)
+        guard !Task.isCancelled, !text.isEmpty else { return }
+
+        guard let index = cachedItems.firstIndex(where: { $0.id == itemId }) else { return }
+        cachedItems[index].ocrText = text
+        _version += 1
+
+        await db.execute(
+            "UPDATE clipboard_history SET ocr_text = ? WHERE id = ?",
+            bindings: [text, String(itemId)]
+        )
+    }
+
+    @concurrent
+    private static func recognizeText(at url: URL) async -> String {
+        let handler = VNImageRequestHandler(url: url)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .fast
+        request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+        do {
+            try handler.perform([request])
+        } catch {
+            logger.debug("OCR failed: \(error)")
+            return ""
+        }
+        guard let results = request.results else { return "" }
+        return results.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
     private nonisolated static func prepareTransientPasteboard(
