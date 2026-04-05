@@ -17,6 +17,7 @@ private enum PanelLayout {
     static let searchBarHeight: CGFloat = 48
     static let rowHeight: CGFloat = 44
     static let maxVisibleRows = 8
+    static let maxShortcutKeys = 9
 }
 
 @MainActor
@@ -156,6 +157,13 @@ final class PanelManager {
             guard viewModel?.activeModifiers != modifiers else { return }
             viewModel?.activeModifiers = modifiers
         }
+        newPanel.onNumberKey = { [weak self, weak viewModel] index in
+            guard let viewModel, viewModel.results.indices.contains(index) else { return }
+            viewModel.selectedIndex = index
+            if viewModel.confirm() {
+                self?.hide()
+            }
+        }
 
         // Keep .receive(on:): @Published fires on willSet (before the value is set).
         // Without the dispatch, panel.setFrame(display: true) triggers a SwiftUI layout
@@ -275,7 +283,8 @@ private struct PanelContentView: View {
                         SearchResultRow(
                             result: result,
                             isSelected: index == viewModel.selectedIndex,
-                            activeModifiers: viewModel.activeModifiers
+                            activeModifiers: viewModel.activeModifiers,
+                            shortcutNumber: index < PanelLayout.maxShortcutKeys ? index + 1 : nil
                         )
                         .id(result.id)
                     }
@@ -349,6 +358,7 @@ private struct SearchResultRow: View {
     let result: SearchResult
     var isSelected: Bool = false
     var activeModifiers: Set<ActionModifier> = []
+    var shortcutNumber: Int?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -372,6 +382,11 @@ private struct SearchResultRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if let shortcutNumber {
+                Text("⌘\(shortcutNumber)")
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: PanelLayout.rowHeight)

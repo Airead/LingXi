@@ -647,6 +647,43 @@ struct SearchViewModelTests {
         #expect(!itemIds.contains("app:1"), "App results should be replaced by clipboard results")
     }
 
+    // MARK: - Number key shortcut (Cmd+1~9)
+
+    @Test func confirmAtSpecificIndexSelectsAndConfirms() async {
+        let urls = (0..<5).map { URL(fileURLWithPath: "/Applications/App\($0).app") }
+        let provider = StubSearchProvider(results: (0..<5).map { i in
+            SearchResult(itemId: "app:\(i)", icon: nil, name: "App\(i)", subtitle: "",
+                         resultType: .application, url: urls[i], score: Double(100 - i))
+        })
+        let mockWorkspace = MockWorkspaceOpener()
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, workspace: mockWorkspace, debounceMilliseconds: 0)
+        vm.query = "App"
+        await waitUntil { vm.results.count == 5 }
+
+        // Simulate Cmd+3: set selectedIndex to 2 and confirm
+        vm.selectedIndex = 2
+        let result = vm.confirm()
+        #expect(result == true)
+        #expect(mockWorkspace.openedURLs == [urls[2]])
+    }
+
+    @Test func confirmAtOutOfBoundsIndexReturnsFalse() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "app:0", icon: nil, name: "App0", subtitle: "",
+                         resultType: .application, url: URL(fileURLWithPath: "/Applications/A.app"), score: 1.0),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "App"
+        await waitUntil { !vm.results.isEmpty }
+
+        // Simulate Cmd+9 when only 1 result exists
+        vm.selectedIndex = 8
+        let result = vm.confirm()
+        #expect(result == false)
+    }
+
     @Test func clearExitsHistoryMode() async {
         let vm = await makeHistoryViewModel(historyEntries: ["recent"])
         vm.moveUp()
