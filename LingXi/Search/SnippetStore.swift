@@ -94,31 +94,12 @@ actor SnippetStore {
         }
 
         let safeName = Self.sanitizeFilename(name)
-        let catDir = category.isEmpty ? directory : directory.appendingPathComponent(category)
-        try? FileManager.default.createDirectory(at: catDir, withIntermediateDirectories: true)
-        let filePath = catDir.appendingPathComponent("\(safeName).md")
-
         let actualVariants = isRandom ? (variants ?? [content]) : []
-        let text = Self.formatSnippetFile(
-            keyword: keyword, content: content, autoExpand: autoExpand,
-            raw: raw, isRandom: isRandom, variants: isRandom ? actualVariants : nil
-        )
-
-        do {
-            try text.write(to: filePath, atomically: true, encoding: .utf8)
-        } catch {
-            return false
-        }
-
-        let displayContent = isRandom ? actualVariants.joined(separator: "\n\n") : content
-        let snippet = Snippet(
-            name: safeName, keyword: keyword, content: displayContent,
-            category: category, filePath: filePath.path,
-            autoExpand: autoExpand, raw: raw,
+        return persistSnippet(
+            safeName: safeName, keyword: keyword, content: content,
+            category: category, autoExpand: autoExpand, raw: raw,
             isRandom: isRandom, variants: actualVariants
         )
-        snippets.append(snippet)
-        return true
     }
 
     @discardableResult
@@ -131,6 +112,46 @@ actor SnippetStore {
         Self.trashFile(at: filePath)
         snippets.remove(at: index)
         return true
+    }
+
+    /// Validation errors for new snippet creation.
+    enum ValidationError: Error, Equatable {
+        case fileExists(name: String)
+        case keywordInUse(keyword: String)
+        case contentDuplicates(label: String)
+        case writeFailed
+    }
+
+    /// Validate and add a new snippet atomically in a single actor hop.
+    func validateAndAdd(
+        name: String, category: String, keyword: String, content: String
+    ) -> Result<Void, ValidationError> {
+        ensureLoaded()
+        let safeName = Self.sanitizeFilename(name)
+        var duplicateLabel: String?
+        for s in snippets {
+            if s.name == safeName && s.category == category {
+                return .failure(.fileExists(name: safeName))
+            }
+            if !keyword.isEmpty && s.keyword == keyword {
+                return .failure(.keywordInUse(keyword: keyword))
+            }
+            if !content.isEmpty && duplicateLabel == nil && s.content == content {
+                duplicateLabel = s.category.isEmpty ? s.name : "\(s.category)/\(s.name)"
+            }
+        }
+        if let label = duplicateLabel {
+            return .failure(.contentDuplicates(label: label))
+        }
+
+        guard persistSnippet(
+            safeName: safeName, keyword: keyword, content: content,
+            category: category, autoExpand: true, raw: false,
+            isRandom: false, variants: []
+        ) else {
+            return .failure(.writeFailed)
+        }
+        return .success(())
     }
 
     func reload() {
@@ -474,6 +495,41 @@ actor SnippetStore {
     }
 
     // MARK: - Helpers
+
+    private func persistSnippet(
+        safeName: String, keyword: String, content: String,
+        category: String, autoExpand: Bool, raw: Bool,
+        isRandom: Bool, variants: [String]
+    ) -> Bool {
+        let filePath = snippetFileURL(safeName: safeName, category: category)
+        let catDir = filePath.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: catDir, withIntermediateDirectories: true)
+
+        let text = Self.formatSnippetFile(
+            keyword: keyword, content: content, autoExpand: autoExpand,
+            raw: raw, isRandom: isRandom, variants: isRandom ? variants : nil
+        )
+        do {
+            try text.write(to: filePath, atomically: true, encoding: .utf8)
+        } catch {
+            return false
+        }
+
+        let displayContent = isRandom ? variants.joined(separator: "\n\n") : content
+        let snippet = Snippet(
+            name: safeName, keyword: keyword, content: displayContent,
+            category: category, filePath: filePath.path,
+            autoExpand: autoExpand, raw: raw,
+            isRandom: isRandom, variants: variants
+        )
+        snippets.append(snippet)
+        return true
+    }
+
+    private func snippetFileURL(safeName: String, category: String) -> URL {
+        let catDir = category.isEmpty ? directory : directory.appendingPathComponent(category)
+        return catDir.appendingPathComponent("\(safeName).md")
+    }
 
     static func sanitizeFilename(_ name: String) -> String {
         let unsafe = CharacterSet(charactersIn: "<>:\"/\\|?*")

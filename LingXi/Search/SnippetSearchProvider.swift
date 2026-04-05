@@ -74,7 +74,15 @@ actor SnippetSearchProvider: SearchProvider {
                     pb.setString(text, forType: .string)
                     return true
                 },
-                .option: ModifierAction.revealInFinder,
+                .option: ModifierAction(subtitle: "Edit in TextEdit") { result in
+                    guard let url = result.url else { return false }
+                    NSWorkspace.shared.open(
+                        [url],
+                        withApplicationAt: URL(fileURLWithPath: "/System/Applications/TextEdit.app"),
+                        configuration: NSWorkspace.OpenConfiguration()
+                    )
+                    return true
+                },
             ]
         )
     }

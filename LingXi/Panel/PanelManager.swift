@@ -28,6 +28,7 @@ final class PanelManager {
     private let clipboardStore: ClipboardStore
     private let snippetStore: SnippetStore
     private let snippetExpander: SnippetExpander
+    private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
     private var previousApp: NSRunningApplication?
@@ -188,6 +189,14 @@ final class PanelManager {
         }
         newPanel.onCommandComma = {
             AppDelegate.showSettings()
+        }
+        newPanel.onCommandN = { [weak self] in
+            guard let self else { return }
+            guard self.router.hasActiveProvider(id: "snippet", for: self.viewModel.query) else { return }
+            self.hide()
+            self.snippetEditorPanel.show {
+                Task { await self.snippetExpander.refreshSnippets() }
+            }
         }
         newPanel.onArrowUp = { [weak viewModel] in
             viewModel?.moveUp()
