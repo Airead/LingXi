@@ -94,6 +94,9 @@ final class AppSettings {
     var snippetSearchEnabled: Bool {
         didSet { guard snippetSearchEnabled != oldValue else { return }; save(.snippetSearchEnabled, value: snippetSearchEnabled) }
     }
+    var snippetAutoExpandEnabled: Bool {
+        didSet { guard snippetAutoExpandEnabled != oldValue else { return }; save(.snippetAutoExpandEnabled, value: snippetAutoExpandEnabled) }
+    }
     var snippetSearchPrefix: String {
         didSet {
             if snippetSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { snippetSearchPrefix = oldValue; return }
@@ -179,6 +182,7 @@ final class AppSettings {
         case clipboardSearchHotKeyKeyCode = "io.github.airead.lingxi.clipboardSearchHotKeyKeyCode"
         case clipboardSearchHotKeyModifiers = "io.github.airead.lingxi.clipboardSearchHotKeyModifiers"
         case snippetSearchEnabled = "io.github.airead.lingxi.snippetSearchEnabled"
+        case snippetAutoExpandEnabled = "io.github.airead.lingxi.snippetAutoExpandEnabled"
         case snippetSearchPrefix = "io.github.airead.lingxi.snippetSearchPrefix"
         case snippetSearchHotKeyKeyCode = "io.github.airead.lingxi.snippetSearchHotKeyKeyCode"
         case snippetSearchHotKeyModifiers = "io.github.airead.lingxi.snippetSearchHotKeyModifiers"
@@ -211,6 +215,7 @@ final class AppSettings {
         clipboardSearchPrefix = Self.load(defaults, .clipboardSearchPrefix) ?? "cb"
         clipboardHistoryCapacity = Self.load(defaults, .clipboardHistoryCapacity) ?? 200
         snippetSearchEnabled = Self.load(defaults, .snippetSearchEnabled) ?? true
+        snippetAutoExpandEnabled = Self.load(defaults, .snippetAutoExpandEnabled) ?? true
         snippetSearchPrefix = Self.load(defaults, .snippetSearchPrefix) ?? "sn"
 
         fileSearchHotKeyKeyCode = Self.load(defaults, .fileSearchHotKeyKeyCode) ?? 0

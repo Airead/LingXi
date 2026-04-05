@@ -27,6 +27,7 @@ final class PanelManager {
     private let viewModel: SearchViewModel
     private let clipboardStore: ClipboardStore
     private let snippetStore: SnippetStore
+    private let snippetExpander: SnippetExpander
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
     private var previousApp: NSRunningApplication?
@@ -45,6 +46,7 @@ final class PanelManager {
         router.register(prefix: settings.clipboardSearchPrefix, id: "clipboard", provider: ClipboardHistoryProvider(store: clipboardStore, copyHandler: copyHandler))
         let snippetStore = SnippetStore()
         self.snippetStore = snippetStore
+        self.snippetExpander = SnippetExpander(store: snippetStore)
         router.register(prefix: settings.snippetSearchPrefix, id: "snippet", provider: SnippetSearchProvider(store: snippetStore))
         self.router = router
         self.viewModel = await SearchViewModel(router: router, database: db)
@@ -78,6 +80,10 @@ final class PanelManager {
 
         applySettings(settings)
         self.panel = createPanel()
+
+        if settings.snippetAutoExpandEnabled {
+            snippetExpander.start()
+        }
     }
 
     func applySettings(_ settings: AppSettings) {
@@ -123,6 +129,7 @@ final class PanelManager {
     }
 
     func showWithPrefix(_ prefix: String?) {
+        snippetExpander.suppress()
         let prefixQuery = prefix.map { $0 + " " }
 
         if let panel, panel.isVisible {
@@ -156,6 +163,15 @@ final class PanelManager {
         panel?.orderOut(nil)
         inputSourceManager.restore()
         previousApp = nil
+        snippetExpander.resume()
+    }
+
+    func setAutoExpandEnabled(_ enabled: Bool) {
+        if enabled {
+            snippetExpander.start()
+        } else {
+            snippetExpander.stop()
+        }
     }
 
     var isVisible: Bool {
@@ -244,18 +260,8 @@ final class PanelManager {
         target?.activate()
         Task {
             try? await Task.sleep(nanoseconds: 150_000_000)
-            Self.simulatePaste()
+            KeyboardUtils.simulatePaste()
         }
-    }
-
-    private static func simulatePaste() {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true)
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
     }
 
     private func positionPanel(_ panel: FloatingPanel) {

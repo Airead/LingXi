@@ -109,6 +109,11 @@ struct LingXiApp: App {
             }, action: {
                 pm.applySettings(s)
             })
+            observeForever({
+                _ = s.snippetAutoExpandEnabled
+            }, action: {
+                pm.setAutoExpandEnabled(s.snippetAutoExpandEnabled)
+            })
         }
     }
 

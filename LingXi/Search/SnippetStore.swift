@@ -24,7 +24,9 @@ struct Snippet: Sendable {
     /// Resolve content, expanding placeholders unless raw.
     func resolvedContent() -> String {
         let text = isRandom ? (variants.randomElement() ?? content) : content
-        return raw ? text : SnippetStore.expandPlaceholders(text)
+        guard !raw else { return text }
+        let clip = NSPasteboard.general.string(forType: .string)
+        return SnippetStore.expandPlaceholders(text, clipboard: clip)
     }
 }
 
@@ -411,7 +413,7 @@ actor SnippetStore {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"; return f
     }()
 
-    static func expandPlaceholders(_ content: String) -> String {
+    static func expandPlaceholders(_ content: String, clipboard: String? = nil) -> String {
         let lbrace = "\u{0000}LBRACE\u{0000}"
         let rbrace = "\u{0000}RBRACE\u{0000}"
 
@@ -426,8 +428,7 @@ actor SnippetStore {
             .replacingOccurrences(of: "{datetime}", with: datetimeFmt.string(from: now))
 
         if result.contains("{clipboard}") {
-            let pb = NSPasteboard.general
-            let clipText = pb.string(forType: .string) ?? ""
+            let clipText = clipboard ?? ""
             result = result.replacingOccurrences(of: "{clipboard}", with: clipText)
         }
 

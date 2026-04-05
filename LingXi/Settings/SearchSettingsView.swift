@@ -57,6 +57,7 @@ struct SearchSettingsView: View {
                     hotKeyKeyCode: $settings.snippetSearchHotKeyKeyCode,
                     hotKeyModifiers: $settings.snippetSearchHotKeyModifiers
                 )
+                Toggle("Snippet Auto-expand", isOn: $settings.snippetAutoExpandEnabled)
                 LabeledContent("Clipboard Capacity") {
                     TextField("", value: $settings.clipboardHistoryCapacity, format: .number)
                         .frame(width: 60)
