@@ -33,6 +33,9 @@ struct LingXiApp: App {
 
         let holder = panelHolder
         hotKeyManager.onHotKey = {
+            if holder.panelManager?.isVisible == false {
+                holder.panelManager?.saveInputSource()
+            }
             holder.panelManager?.toggle()
         }
         hotKeyManager.start()
@@ -55,7 +58,6 @@ struct LingXiApp: App {
         Task { @MainActor in
             let pm = await PanelManager(settings: s)
             holder.panelManager = pm
-
             observeForever({
                 _ = s.maxSearchResults
                 _ = s.applicationSearchEnabled

@@ -38,6 +38,7 @@ final class PanelManager {
         self.viewModel = await SearchViewModel(router: router, database: db)
 
         applySettings(settings)
+        self.panel = createPanel()
     }
 
     func applySettings(_ settings: AppSettings) {
@@ -64,6 +65,10 @@ final class PanelManager {
         }
     }
 
+    func saveInputSource() {
+        inputSourceManager.save()
+    }
+
     func toggle() {
         if isVisible {
             hide()
@@ -80,16 +85,17 @@ final class PanelManager {
         let activePanel = panel ?? createPanel()
         self.panel = activePanel
 
-        inputSourceManager.saveAndSwitchToASCII()
+        inputSourceManager.switchToASCII()
         viewModel.clear()
         positionPanel(activePanel)
+        NSApp.activate(ignoringOtherApps: true)
         activePanel.makeKeyAndOrderFront(nil)
     }
 
     func hide() {
         guard isVisible else { return }
-        inputSourceManager.restore()
         panel?.orderOut(nil)
+        inputSourceManager.restore()
     }
 
     var isVisible: Bool {
