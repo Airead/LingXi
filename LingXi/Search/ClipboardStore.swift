@@ -504,7 +504,7 @@ actor ClipboardStore {
     private static func recognizeText(at url: URL) async -> String {
         let handler = VNImageRequestHandler(url: url)
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
+        request.recognitionLevel = .accurate
         request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
         do {
             try handler.perform([request])
