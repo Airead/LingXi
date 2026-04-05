@@ -14,7 +14,7 @@ struct Snippet: Sendable {
     let variants: [String]
 
     /// Display content for preview: joins variants with separator headers.
-    var previewContent: String {
+    nonisolated var previewContent: String {
         guard isRandom, variants.count > 1 else { return content }
         return variants.enumerated().map { i, v in
             "── Variant \(i + 1) ──\n\(v)"
@@ -555,12 +555,12 @@ actor SnippetStore {
 // MARK: - String helpers
 
 private extension String {
-    func trimmingTrailingNewlines() -> String {
+    nonisolated func trimmingTrailingNewlines() -> String {
         guard let lastNonNewline = lastIndex(where: { $0 != "\n" }) else { return "" }
         return String(self[...lastNonNewline])
     }
 
-    var nonEmpty: String? {
+    nonisolated var nonEmpty: String? {
         isEmpty ? nil : self
     }
 }
