@@ -26,7 +26,7 @@ final class SettingsWindowManager {
         let newWindow = NSWindow(contentViewController: hostingController)
         newWindow.title = "LingXi Settings"
         newWindow.styleMask = [.titled, .closable]
-        newWindow.setContentSize(NSSize(width: 650, height: 420))
+        newWindow.setContentSize(NSSize(width: 750, height: 420))
         newWindow.center()
         newWindow.isReleasedWhenClosed = false
 

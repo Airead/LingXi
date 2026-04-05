@@ -9,11 +9,13 @@ import SwiftUI
 struct HotKeyRecorderView: NSViewRepresentable {
     @Binding var keyCode: UInt32
     @Binding var modifiers: UInt32
+    var allowEmpty: Bool = false
 
     func makeNSView(context: Context) -> HotKeyRecorderNSView {
         let view = HotKeyRecorderNSView()
         view.keyCode = keyCode
         view.modifiers = modifiers
+        view.allowEmpty = allowEmpty
         view.onChange = { newKeyCode, newModifiers in
             keyCode = newKeyCode
             modifiers = newModifiers
@@ -32,15 +34,45 @@ struct HotKeyRecorderView: NSViewRepresentable {
 final class HotKeyRecorderNSView: NSView {
     var keyCode: UInt32 = AppSettings.defaultHotKeyKeyCode
     var modifiers: UInt32 = AppSettings.defaultHotKeyModifiers
+    var allowEmpty: Bool = false
     var onChange: ((UInt32, UInt32) -> Void)?
 
     private var isRecording = false
-    private var localMonitor: Any?
+    nonisolated(unsafe) private var localMonitor: Any?
+    private var isHovering = false
+    private var hoverTrackingArea: NSTrackingArea?
+
+    private var showClearButton: Bool {
+        allowEmpty && AppSettings.isHotKeySet(keyCode: keyCode, modifiers: modifiers) && isHovering && !isRecording
+    }
 
     override var acceptsFirstResponder: Bool { true }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 160, height: 28)
+        NSSize(width: NSView.noIntrinsicMetric, height: 28)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let old = hoverTrackingArea { removeTrackingArea(old) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -57,26 +89,71 @@ final class HotKeyRecorderNSView: NSView {
         path.stroke()
 
         let text: String
+        let textColor: NSColor
         if isRecording {
             text = "Type shortcut..."
+            textColor = .secondaryLabelColor
+        } else if !AppSettings.isHotKeySet(keyCode: keyCode, modifiers: modifiers) && allowEmpty {
+            text = "Record Shortcut"
+            textColor = .tertiaryLabelColor
         } else {
             text = AppSettings.displayString(keyCode: keyCode, modifiers: modifiers)
+            textColor = .labelColor
         }
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13),
-            .foregroundColor: isRecording ? NSColor.secondaryLabelColor : NSColor.labelColor,
+            .foregroundColor: textColor,
         ]
         let attrString = NSAttributedString(string: text, attributes: attributes)
         let size = attrString.size()
-        let point = NSPoint(
-            x: (bounds.width - size.width) / 2,
-            y: (bounds.height - size.height) / 2
-        )
+
+        let textX: CGFloat
+        if showClearButton {
+            textX = (bounds.width - clearButtonSize - 4 - size.width) / 2
+        } else {
+            textX = (bounds.width - size.width) / 2
+        }
+        let point = NSPoint(x: textX, y: (bounds.height - size.height) / 2)
         attrString.draw(at: point)
+
+        if showClearButton {
+            drawClearButton()
+        }
     }
 
+    // MARK: - Clear button
+
+    private let clearButtonSize: CGFloat = 16
+
+    private var clearButtonRect: NSRect {
+        NSRect(
+            x: bounds.width - clearButtonSize - 8,
+            y: (bounds.height - clearButtonSize) / 2,
+            width: clearButtonSize,
+            height: clearButtonSize
+        )
+    }
+
+    private static let clearButtonBaseImage: NSImage? =
+        NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Clear")
+
+    private func drawClearButton() {
+        guard let base = Self.clearButtonBaseImage else { return }
+        let config = NSImage.SymbolConfiguration(pointSize: clearButtonSize, weight: .regular)
+            .applying(.init(hierarchicalColor: .tertiaryLabelColor))
+        let styled = base.withSymbolConfiguration(config) ?? base
+        styled.draw(in: clearButtonRect)
+    }
+
+    // MARK: - Mouse handling
+
     override func mouseDown(with event: NSEvent) {
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if showClearButton && clearButtonRect.contains(localPoint) {
+            clearHotKey()
+            return
+        }
         if isRecording {
             stopRecording()
         } else {
@@ -84,7 +161,15 @@ final class HotKeyRecorderNSView: NSView {
         }
     }
 
+    private func clearHotKey() {
+        keyCode = 0
+        modifiers = 0
+        onChange?(0, 0)
+        needsDisplay = true
+    }
+
     private func startRecording() {
+        guard !isRecording else { return }
         isRecording = true
         needsDisplay = true
         window?.makeFirstResponder(self)
@@ -109,6 +194,12 @@ final class HotKeyRecorderNSView: NSView {
         let newKeyCode = UInt32(event.keyCode)
 
         if newKeyCode == UInt32(kVK_Escape) && !flags.contains(.command) && !flags.contains(.option) {
+            stopRecording()
+            return
+        }
+
+        if allowEmpty && newKeyCode == UInt32(kVK_Delete) && !flags.contains(.command) && !flags.contains(.option) {
+            clearHotKey()
             stopRecording()
             return
         }

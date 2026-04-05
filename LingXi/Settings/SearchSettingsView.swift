@@ -22,10 +22,34 @@ struct SearchSettingsView: View {
 
             Section("Data Sources") {
                 Toggle("Application Search", isOn: $settings.applicationSearchEnabled)
-                dataSourceRow("File Search", prefix: $settings.fileSearchPrefix, enabled: $settings.fileSearchEnabled)
-                dataSourceRow("Folder Search", prefix: $settings.folderSearchPrefix, enabled: $settings.folderSearchEnabled)
-                dataSourceRow("Bookmark Search", prefix: $settings.bookmarkSearchPrefix, enabled: $settings.bookmarkSearchEnabled)
-                dataSourceRow("Clipboard History", prefix: $settings.clipboardSearchPrefix, enabled: $settings.clipboardHistoryEnabled)
+                dataSourceRow(
+                    "File Search",
+                    prefix: $settings.fileSearchPrefix,
+                    enabled: $settings.fileSearchEnabled,
+                    hotKeyKeyCode: $settings.fileSearchHotKeyKeyCode,
+                    hotKeyModifiers: $settings.fileSearchHotKeyModifiers
+                )
+                dataSourceRow(
+                    "Folder Search",
+                    prefix: $settings.folderSearchPrefix,
+                    enabled: $settings.folderSearchEnabled,
+                    hotKeyKeyCode: $settings.folderSearchHotKeyKeyCode,
+                    hotKeyModifiers: $settings.folderSearchHotKeyModifiers
+                )
+                dataSourceRow(
+                    "Bookmark Search",
+                    prefix: $settings.bookmarkSearchPrefix,
+                    enabled: $settings.bookmarkSearchEnabled,
+                    hotKeyKeyCode: $settings.bookmarkSearchHotKeyKeyCode,
+                    hotKeyModifiers: $settings.bookmarkSearchHotKeyModifiers
+                )
+                dataSourceRow(
+                    "Clipboard History",
+                    prefix: $settings.clipboardSearchPrefix,
+                    enabled: $settings.clipboardHistoryEnabled,
+                    hotKeyKeyCode: $settings.clipboardSearchHotKeyKeyCode,
+                    hotKeyModifiers: $settings.clipboardSearchHotKeyModifiers
+                )
                 LabeledContent("Clipboard Capacity") {
                     TextField("", value: $settings.clipboardHistoryCapacity, format: .number)
                         .frame(width: 60)
@@ -38,9 +62,21 @@ struct SearchSettingsView: View {
         .formStyle(.grouped)
     }
 
-    private func dataSourceRow(_ title: String, prefix: Binding<String>, enabled: Binding<Bool>) -> some View {
+    private func dataSourceRow(
+        _ title: String,
+        prefix: Binding<String>,
+        enabled: Binding<Bool>,
+        hotKeyKeyCode: Binding<UInt32>,
+        hotKeyModifiers: Binding<UInt32>
+    ) -> some View {
         LabeledContent {
             HStack(spacing: 8) {
+                HotKeyRecorderView(
+                    keyCode: hotKeyKeyCode,
+                    modifiers: hotKeyModifiers,
+                    allowEmpty: true
+                )
+                .frame(width: 150, height: 28)
                 TextField("", text: prefix)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 60)

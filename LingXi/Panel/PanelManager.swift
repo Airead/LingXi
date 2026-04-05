@@ -102,7 +102,19 @@ final class PanelManager {
     }
 
     func show() {
+        showWithPrefix(nil)
+    }
+
+    func showWithPrefix(_ prefix: String?) {
+        let prefixQuery = prefix.map { $0 + " " }
+
         if let panel, panel.isVisible {
+            if let prefixQuery {
+                inputSourceManager.switchToASCII()
+                viewModel.query = prefixQuery
+                NSApp.activate(ignoringOtherApps: true)
+                panel.makeKeyAndOrderFront(nil)
+            }
             return
         }
 
@@ -112,7 +124,11 @@ final class PanelManager {
         self.panel = activePanel
 
         inputSourceManager.switchToASCII()
-        viewModel.clear()
+        if let prefixQuery {
+            viewModel.query = prefixQuery
+        } else {
+            viewModel.clear()
+        }
         positionPanel(activePanel)
         NSApp.activate(ignoringOtherApps: true)
         activePanel.makeKeyAndOrderFront(nil)

@@ -29,16 +29,40 @@ struct LingXiApp: App {
 
     init() {
         let s = settings
-        hotKeyManager = HotKeyManager(keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers)
+        let hotKeyManager = HotKeyManager()
+        self.hotKeyManager = hotKeyManager
 
         let holder = panelHolder
-        hotKeyManager.onHotKey = {
+
+        hotKeyManager.start()
+
+        let showPanel: (String?) -> Void = { prefix in
             if holder.panelManager?.isVisible == false {
                 holder.panelManager?.saveInputSource()
             }
-            holder.panelManager?.toggle()
+            if let prefix {
+                holder.panelManager?.showWithPrefix(prefix)
+            } else {
+                holder.panelManager?.toggle()
+            }
         }
-        hotKeyManager.start()
+
+        let mainHotKeyId = hotKeyManager.register(keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers) {
+            showPanel(nil)
+        }
+
+        let sourceEntries: [(KeyPath<AppSettings, UInt32>, KeyPath<AppSettings, UInt32>, KeyPath<AppSettings, String>)] = [
+            (\.fileSearchHotKeyKeyCode, \.fileSearchHotKeyModifiers, \.fileSearchPrefix),
+            (\.folderSearchHotKeyKeyCode, \.folderSearchHotKeyModifiers, \.folderSearchPrefix),
+            (\.bookmarkSearchHotKeyKeyCode, \.bookmarkSearchHotKeyModifiers, \.bookmarkSearchPrefix),
+            (\.clipboardSearchHotKeyKeyCode, \.clipboardSearchHotKeyModifiers, \.clipboardSearchPrefix),
+        ]
+
+        let sourceHotKeyIds = sourceEntries.map { kcPath, modPath, prefixPath in
+            hotKeyManager.register(keyCode: s[keyPath: kcPath], modifiers: s[keyPath: modPath]) {
+                showPanel(s[keyPath: prefixPath])
+            }
+        }
 
         let hk = hotKeyManager
 
@@ -46,8 +70,17 @@ struct LingXiApp: App {
             _ = s.hotKeyKeyCode
             _ = s.hotKeyModifiers
         }, action: {
-            hk.updateHotKey(keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers)
+            hk.update(id: mainHotKeyId, keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers)
         })
+
+        for ((kcPath, modPath, _), hotKeyId) in zip(sourceEntries, sourceHotKeyIds) {
+            observeForever({
+                _ = s[keyPath: kcPath]
+                _ = s[keyPath: modPath]
+            }, action: {
+                hk.update(id: hotKeyId, keyCode: s[keyPath: kcPath], modifiers: s[keyPath: modPath])
+            })
+        }
 
         observeForever({
             _ = s.appearanceMode
@@ -75,6 +108,7 @@ struct LingXiApp: App {
             })
         }
     }
+
 }
 
 private struct MenuBarMenuView: View {
