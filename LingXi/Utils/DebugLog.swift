@@ -26,7 +26,9 @@ enum DebugLog {
         print(line, terminator: "")
 
         if fileHandle == nil {
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            if !FileManager.default.fileExists(atPath: logURL.path) {
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            }
             fileHandle = try? FileHandle(forWritingTo: logURL)
             fileHandle?.seekToEndOfFile()
         }
