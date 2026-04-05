@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import OSLog
 
 nonisolated struct ClipboardItem: Sendable {
@@ -129,12 +130,16 @@ actor ClipboardStore {
 
     func delete(itemId: Int) async {
         await setupTask?.value
-        let countBefore = cachedItems.count
-        cachedItems.removeAll { $0.id == itemId }
-        let removed = cachedItems.count < countBefore
-        if removed { _version += 1 }
+        guard let index = cachedItems.firstIndex(where: { $0.id == itemId }) else { return }
+        let item = cachedItems.remove(at: index)
+        _version += 1
 
-        guard removed else { return }
+        if !item.imagePath.isEmpty {
+            let fullPath = Self.imageDirectory
+                .appendingPathComponent(item.imagePath).path
+            try? FileManager.default.removeItem(atPath: fullPath)
+        }
+
         await db.execute(
             "DELETE FROM clipboard_history WHERE id = ?",
             bindings: [String(itemId)]
@@ -149,17 +154,17 @@ actor ClipboardStore {
 
         switch item.contentType {
         case .text:
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            pb.declareTypes([.string, Self.concealedType, Self.transientType], owner: nil)
+            let pb = Self.prepareTransientPasteboard(types: [.string])
             pb.setString(item.textContent, forType: .string)
-            pb.setString("", forType: Self.concealedType)
-            pb.setString("", forType: Self.transientType)
-
             skipUntilChangeCount = pb.changeCount
             return true
         case .image:
-            return false
+            let fileURL = Self.imageDirectory.appendingPathComponent(item.imagePath)
+            guard let pngData = try? Data(contentsOf: fileURL) else { return false }
+            let pb = Self.prepareTransientPasteboard(types: [.png])
+            pb.setData(pngData, forType: .png)
+            skipUntilChangeCount = pb.changeCount
+            return true
         }
     }
 
@@ -234,6 +239,86 @@ actor ClipboardStore {
         }
     }
 
+    func addImageEntry(pngData: Data, sourceApp: String = "", sourceBundleId: String = "") async {
+        await setupTask?.value
+
+        guard let source = CGImageSourceCreateWithData(pngData as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int
+        else { return }
+        guard width >= 4, height >= 4 else {
+            Self.logger.debug("Skipping tiny image: \(width)×\(height)")
+            return
+        }
+
+        let hashPrefix = Self.sha256HashPrefix(pngData)
+
+        if let newest = cachedItems.first, newest.contentType == .image,
+           Self.extractHashPrefix(from: newest.imagePath) == hashPrefix
+        {
+            return
+        }
+
+        let timestamp = Date().timeIntervalSince1970
+        let filename = "\(Int(timestamp))_\(hashPrefix).png"
+        let fileURL = Self.imageDirectory.appendingPathComponent(filename)
+
+        do {
+            try pngData.write(to: fileURL)
+        } catch {
+            Self.logger.error("Failed to save image: \(error)")
+            return
+        }
+
+        let fileSize = pngData.count
+        var newId = 0
+
+        let ok = await db.transaction { tx in
+            let inserted = tx.execute(
+                """
+                INSERT INTO clipboard_history
+                    (content_type, text_content, timestamp, source_app, source_bundle_id,
+                     image_path, image_width, image_height, image_size)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                bindings: [
+                    ClipboardItem.ContentType.image.rawValue, "", String(timestamp),
+                    sourceApp, sourceBundleId,
+                    filename, String(width), String(height), String(fileSize),
+                ]
+            )
+            if inserted { newId = tx.lastInsertRowId }
+            return inserted
+        }
+
+        guard ok, newId > 0 else {
+            try? FileManager.default.removeItem(at: fileURL)
+            return
+        }
+
+        let item = ClipboardItem(
+            id: newId,
+            contentType: .image,
+            textContent: "",
+            sourceApp: sourceApp,
+            sourceBundleId: sourceBundleId,
+            imagePath: filename,
+            imageWidth: width,
+            imageHeight: height,
+            imageSize: fileSize,
+            ocrText: "",
+            timestamp: timestamp
+        )
+
+        cachedItems.insert(item, at: 0)
+        _version += 1
+
+        if cachedItems.count > _capacity {
+            await enforceCapacity()
+        }
+    }
+
     // MARK: - Private
 
     private func createTable() async {
@@ -296,14 +381,47 @@ actor ClipboardStore {
         guard count > skipUntilChangeCount else { return }
         guard !Self.isConcealed(pb) else { return }
 
-        if let text = pb.string(forType: .string) {
-            let app = NSWorkspace.shared.frontmostApplication
-            let frontApp = app?.localizedName ?? ""
-            let frontBundleId = app?.bundleIdentifier ?? ""
+        let app = NSWorkspace.shared.frontmostApplication
+        let frontApp = app?.localizedName ?? ""
+        let frontBundleId = app?.bundleIdentifier ?? ""
+
+        // Rich text copy (browser, Pages, etc.) includes a rendered image — prefer text
+        let isRichText = Self.isRichText(pb)
+        let pngData = Self.extractPNGData(from: pb)
+
+        if !isRichText, let pngData {
             Task {
-                await addTextEntry(text, sourceApp: frontApp, sourceBundleId: frontBundleId)
+                await addImageEntry(
+                    pngData: pngData, sourceApp: frontApp,
+                    sourceBundleId: frontBundleId
+                )
+            }
+        } else if let text = pb.string(forType: .string) {
+            Task {
+                await addTextEntry(
+                    text, sourceApp: frontApp,
+                    sourceBundleId: frontBundleId
+                )
+            }
+        } else if let pngData {
+            Task {
+                await addImageEntry(
+                    pngData: pngData, sourceApp: frontApp,
+                    sourceBundleId: frontBundleId
+                )
             }
         }
+    }
+
+    private static let richTextTypes: Set<String> = [
+        NSPasteboard.PasteboardType.rtf.rawValue,
+        NSPasteboard.PasteboardType.rtfd.rawValue,
+        "public.html",
+    ]
+
+    private nonisolated static func isRichText(_ pasteboard: NSPasteboard) -> Bool {
+        guard let types = pasteboard.types else { return false }
+        return types.contains { richTextTypes.contains($0.rawValue) }
     }
 
     private nonisolated static func isConcealed(_ pasteboard: NSPasteboard) -> Bool {
@@ -344,5 +462,48 @@ actor ClipboardStore {
 
         cachedItems = Array(cachedItems.prefix(capacity))
         _version += 1
+    }
+
+    private nonisolated static func prepareTransientPasteboard(
+        types: [NSPasteboard.PasteboardType]
+    ) -> NSPasteboard {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.declareTypes(types + [concealedType, transientType], owner: nil)
+        pb.setString("", forType: concealedType)
+        pb.setString("", forType: transientType)
+        return pb
+    }
+
+    private nonisolated static func sha256HashPrefix(_ data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        return digest.prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private nonisolated static func extractHashPrefix(from filename: String) -> String? {
+        guard let dotIndex = filename.lastIndex(of: ".") else { return nil }
+        let stem = filename[..<dotIndex]
+        return stem.split(separator: "_").last.map(String.init)
+    }
+
+    private nonisolated static func extractPNGData(from pb: NSPasteboard) -> Data? {
+        // Fast path: already PNG
+        if let pngData = pb.data(forType: .png) { return pngData }
+        // Slow path: convert any supported image format (TIFF, JPEG, PDF, etc.) to PNG
+        let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .pdf]
+        for type in imageTypes {
+            if let data = pb.data(forType: type) {
+                return imageToPNG(data)
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func imageToPNG(_ data: Data) -> Data? {
+        guard let image = NSImage(data: data),
+              let tiffData = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiffData)
+        else { return nil }
+        return rep.representation(using: .png, properties: [:])
     }
 }

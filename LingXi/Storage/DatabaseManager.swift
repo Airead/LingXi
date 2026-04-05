@@ -6,16 +6,16 @@ import SQLite3
 nonisolated struct Row {
     fileprivate let stmt: OpaquePointer
 
-    func string(at index: Int32) -> String {
+    nonisolated func string(at index: Int32) -> String {
         guard let cString = sqlite3_column_text(stmt, index) else { return "" }
         return String(cString: cString)
     }
 
-    func int(at index: Int32) -> Int {
+    nonisolated func int(at index: Int32) -> Int {
         Int(sqlite3_column_int(stmt, index))
     }
 
-    func double(at index: Int32) -> Double {
+    nonisolated func double(at index: Int32) -> Double {
         sqlite3_column_double(stmt, index)
     }
 }

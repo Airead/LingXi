@@ -1,7 +1,7 @@
 import AppKit
 
 actor ClipboardHistoryProvider: SearchProvider {
-    static let itemIdPrefix = "clipboard:"
+    nonisolated static let itemIdPrefix = "clipboard:"
 
     nonisolated static func extractId(from itemId: String) -> Int? {
         guard itemId.hasPrefix(itemIdPrefix) else { return nil }
@@ -45,7 +45,7 @@ actor ClipboardHistoryProvider: SearchProvider {
             case .text:
                 return [item.textContent, item.sourceApp]
             case .image:
-                var fields = [item.sourceApp]
+                var fields = ["Image: \(item.imageWidth)×\(item.imageHeight)", item.sourceApp]
                 if !item.ocrText.isEmpty { fields.append(item.ocrText) }
                 return fields
             }
@@ -58,13 +58,15 @@ actor ClipboardHistoryProvider: SearchProvider {
 
     private func makeResult(item: ClipboardItem) -> SearchResult {
         let name: String
-        let icon = appIcon(for: item.sourceBundleId)
+        let icon: NSImage?
 
         switch item.contentType {
         case .text:
             name = Self.truncatedPreview(item.textContent, maxLength: 80)
+            icon = appIcon(for: item.sourceBundleId)
         case .image:
             name = "Image: \(item.imageWidth)×\(item.imageHeight) (\(Self.formattedSize(item.imageSize)))"
+            icon = Self.loadThumbnail(imagePath: item.imagePath)
         }
 
         let subtitle = Self.buildSubtitle(sourceApp: item.sourceApp, timestamp: item.timestamp)
@@ -90,6 +92,12 @@ actor ClipboardHistoryProvider: SearchProvider {
 
     private func appIcon(for bundleId: String) -> NSImage? {
         iconCache.icon(for: bundleId)
+    }
+
+    private nonisolated static func loadThumbnail(imagePath: String) -> NSImage? {
+        guard !imagePath.isEmpty else { return nil }
+        let url = ClipboardStore.imageDirectory.appendingPathComponent(imagePath)
+        return NSImage(contentsOf: url)
     }
 
     nonisolated static func truncatedPreview(_ text: String, maxLength: Int) -> String {

@@ -231,6 +231,127 @@ struct ClipboardStoreTests {
         #expect(items[0].textContent == "persisted")
     }
 
+    // MARK: - Image support
+
+    private func cleanupImageFiles(_ store: ClipboardStore) async {
+        for item in await store.items where !item.imagePath.isEmpty {
+            let path = ClipboardStore.imageDirectory.appendingPathComponent(item.imagePath).path
+            try? FileManager.default.removeItem(atPath: path)
+        }
+    }
+
+    private func makePNGData(width: Int = 10, height: Int = 10) -> Data {
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        )!
+        return rep.representation(using: .png, properties: [:])!
+    }
+
+    @Test func addImageEntryStoresItem() async {
+        let store = await makeStore()
+        let png = makePNGData()
+        await store.addImageEntry(pngData: png, sourceApp: "Preview", sourceBundleId: "com.apple.Preview")
+        let items = await store.items
+        #expect(items.count == 1)
+        #expect(items[0].contentType == .image)
+        #expect(items[0].imageWidth == 10)
+        #expect(items[0].imageHeight == 10)
+        #expect(items[0].imageSize == png.count)
+        #expect(items[0].sourceApp == "Preview")
+        #expect(!items[0].imagePath.isEmpty)
+        await cleanupImageFiles(store)
+    }
+
+    @Test func addImageEntryIncrementsVersion() async {
+        let store = await makeStore()
+        let v0 = await store.version
+        await store.addImageEntry(pngData: makePNGData())
+        let v1 = await store.version
+        #expect(v1 > v0)
+        await cleanupImageFiles(store)
+    }
+
+    @Test func tinyImageIsSkipped() async {
+        let store = await makeStore()
+        let tinyPNG = makePNGData(width: 3, height: 3)
+        await store.addImageEntry(pngData: tinyPNG)
+        let items = await store.items
+        #expect(items.isEmpty)
+    }
+
+    @Test func imageAtMinSizeIsAccepted() async {
+        let store = await makeStore()
+        let png = makePNGData(width: 4, height: 4)
+        await store.addImageEntry(pngData: png)
+        let items = await store.items
+        #expect(items.count == 1)
+        await cleanupImageFiles(store)
+    }
+
+    @Test func duplicateImageIsSkipped() async {
+        let store = await makeStore()
+        let png = makePNGData()
+        await store.addImageEntry(pngData: png)
+        await store.addImageEntry(pngData: png)
+        let items = await store.items
+        #expect(items.count == 1)
+        await cleanupImageFiles(store)
+    }
+
+    @Test func differentImagesAreNotDeduplicated() async {
+        let store = await makeStore()
+        let png1 = makePNGData(width: 10, height: 10)
+        let png2 = makePNGData(width: 20, height: 20)
+        await store.addImageEntry(pngData: png1)
+        await store.addImageEntry(pngData: png2)
+        let items = await store.items
+        #expect(items.count == 2)
+        await cleanupImageFiles(store)
+    }
+
+    @Test func deleteImageCleansUpFile() async {
+        let store = await makeStore()
+        await store.addImageEntry(pngData: makePNGData())
+        let item = await store.items[0]
+        let filePath = ClipboardStore.imageDirectory.appendingPathComponent(item.imagePath).path
+        #expect(FileManager.default.fileExists(atPath: filePath))
+
+        await store.delete(itemId: item.id)
+        #expect(!FileManager.default.fileExists(atPath: filePath))
+    }
+
+    @Test func writeImageToClipboard() async {
+        let store = await makeStore()
+        let png = makePNGData()
+        await store.addImageEntry(pngData: png)
+        let itemId = await store.items[0].id
+        let result = await store.writeToClipboard(itemId: itemId)
+        #expect(result)
+
+        let pb = NSPasteboard.general
+        let pastedData = pb.data(forType: .png)
+        #expect(pastedData == png)
+        await cleanupImageFiles(store)
+    }
+
+    @Test func imageFilenameFormat() async {
+        let store = await makeStore()
+        await store.addImageEntry(pngData: makePNGData())
+        let item = await store.items[0]
+        let filename = item.imagePath
+        #expect(filename.hasSuffix(".png"))
+        let parts = filename.dropLast(4).split(separator: "_")
+        #expect(parts.count == 2)
+        #expect(Int(parts[0]) != nil)
+        #expect(parts[1].count == 12)
+        await cleanupImageFiles(store)
+    }
+
     // MARK: - Thread safety
 
     @Test func concurrentAccessIsThreadSafe() async {
