@@ -692,4 +692,41 @@ struct SearchViewModelTests {
         #expect(vm.historyIndex == nil)
         #expect(vm.query.isEmpty)
     }
+
+    // MARK: - hasPreview
+
+    @Test func hasPreviewTrueWhenPreviewProviderMatched() async {
+        let router = SearchRouter(defaultProvider: MockSearchProvider())
+        router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "cb "
+        #expect(vm.hasPreview == true)
+    }
+
+    @Test func hasPreviewFalseForDefaultProvider() async {
+        let router = SearchRouter(defaultProvider: MockSearchProvider())
+        router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "hello"
+        #expect(vm.hasPreview == false)
+    }
+
+    @Test func hasPreviewFalseWhenCleared() async {
+        let router = SearchRouter(defaultProvider: MockSearchProvider())
+        router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "cb test"
+        #expect(vm.hasPreview == true)
+        vm.clear()
+        #expect(vm.hasPreview == false)
+    }
+
+    @Test func hasPreviewFalseWhenPreviewProviderDisabled() async {
+        let router = SearchRouter(defaultProvider: MockSearchProvider())
+        router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
+        router.setEnabled(false, forId: "clipboard")
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "cb "
+        #expect(vm.hasPreview == false)
+    }
 }

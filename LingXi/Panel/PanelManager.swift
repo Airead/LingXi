@@ -186,21 +186,21 @@ final class PanelManager {
         // Without the dispatch, panel.setFrame(display: true) triggers a SwiftUI layout
         // pass that reads the stale value of viewModel.results.
         sizeObserver = viewModel.$results
+            .combineLatest(viewModel.$hasPreview)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak newPanel] (results: [SearchResult]) in
+            .sink { [weak self, weak newPanel] (results: [SearchResult], hasPreview: Bool) in
                 guard let self, let panel = newPanel else { return }
-                self.updatePanelSize(panel, results: results)
+                self.updatePanelSize(panel, results: results, hasPreview: hasPreview)
             }
 
         return newPanel
     }
 
-    private func updatePanelSize(_ panel: FloatingPanel, results: [SearchResult]) {
+    private func updatePanelSize(_ panel: FloatingPanel, results: [SearchResult], hasPreview: Bool) {
         let visibleRows = min(results.count, PanelLayout.maxVisibleRows)
         let listHeight = CGFloat(visibleRows) * PanelLayout.rowHeight
         let newHeight = PanelLayout.searchBarHeight + listHeight
 
-        let hasPreview = results.contains(where: { $0.previewData != nil })
         let newWidth = hasPreview
             ? PanelLayout.previewListWidth + PanelLayout.previewWidth
             : PanelLayout.defaultWidth

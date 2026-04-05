@@ -2,11 +2,13 @@ protocol SearchProvider: Sendable {
     func search(query: String) async -> [SearchResult]
     var debounceMilliseconds: Int { get }
     var timeoutMilliseconds: Int { get }
+    var supportsPreview: Bool { get }
 }
 
 extension SearchProvider {
     var debounceMilliseconds: Int { 0 }
     var timeoutMilliseconds: Int { 5000 }
+    var supportsPreview: Bool { false }
 }
 
 extension SearchProvider {

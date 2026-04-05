@@ -1,6 +1,7 @@
 import AppKit
 
 actor ClipboardHistoryProvider: SearchProvider {
+    nonisolated let supportsPreview = true
     nonisolated static let itemIdPrefix = "clipboard:"
 
     nonisolated static func extractId(from itemId: String) -> Int? {

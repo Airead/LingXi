@@ -89,6 +89,10 @@ final class SearchRouter {
         }
     }
 
+    func hasPreviewProvider(for rawQuery: String) -> Bool {
+        matchedEntries(for: rawQuery).contains { $0.provider.supportsPreview }
+    }
+
     // MARK: - Private helpers
 
     private static func executeProvider(_ entry: ProviderEntry, query: String) async -> [SearchResult] {

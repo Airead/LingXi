@@ -9,6 +9,7 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var results: [SearchResult] = []
     @Published var selectedIndex: Int = 0
     @Published var activeModifiers: Set<ActionModifier> = []
+    @Published private(set) var hasPreview: Bool = false
 
     private struct HistoryBrowsing {
         let entries: [String]
@@ -188,6 +189,7 @@ final class SearchViewModel: ObservableObject {
         if !isSettingHistoryQuery && historyBrowsing != nil {
             exitHistoryMode()
         }
+        hasPreview = router.hasPreviewProvider(for: query)
         filterResults()
     }
 
