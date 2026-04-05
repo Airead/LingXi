@@ -721,6 +721,26 @@ struct SearchViewModelTests {
         #expect(vm.hasPreview == false)
     }
 
+    @Test func clipboardResultsNotBoostedByUsage() async {
+        let provider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:1", icon: nil, name: "First", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 50.0),
+            SearchResult(itemId: "clipboard:2", icon: nil, name: "Second", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 80.0),
+        ])
+        let db = await DatabaseManager()
+        let tracker = UsageTracker(database: db)
+        // Record heavy usage for clipboard:1 — should NOT boost it past clipboard:2
+        for _ in 0..<60 {
+            await tracker.record(query: "test", itemId: "clipboard:1")
+        }
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, database: db, debounceMilliseconds: 0)
+        vm.query = "test"
+        await waitUntil { vm.results.count == 2 }
+        #expect(vm.results.first?.itemId == "clipboard:2")
+    }
+
     @Test func hasPreviewFalseWhenPreviewProviderDisabled() async {
         let router = SearchRouter(defaultProvider: MockSearchProvider())
         router.register(prefix: "cb", id: "clipboard", provider: StubSearchProvider(results: [], supportsPreview: true))
