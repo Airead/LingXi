@@ -22,7 +22,7 @@ struct LingXiApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("LingXi", systemImage: "magnifyingglass") {
+        MenuBarExtra("LingXi", systemImage: "sparkles") {
             MenuBarMenuView()
         }
     }
