@@ -2,7 +2,7 @@ import AppKit
 
 /// Icon cache intended to be used as a stored property inside an actor.
 /// The owning actor provides thread safety.
-final class AppIconCache {
+nonisolated final class AppIconCache {
     private var cache: [String: NSImage] = [:]
 
     func icon(for bundleId: String) -> NSImage? {
