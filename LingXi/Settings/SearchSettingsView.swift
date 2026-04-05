@@ -25,6 +25,14 @@ struct SearchSettingsView: View {
                 dataSourceRow("File Search", prefix: $settings.fileSearchPrefix, enabled: $settings.fileSearchEnabled)
                 dataSourceRow("Folder Search", prefix: $settings.folderSearchPrefix, enabled: $settings.folderSearchEnabled)
                 dataSourceRow("Bookmark Search", prefix: $settings.bookmarkSearchPrefix, enabled: $settings.bookmarkSearchEnabled)
+                dataSourceRow("Clipboard History", prefix: $settings.clipboardSearchPrefix, enabled: $settings.clipboardHistoryEnabled)
+                LabeledContent("Clipboard Capacity") {
+                    TextField("", value: $settings.clipboardHistoryCapacity, format: .number)
+                        .frame(width: 60)
+                        .multilineTextAlignment(.trailing)
+                    Stepper("", value: $settings.clipboardHistoryCapacity, in: 10...1000, step: 10)
+                        .labelsHidden()
+                }
             }
         }
         .formStyle(.grouped)

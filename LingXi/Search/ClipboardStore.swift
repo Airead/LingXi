@@ -100,6 +100,10 @@ actor ClipboardStore {
         _version
     }
 
+    func itemsWithVersion() -> (items: [ClipboardItem], version: Int) {
+        (cachedItems, _version)
+    }
+
     func startMonitoring() {
         guard timer == nil else { return }
 
@@ -160,6 +164,7 @@ actor ClipboardStore {
     }
 
     func setCapacity(_ newCapacity: Int) async {
+        guard newCapacity != _capacity else { return }
         await setupTask?.value
         _capacity = newCapacity
         await enforceCapacity()

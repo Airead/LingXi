@@ -5,6 +5,7 @@ nonisolated enum SearchResultType: Sendable {
     case file
     case command
     case bookmark
+    case clipboard
 }
 
 nonisolated enum ActionModifier: Int, Hashable, Sendable {

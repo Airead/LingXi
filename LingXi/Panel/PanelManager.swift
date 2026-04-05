@@ -21,15 +21,19 @@ final class PanelManager {
     private var panel: FloatingPanel?
     private let router: SearchRouter
     private let viewModel: SearchViewModel
+    private let clipboardStore: ClipboardStore
     private let inputSourceManager = InputSourceManager()
     private var heightObserver: AnyCancellable?
 
     init(settings: AppSettings) async {
         let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
+        let clipboardStore = ClipboardStore(database: db, capacity: settings.clipboardHistoryCapacity)
+        self.clipboardStore = clipboardStore
         let router = SearchRouter(defaultProvider: ApplicationSearchProvider(), maxResults: settings.maxSearchResults)
         router.register(prefix: settings.folderSearchPrefix, id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
         router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
         router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
+        router.register(prefix: settings.clipboardSearchPrefix, id: "clipboard", provider: ClipboardHistoryProvider(store: clipboardStore))
         self.router = router
         self.viewModel = await SearchViewModel(router: router, database: db)
 
@@ -42,9 +46,22 @@ final class PanelManager {
         router.setEnabled(settings.fileSearchEnabled, forId: "file")
         router.setEnabled(settings.folderSearchEnabled, forId: "folder")
         router.setEnabled(settings.bookmarkSearchEnabled, forId: "bookmark")
+        router.setEnabled(settings.clipboardHistoryEnabled, forId: "clipboard")
         router.updatePrefix(settings.fileSearchPrefix, forId: "file")
         router.updatePrefix(settings.folderSearchPrefix, forId: "folder")
         router.updatePrefix(settings.bookmarkSearchPrefix, forId: "bookmark")
+        router.updatePrefix(settings.clipboardSearchPrefix, forId: "clipboard")
+
+        let enabled = settings.clipboardHistoryEnabled
+        let capacity = settings.clipboardHistoryCapacity
+        Task {
+            if enabled {
+                await clipboardStore.startMonitoring()
+            } else {
+                await clipboardStore.stopMonitoring()
+            }
+            await clipboardStore.setCapacity(capacity)
+        }
     }
 
     func toggle() {

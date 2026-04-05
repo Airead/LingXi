@@ -74,6 +74,23 @@ final class AppSettings {
             guard bookmarkSearchPrefix != oldValue else { return }; save(.bookmarkSearchPrefix, value: bookmarkSearchPrefix)
         }
     }
+    var clipboardHistoryEnabled: Bool {
+        didSet { guard clipboardHistoryEnabled != oldValue else { return }; save(.clipboardHistoryEnabled, value: clipboardHistoryEnabled) }
+    }
+    var clipboardSearchPrefix: String {
+        didSet {
+            if clipboardSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { clipboardSearchPrefix = oldValue; return }
+            guard clipboardSearchPrefix != oldValue else { return }; save(.clipboardSearchPrefix, value: clipboardSearchPrefix)
+        }
+    }
+    var clipboardHistoryCapacity: Int {
+        didSet {
+            let clamped = max(10, min(clipboardHistoryCapacity, 1000))
+            if clamped != clipboardHistoryCapacity { clipboardHistoryCapacity = clamped; return }
+            guard clipboardHistoryCapacity != oldValue else { return }
+            save(.clipboardHistoryCapacity, value: clipboardHistoryCapacity)
+        }
+    }
 
     // MARK: - Appearance mode
 
@@ -108,6 +125,9 @@ final class AppSettings {
         case fileSearchPrefix = "io.github.airead.lingxi.fileSearchPrefix"
         case folderSearchPrefix = "io.github.airead.lingxi.folderSearchPrefix"
         case bookmarkSearchPrefix = "io.github.airead.lingxi.bookmarkSearchPrefix"
+        case clipboardHistoryEnabled = "io.github.airead.lingxi.clipboardHistoryEnabled"
+        case clipboardSearchPrefix = "io.github.airead.lingxi.clipboardSearchPrefix"
+        case clipboardHistoryCapacity = "io.github.airead.lingxi.clipboardHistoryCapacity"
     }
 
     // MARK: - Defaults
@@ -133,6 +153,9 @@ final class AppSettings {
         fileSearchPrefix = Self.load(defaults, .fileSearchPrefix) ?? "f"
         folderSearchPrefix = Self.load(defaults, .folderSearchPrefix) ?? "fd"
         bookmarkSearchPrefix = Self.load(defaults, .bookmarkSearchPrefix) ?? "bm"
+        clipboardHistoryEnabled = Self.load(defaults, .clipboardHistoryEnabled) ?? true
+        clipboardSearchPrefix = Self.load(defaults, .clipboardSearchPrefix) ?? "cb"
+        clipboardHistoryCapacity = Self.load(defaults, .clipboardHistoryCapacity) ?? 200
 
         let modeRaw: String? = Self.load(defaults, .appearanceMode)
         appearanceMode = modeRaw.flatMap { AppearanceMode(rawValue: $0) } ?? .system

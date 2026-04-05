@@ -2,7 +2,7 @@ import AppKit
 
 actor BookmarkSearchProvider: SearchProvider {
     private let store: BookmarkStore
-    private var browserIconCache: [String: NSImage] = [:]
+    private let iconCache = AppIconCache()
 
     init(store: BookmarkStore = BookmarkStore()) {
         self.store = store
@@ -28,17 +28,6 @@ actor BookmarkSearchProvider: SearchProvider {
     }
 
     private func browserIcon(for bundleId: String) -> NSImage? {
-        if let cached = browserIconCache[bundleId] {
-            return cached
-        }
-
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
-            return nil
-        }
-        let icon = NSWorkspace.shared.icon(forFile: appURL.path)
-        icon.size = NSSize(width: 32, height: 32)
-
-        browserIconCache[bundleId] = icon
-        return icon
+        iconCache.icon(for: bundleId)
     }
 }
