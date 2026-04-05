@@ -13,14 +13,14 @@ struct BookmarkStoreTests {
 
     // MARK: - Safari
 
-    @Test func parsesSafariBookmarks() {
+    @Test func parsesSafariBookmarks() async {
         let plistPath = Self.tempDir.appendingPathComponent("SafariBookmarks.plist").path
         writeSafariPlist(to: plistPath, bookmarks: [
             ("GitHub", "https://github.com"),
             ("Apple", "https://apple.com"),
         ])
 
-        let bookmarks = loadSafariBookmarks(path: plistPath)
+        let bookmarks = await loadSafariBookmarks(path: plistPath)
         #expect(bookmarks.count == 2)
         #expect(bookmarks[0].title == "GitHub")
         #expect(bookmarks[0].url.absoluteString == "https://github.com")
@@ -28,7 +28,7 @@ struct BookmarkStoreTests {
         #expect(bookmarks[1].title == "Apple")
     }
 
-    @Test func safariSkipsReadingList() {
+    @Test func safariSkipsReadingList() async {
         let plistPath = Self.tempDir.appendingPathComponent("SafariRL.plist").path
         let plist: [String: Any] = [
             "Children": [
@@ -59,19 +59,19 @@ struct BookmarkStoreTests {
         let data = try! PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
         try! data.write(to: URL(fileURLWithPath: plistPath))
 
-        let bookmarks = loadSafariBookmarks(path: plistPath)
+        let bookmarks = await loadSafariBookmarks(path: plistPath)
         #expect(bookmarks.count == 1)
         #expect(bookmarks[0].title == "Real Bookmark")
     }
 
-    @Test func safariMissingFileReturnsEmpty() {
-        let bookmarks = loadSafariBookmarks(path: "/nonexistent/path/Bookmarks.plist")
+    @Test func safariMissingFileReturnsEmpty() async {
+        let bookmarks = await loadSafariBookmarks(path: "/nonexistent/path/Bookmarks.plist")
         #expect(bookmarks.isEmpty)
     }
 
     // MARK: - Chrome
 
-    @Test func parsesChromeBookmarks() {
+    @Test func parsesChromeBookmarks() async {
         let profileDir = Self.tempDir.appendingPathComponent("ChromeTest/Default")
         try! FileManager.default.createDirectory(at: profileDir, withIntermediateDirectories: true)
 
@@ -81,14 +81,14 @@ struct BookmarkStoreTests {
             ("Rust Lang", "https://rust-lang.org"),
         ])
 
-        let bookmarks = loadChromeBookmarks(baseDir: Self.tempDir.appendingPathComponent("ChromeTest").path)
+        let bookmarks = await loadChromeBookmarks(baseDir: Self.tempDir.appendingPathComponent("ChromeTest").path)
         #expect(bookmarks.count == 2)
         #expect(bookmarks[0].title == "Stack Overflow")
         #expect(bookmarks[0].url.absoluteString == "https://stackoverflow.com")
         #expect(bookmarks[0].browserBundleId == "com.google.Chrome")
     }
 
-    @Test func chromeMultipleProfiles() {
+    @Test func chromeMultipleProfiles() async {
         let base = Self.tempDir.appendingPathComponent("ChromeMulti")
         let profile1 = base.appendingPathComponent("Default")
         let profile2 = base.appendingPathComponent("Profile 1")
@@ -102,21 +102,21 @@ struct BookmarkStoreTests {
             ("Site B", "https://b.example.com"),
         ])
 
-        let bookmarks = loadChromeBookmarks(baseDir: base.path)
+        let bookmarks = await loadChromeBookmarks(baseDir: base.path)
         #expect(bookmarks.count == 2)
         let titles = Set(bookmarks.map(\.title))
         #expect(titles.contains("Site A"))
         #expect(titles.contains("Site B"))
     }
 
-    @Test func chromeMissingDirReturnsEmpty() {
-        let bookmarks = loadChromeBookmarks(baseDir: "/nonexistent/chrome/dir")
+    @Test func chromeMissingDirReturnsEmpty() async {
+        let bookmarks = await loadChromeBookmarks(baseDir: "/nonexistent/chrome/dir")
         #expect(bookmarks.isEmpty)
     }
 
     // MARK: - Dedup
 
-    @Test func deduplicatesByURL() {
+    @Test func deduplicatesByURL() async {
         let plistPath = Self.tempDir.appendingPathComponent("SafariDedup.plist").path
         writeSafariPlist(to: plistPath, bookmarks: [
             ("GitHub", "https://github.com"),
@@ -124,8 +124,9 @@ struct BookmarkStoreTests {
         ])
 
         let store = BookmarkStore(safariPath: plistPath)
-        #expect(store.bookmarks.count == 1)
-        #expect(store.bookmarks[0].title == "GitHub")
+        let bookmarks = await store.bookmarks
+        #expect(bookmarks.count == 1)
+        #expect(bookmarks[0].title == "GitHub")
     }
 
     // MARK: - Helpers
@@ -168,14 +169,14 @@ struct BookmarkStoreTests {
         try! data.write(to: URL(fileURLWithPath: path))
     }
 
-    private func loadSafariBookmarks(path: String) -> [Bookmark] {
+    private func loadSafariBookmarks(path: String) async -> [Bookmark] {
         let store = BookmarkStore(safariPath: path)
-        return store.bookmarks.filter { $0.browserBundleId == "com.apple.Safari" }
+        return await store.bookmarks.filter { $0.browserBundleId == "com.apple.Safari" }
     }
 
-    private func loadChromeBookmarks(baseDir: String) -> [Bookmark] {
+    private func loadChromeBookmarks(baseDir: String) async -> [Bookmark] {
         let browser = ChromiumBrowser(bundleId: "com.google.Chrome", baseDir: baseDir)
         let store = BookmarkStore(safariPath: "/no-such-file", chromiumBrowsers: [browser])
-        return store.bookmarks.filter { $0.browserBundleId == "com.google.Chrome" }
+        return await store.bookmarks.filter { $0.browserBundleId == "com.google.Chrome" }
     }
 }

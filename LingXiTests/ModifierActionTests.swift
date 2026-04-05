@@ -74,7 +74,7 @@ import Testing
         ])
         let workspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: workspace, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, workspace: workspace, debounceMilliseconds: 0)
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
 
@@ -97,7 +97,7 @@ import Testing
         ])
         let workspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: workspace, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, workspace: workspace, debounceMilliseconds: 0)
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
 
@@ -119,7 +119,7 @@ import Testing
         ])
         let workspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: workspace, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, workspace: workspace, debounceMilliseconds: 0)
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
 
@@ -130,7 +130,7 @@ import Testing
 
     @Test func confirmModifierActionRecordsUsage() async {
         let appURL = URL(fileURLWithPath: "/Applications/Test.app")
-        let db = DatabaseManager()
+        let db = await DatabaseManager()
         let tracker = UsageTracker(database: db)
         let provider = StubSearchProvider(results: [
             SearchResult(
@@ -143,17 +143,19 @@ import Testing
         ])
         let workspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: workspace, database: db, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, workspace: workspace, database: db, debounceMilliseconds: 0)
         vm.query = "Test"
         await waitUntil { !vm.results.isEmpty }
 
         vm.confirm(modifiers: [.command])
-        #expect(tracker.score(query: "Test", itemId: "test.app") == 1)
+        // recordExecution is fire-and-forget, give it time to complete
+        try? await Task.sleep(nanoseconds: 50 * 1_000_000)
+        #expect(await tracker.score(query: "Test", itemId: "test.app") == 1)
     }
 
-    @Test func confirmReturnsFalseWhenNoResultsWithModifiers() {
+    @Test func confirmReturnsFalseWhenNoResultsWithModifiers() async {
         let router = SearchRouter(defaultProvider: StubSearchProvider(results: []))
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         #expect(vm.confirm(modifiers: [.command]) == false)
     }
 }
@@ -163,15 +165,15 @@ import Testing
 @MainActor
 @Suite struct ActiveModifiersTests {
 
-    @Test func activeModifiersDefaultsToEmpty() {
+    @Test func activeModifiersDefaultsToEmpty() async {
         let router = SearchRouter(defaultProvider: StubSearchProvider(results: []))
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         #expect(vm.activeModifiers.isEmpty)
     }
 
-    @Test func activeModifiersCanBeSet() {
+    @Test func activeModifiersCanBeSet() async {
         let router = SearchRouter(defaultProvider: StubSearchProvider(results: []))
-        let vm = SearchViewModel(router: router, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
         vm.activeModifiers = [.command]
         #expect(vm.activeModifiers == [.command])
         vm.activeModifiers = []

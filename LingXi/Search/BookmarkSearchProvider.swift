@@ -1,16 +1,16 @@
 import AppKit
 
-final class BookmarkSearchProvider: SearchProvider, @unchecked Sendable {
+actor BookmarkSearchProvider: SearchProvider {
     private let store: BookmarkStore
     private var browserIconCache: [String: NSImage] = [:]
-    private let iconCacheLock = NSLock()
 
     init(store: BookmarkStore = BookmarkStore()) {
         self.store = store
     }
 
     func search(query: String) async -> [SearchResult] {
-        scoredResults(from: store.bookmarks, query: query, names: \.searchableFields) { bookmark, score in
+        let bookmarks = await store.bookmarks
+        return scoredItems(from: bookmarks, query: query, names: { $0.searchableFields }).map { bookmark, score in
             SearchResult(
                 itemId: "bookmark:\(bookmark.url.absoluteString)",
                 icon: browserIcon(for: bookmark.browserBundleId),
@@ -28,10 +28,9 @@ final class BookmarkSearchProvider: SearchProvider, @unchecked Sendable {
     }
 
     private func browserIcon(for bundleId: String) -> NSImage? {
-        iconCacheLock.lock()
-        let cached = browserIconCache[bundleId]
-        iconCacheLock.unlock()
-        if let cached { return cached }
+        if let cached = browserIconCache[bundleId] {
+            return cached
+        }
 
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
             return nil
@@ -39,10 +38,7 @@ final class BookmarkSearchProvider: SearchProvider, @unchecked Sendable {
         let icon = NSWorkspace.shared.icon(forFile: appURL.path)
         icon.size = NSSize(width: 32, height: 32)
 
-        iconCacheLock.lock()
         browserIconCache[bundleId] = icon
-        iconCacheLock.unlock()
-
         return icon
     }
 }

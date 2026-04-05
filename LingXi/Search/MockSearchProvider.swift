@@ -32,7 +32,7 @@ struct MockSearchProvider: SearchProvider {
     }
 
     func search(query: String) async -> [SearchResult] {
-        scoredResults(from: Self.mockData, query: query, name: \.name) { entry, score in
+        scoredItems(from: Self.mockData, query: query, name: \.name).map { entry, score in
             SearchResult(itemId: entry.itemId, icon: entry.icon, name: entry.name, subtitle: entry.subtitle,
                          resultType: .application, url: nil, score: score)
         }

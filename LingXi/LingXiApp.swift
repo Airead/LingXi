@@ -14,7 +14,12 @@ struct LingXiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let settings = AppSettings.shared
     private let hotKeyManager: HotKeyManager
-    private let panelManager: PanelManager
+    private let panelHolder = PanelHolder()
+
+    @MainActor
+    private final class PanelHolder {
+        var panelManager: PanelManager?
+    }
 
     var body: some Scene {
         MenuBarExtra("LingXi", systemImage: "magnifyingglass") {
@@ -25,15 +30,14 @@ struct LingXiApp: App {
     init() {
         let s = settings
         hotKeyManager = HotKeyManager(keyCode: s.hotKeyKeyCode, modifiers: s.hotKeyModifiers)
-        panelManager = PanelManager(settings: s)
 
-        hotKeyManager.onHotKey = { [panelManager] in
-            panelManager.toggle()
+        let holder = panelHolder
+        hotKeyManager.onHotKey = {
+            holder.panelManager?.toggle()
         }
         hotKeyManager.start()
 
         let hk = hotKeyManager
-        let pm = panelManager
 
         observeForever({
             _ = s.hotKeyKeyCode
@@ -43,23 +47,28 @@ struct LingXiApp: App {
         })
 
         observeForever({
-            _ = s.maxSearchResults
-            _ = s.applicationSearchEnabled
-            _ = s.fileSearchEnabled
-            _ = s.folderSearchEnabled
-            _ = s.bookmarkSearchEnabled
-            _ = s.fileSearchPrefix
-            _ = s.folderSearchPrefix
-            _ = s.bookmarkSearchPrefix
-        }, action: {
-            pm.applySettings(s)
-        })
-
-        observeForever({
             _ = s.appearanceMode
         }, action: {
             applyAppearance(s.appearanceMode)
         })
+
+        Task { @MainActor in
+            let pm = await PanelManager(settings: s)
+            holder.panelManager = pm
+
+            observeForever({
+                _ = s.maxSearchResults
+                _ = s.applicationSearchEnabled
+                _ = s.fileSearchEnabled
+                _ = s.folderSearchEnabled
+                _ = s.bookmarkSearchEnabled
+                _ = s.fileSearchPrefix
+                _ = s.folderSearchPrefix
+                _ = s.bookmarkSearchPrefix
+            }, action: {
+                pm.applySettings(s)
+            })
+        }
     }
 }
 

@@ -312,7 +312,7 @@ struct FileConfirmTests {
         ])
         let mockWorkspace = MockWorkspaceOpener()
         let router = SearchRouter(defaultProvider: provider)
-        let vm = SearchViewModel(router: router, workspace: mockWorkspace, debounceMilliseconds: 0)
+        let vm = await SearchViewModel(router: router, workspace: mockWorkspace, debounceMilliseconds: 0)
         vm.query = "doc"
         await waitUntil { !vm.results.isEmpty }
         #expect(vm.confirm() == true)

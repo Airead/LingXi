@@ -24,14 +24,14 @@ final class PanelManager {
     private let inputSourceManager = InputSourceManager()
     private var heightObserver: AnyCancellable?
 
-    init(settings: AppSettings) {
-        let db = DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
+    init(settings: AppSettings) async {
+        let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
         let router = SearchRouter(defaultProvider: ApplicationSearchProvider(), maxResults: settings.maxSearchResults)
         router.register(prefix: settings.folderSearchPrefix, id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
         router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
         router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
         self.router = router
-        self.viewModel = SearchViewModel(router: router, database: db)
+        self.viewModel = await SearchViewModel(router: router, database: db)
 
         applySettings(settings)
     }

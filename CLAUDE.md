@@ -19,6 +19,12 @@ Run unit tests with parallel testing disabled and skip UI tests:
 xcodebuild test -scheme LingXi -destination 'platform=macOS' -parallel-testing-enabled NO -only-testing:LingXiTests
 ```
 
+**Avoid running multiple `xcodebuild` processes concurrently** — they compete for DerivedData and CodeSign, causing hangs or build failures. Always wait for the previous build/test to finish before starting a new one.
+
+## Actor Pitfalls
+
+- `deinit` is nonisolated. Accessing actor-isolated stored properties from `deinit` will deadlock. Use `nonisolated(unsafe)` for properties that must be read/cancelled in `deinit` (e.g. `DispatchSource`, `Task`).
+
 ## Reference
 
 - Review [docs/ai-swift-macos-best-practices.md](docs/ai-swift-macos-best-practices.md) for AI-assisted Swift macOS development best practices including Swift 6.2 concurrency, SwiftUI architecture, and testing strategy.

@@ -35,8 +35,13 @@ final class SearchViewModel: ObservableObject {
 
     init(router: SearchRouter? = nil, workspace: WorkspaceOpening = NSWorkspace.shared,
          database: DatabaseManager? = nil,
-         debounceMilliseconds: Int = 0) {
-        let db = database ?? DatabaseManager()
+         debounceMilliseconds: Int = 0) async {
+        let db: DatabaseManager
+        if let database {
+            db = database
+        } else {
+            db = await DatabaseManager()
+        }
         self.router = router ?? SearchRouter(defaultProvider: ApplicationSearchProvider())
         self.workspace = workspace
         self.usageTracker = UsageTracker(database: db)
@@ -53,7 +58,7 @@ final class SearchViewModel: ObservableObject {
 
     func moveUp() {
         if query.isEmpty || historyBrowsing != nil {
-            historyUp()
+            Task { await historyUp() }
         } else {
             guard !results.isEmpty, selectedIndex > 0 else { return }
             selectedIndex -= 1
@@ -108,15 +113,17 @@ final class SearchViewModel: ObservableObject {
     }
 
     private func recordExecution(query: String, itemId: String) {
-        usageTracker.record(query: query, itemId: itemId)
-        queryHistory.record(query)
+        Task {
+            await usageTracker.record(query: query, itemId: itemId)
+            await queryHistory.record(query)
+        }
     }
 
     // MARK: - History browsing
 
-    private func historyUp() {
+    private func historyUp() async {
         if historyBrowsing == nil {
-            let entries = queryHistory.entries()
+            let entries = await queryHistory.entries()
             guard !entries.isEmpty else { return }
             historyBrowsing = HistoryBrowsing(entries: entries, index: 0)
             setQueryFromHistory()
@@ -185,15 +192,14 @@ final class SearchViewModel: ObservableObject {
 
             await router.searchIncremental(rawQuery: currentQuery) { [weak self] _, providerResults in
                 guard let self else { return }
-                await MainActor.run {
-                    guard self.generation == currentGeneration, !Task.isCancelled else { return }
-                    self.mergeResults(providerResults, query: currentQuery, maxResults: maxResults)
-                }
+                let proceed = await MainActor.run { self.generation == currentGeneration && !Task.isCancelled }
+                guard proceed else { return }
+                await self.mergeResults(providerResults, query: currentQuery, maxResults: maxResults)
             }
         }
     }
 
-    private func mergeResults(_ incoming: [SearchResult], query: String, maxResults: Int) {
+    private func mergeResults(_ incoming: [SearchResult], query: String, maxResults: Int) async {
         let isReplacement = (generation != lastReplacedGeneration)
         if isReplacement { lastReplacedGeneration = generation }
 
@@ -214,7 +220,7 @@ final class SearchViewModel: ObservableObject {
                 merged.append(item)
             }
         }
-        results = applyUsageBoost(results: merged, query: query, maxResults: maxResults)
+        results = await applyUsageBoost(results: merged, query: query, maxResults: maxResults)
 
         if let selectedItemId,
            let newIndex = results.firstIndex(where: { $0.itemId == selectedItemId }) {
@@ -224,11 +230,11 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
-    private func applyUsageBoost(results: [SearchResult], query: String, maxResults: Int) -> [SearchResult] {
+    private func applyUsageBoost(results: [SearchResult], query: String, maxResults: Int) async -> [SearchResult] {
         let itemIds = results.map(\.itemId)
 
         if cachedUsageCounts == nil {
-            let fetched = usageTracker.scores(query: query, itemIds: itemIds)
+            let fetched = await usageTracker.scores(query: query, itemIds: itemIds)
             // Sentinel zero prevents the incremental branch from re-querying known-unused IDs
             var counts = fetched
             for id in itemIds where counts[id] == nil {
@@ -238,7 +244,7 @@ final class SearchViewModel: ObservableObject {
         } else if var counts = cachedUsageCounts {
             let newIds = itemIds.filter { counts[$0] == nil }
             if !newIds.isEmpty {
-                let fetched = usageTracker.scores(query: query, itemIds: newIds)
+                let fetched = await usageTracker.scores(query: query, itemIds: newIds)
                 for id in newIds {
                     counts[id] = fetched[id] ?? 0
                 }
