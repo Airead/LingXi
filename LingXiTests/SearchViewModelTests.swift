@@ -621,6 +621,32 @@ struct SearchViewModelTests {
         #expect(!itemIds.contains("old_item"))
     }
 
+    @Test func prefixSwitchReplacesResults() async {
+        let defaultProvider = StubSearchProvider(results: [
+            SearchResult(itemId: "app:1", icon: nil, name: "AppOne", subtitle: "",
+                         resultType: .application, url: nil, score: 80),
+        ])
+        let clipboardProvider = StubSearchProvider(results: [
+            SearchResult(itemId: "clipboard:1", icon: nil, name: "ClipText", subtitle: "",
+                         resultType: .clipboard, url: nil, score: 0),
+        ])
+        let router = SearchRouter(defaultProvider: defaultProvider)
+        router.register(prefix: "cb", id: "clipboard", provider: clipboardProvider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+
+        // Type "cb" (no space) → default provider matches
+        vm.query = "cb"
+        await waitUntil { !vm.results.isEmpty }
+        // Default provider may or may not match "cb"; either way, proceed
+
+        // Type "cb " (with space) → clipboard prefix matches
+        vm.query = "cb "
+        await waitUntil { vm.results.contains(where: { $0.resultType == .clipboard }) }
+        let itemIds = vm.results.map(\.itemId)
+        #expect(itemIds.contains("clipboard:1"))
+        #expect(!itemIds.contains("app:1"), "App results should be replaced by clipboard results")
+    }
+
     @Test func clearExitsHistoryMode() async {
         let vm = await makeHistoryViewModel(historyEntries: ["recent"])
         vm.moveUp()

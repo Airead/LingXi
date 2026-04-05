@@ -11,7 +11,9 @@ import Combine
 import SwiftUI
 
 private enum PanelLayout {
-    static let width: CGFloat = 680
+    static let defaultWidth: CGFloat = 680
+    static let previewListWidth: CGFloat = 480
+    static let previewWidth: CGFloat = 540
     static let searchBarHeight: CGFloat = 48
     static let rowHeight: CGFloat = 44
     static let maxVisibleRows = 8
@@ -24,7 +26,7 @@ final class PanelManager {
     private let viewModel: SearchViewModel
     private let clipboardStore: ClipboardStore
     private let inputSourceManager = InputSourceManager()
-    private var heightObserver: AnyCancellable?
+    private var sizeObserver: AnyCancellable?
     private var previousApp: NSRunningApplication?
 
     init(settings: AppSettings) async {
@@ -126,7 +128,7 @@ final class PanelManager {
     }
 
     private func createPanel() -> FloatingPanel {
-        let newPanel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: PanelLayout.width, height: PanelLayout.searchBarHeight))
+        let newPanel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: PanelLayout.defaultWidth, height: PanelLayout.searchBarHeight))
         newPanel.contentView = NSHostingView(rootView: PanelContentView(viewModel: viewModel, onDismiss: { [weak self] in
             self?.hide()
         }))
@@ -155,27 +157,38 @@ final class PanelManager {
             viewModel?.activeModifiers = modifiers
         }
 
-        heightObserver = viewModel.$results
+        // Keep .receive(on:): @Published fires on willSet (before the value is set).
+        // Without the dispatch, panel.setFrame(display: true) triggers a SwiftUI layout
+        // pass that reads the stale value of viewModel.results.
+        sizeObserver = viewModel.$results
+            .receive(on: DispatchQueue.main)
             .sink { [weak self, weak newPanel] (results: [SearchResult]) in
                 guard let self, let panel = newPanel else { return }
-                self.updatePanelHeight(panel, resultCount: results.count)
+                self.updatePanelSize(panel, results: results)
             }
 
         return newPanel
     }
 
-    private func updatePanelHeight(_ panel: FloatingPanel, resultCount: Int) {
-        let visibleRows = min(resultCount, PanelLayout.maxVisibleRows)
+    private func updatePanelSize(_ panel: FloatingPanel, results: [SearchResult]) {
+        let visibleRows = min(results.count, PanelLayout.maxVisibleRows)
         let listHeight = CGFloat(visibleRows) * PanelLayout.rowHeight
         let newHeight = PanelLayout.searchBarHeight + listHeight
 
-        let oldFrame = panel.frame
-        guard newHeight != oldFrame.height else { return }
+        let hasPreview = results.contains(where: { $0.previewData != nil })
+        let newWidth = hasPreview
+            ? PanelLayout.previewListWidth + PanelLayout.previewWidth
+            : PanelLayout.defaultWidth
 
+        let oldFrame = panel.frame
+        guard newHeight != oldFrame.height || newWidth != oldFrame.width else { return }
+
+        let screenFrame = NSScreen.main?.visibleFrame ?? oldFrame
+        let x = screenFrame.midX - newWidth / 2
         let newFrame = NSRect(
-            x: oldFrame.origin.x,
+            x: x,
             y: oldFrame.origin.y + oldFrame.height - newHeight,
-            width: oldFrame.width,
+            width: newWidth,
             height: newHeight
         )
         panel.setFrame(newFrame, display: true, animate: false)
@@ -198,9 +211,11 @@ final class PanelManager {
     private func positionPanel(_ panel: FloatingPanel) {
         guard let screen = NSScreen.main else { return }
         let screenFrame = screen.visibleFrame
-        let x = screenFrame.midX - panel.frame.width / 2
-        let y = screenFrame.midY + screenFrame.height / 4 - panel.frame.height / 2
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        let width = PanelLayout.defaultWidth
+        let height = PanelLayout.searchBarHeight
+        let x = screenFrame.midX - width / 2
+        let y = screenFrame.midY + screenFrame.height / 4 - height / 2
+        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false, animate: false)
     }
 }
 
@@ -208,6 +223,12 @@ private struct PanelContentView: View {
     @ObservedObject var viewModel: SearchViewModel
     var onDismiss: () -> Void
     @FocusState private var isSearchFieldFocused: Bool
+
+    private var selectedPreview: PreviewData? {
+        let index = viewModel.selectedIndex
+        guard viewModel.results.indices.contains(index) else { return nil }
+        return viewModel.results[index].previewData
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -225,24 +246,13 @@ private struct PanelContentView: View {
 
             if !viewModel.results.isEmpty {
                 Divider()
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, result in
-                                SearchResultRow(
-                                    result: result,
-                                    isSelected: index == viewModel.selectedIndex,
-                                    activeModifiers: viewModel.activeModifiers
-                                )
-                                .id(result.id)
-                            }
-                        }
-                    }
-                    .onChange(of: viewModel.selectedIndex) { _, newIndex in
-                        guard viewModel.results.indices.contains(newIndex) else { return }
-                        withAnimation {
-                            proxy.scrollTo(viewModel.results[newIndex].id, anchor: nil)
-                        }
+                HStack(spacing: 0) {
+                    resultsList
+
+                    if let preview = selectedPreview {
+                        Divider()
+                        PreviewPane(data: preview)
+                            .frame(width: PanelLayout.previewWidth)
                     }
                 }
             }
@@ -255,6 +265,83 @@ private struct PanelContentView: View {
         .onAppear {
             isSearchFieldFocused = true
         }
+    }
+
+    private var resultsList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, result in
+                        SearchResultRow(
+                            result: result,
+                            isSelected: index == viewModel.selectedIndex,
+                            activeModifiers: viewModel.activeModifiers
+                        )
+                        .id(result.id)
+                    }
+                }
+            }
+            .onChange(of: viewModel.selectedIndex) { _, newIndex in
+                guard viewModel.results.indices.contains(newIndex) else { return }
+                withAnimation {
+                    proxy.scrollTo(viewModel.results[newIndex].id, anchor: nil)
+                }
+            }
+        }
+    }
+}
+
+private struct PreviewPane: View {
+    let data: PreviewData
+
+    var body: some View {
+        switch data {
+        case .text(let content):
+            ScrollView {
+                Text(content)
+                    .font(.system(size: 13, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+        case .image(let path, let description):
+            VStack(spacing: 12) {
+                LocalImageView(url: path)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+
+                Text(description)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 12)
+            }
+        }
+    }
+}
+
+private struct LocalImageView: View {
+    let url: URL
+    @State private var nsImage: NSImage?
+
+    var body: some View {
+        if let nsImage {
+            Image(nsImage: nsImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .task(id: url, loadImage)
+        } else {
+            Image(systemName: "photo")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+                .task(id: url, loadImage)
+        }
+    }
+
+    @Sendable private func loadImage() async {
+        let loadURL = url
+        let image = await Task.detached { NSImage(contentsOf: loadURL) }.value
+        nsImage = image
     }
 }
 

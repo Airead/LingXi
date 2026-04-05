@@ -59,14 +59,19 @@ actor ClipboardHistoryProvider: SearchProvider {
     private func makeResult(item: ClipboardItem) -> SearchResult {
         let name: String
         let icon: NSImage?
+        let preview: PreviewData
 
         switch item.contentType {
         case .text:
             name = Self.truncatedPreview(item.textContent, maxLength: 80)
             icon = appIcon(for: item.sourceBundleId)
+            preview = .text(item.textContent)
         case .image:
             name = "Image: \(item.imageWidth)×\(item.imageHeight) (\(Self.formattedSize(item.imageSize)))"
             icon = Self.loadThumbnail(imagePath: item.imagePath)
+            let imageURL = ClipboardStore.imageDirectory.appendingPathComponent(item.imagePath)
+            let desc = "\(item.imageWidth)×\(item.imageHeight) · \(Self.formattedSize(item.imageSize))"
+            preview = .image(path: imageURL, description: desc)
         }
 
         let subtitle = Self.buildSubtitle(sourceApp: item.sourceApp, timestamp: item.timestamp)
@@ -81,6 +86,7 @@ actor ClipboardHistoryProvider: SearchProvider {
             resultType: .clipboard,
             url: nil,
             score: 0,
+            previewData: preview,
             modifierActions: [
                 .command: ModifierAction(subtitle: "Copy to Clipboard") { _ in
                     capturedHandler(itemId)

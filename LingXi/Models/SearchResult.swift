@@ -1,5 +1,10 @@
 import AppKit
 
+nonisolated enum PreviewData: Sendable {
+    case text(String)
+    case image(path: URL, description: String)
+}
+
 nonisolated enum SearchResultType: Sendable {
     case application
     case file
@@ -46,6 +51,7 @@ nonisolated struct SearchResult: Identifiable, Sendable {
     let resultType: SearchResultType
     let url: URL?
     var score: Double
+    var previewData: PreviewData?
     var modifierActions: [ActionModifier: ModifierAction] = [:]
     var openWithBundleId: String?
 

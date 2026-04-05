@@ -160,6 +160,32 @@ struct ClipboardHistoryProviderTests {
         #expect(ClipboardHistoryProvider.truncatedPreview("line1\nline2", maxLength: 80) == "line1 line2")
     }
 
+    // MARK: - Preview data
+
+    @Test func textResultHasTextPreviewData() async {
+        let (store, provider) = await makeProvider()
+        await store.addTextEntry("hello preview")
+        let results = await provider.search(query: "")
+        guard case .text(let content) = results[0].previewData else {
+            Issue.record("Expected .text preview data")
+            return
+        }
+        #expect(content == "hello preview")
+    }
+
+    @Test func textPreviewContainsFullContent() async {
+        let (store, provider) = await makeProvider()
+        let longText = String(repeating: "a", count: 200)
+        await store.addTextEntry(longText)
+        let results = await provider.search(query: "")
+        guard case .text(let content) = results[0].previewData else {
+            Issue.record("Expected .text preview data")
+            return
+        }
+        // Preview data should contain the full text, not the truncated name
+        #expect(content.count == 200)
+    }
+
     // MARK: - Formatted size
 
     @Test func formattedSizeBytes() {
