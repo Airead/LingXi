@@ -94,17 +94,15 @@ struct ScreenCaptureServiceTests {
 
     // MARK: - copyToClipboard tests
 
-    @Test("copyToClipboard with PNG data writes to pasteboard")
+    @Test("copyToClipboard with CGImage writes PNG to pasteboard")
     @MainActor
-    func copyToClipboardPNGData() {
+    func copyToClipboardCGImage() {
         let service = ScreenCaptureService.shared
         let image = makeTestImage(width: 50, height: 50)
-        let rep = NSBitmapImageRep(cgImage: image)
-        let pngData = rep.representation(using: .png, properties: [:])!
         let testPasteboard = NSPasteboard(name: .init("io.github.airead.lingxi.test.png"))
         defer { testPasteboard.releaseGlobally() }
 
-        service.copyToClipboard(pngData: pngData, pasteboard: testPasteboard)
+        service.copyToClipboard(cgImage: image, pasteboard: testPasteboard)
 
         #expect(testPasteboard.canReadItem(withDataConformingToTypes: [NSPasteboard.PasteboardType.png.rawValue]))
     }

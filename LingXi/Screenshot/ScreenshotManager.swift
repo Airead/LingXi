@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import ScreenCaptureKit
 
 @MainActor
 final class ScreenshotManager {
@@ -45,9 +46,17 @@ final class ScreenshotManager {
             )
         }
 
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.current
+        } catch {
+            DebugLog.log("[ScreenshotManager] Failed to get shareable content: \(error)")
+            return
+        }
+
         let captures: [ScreenCapture] = await withTaskGroup(of: ScreenCapture?.self) { group in
             for info in screenInfos {
-                group.addTask { await self.captureScreenImage(info: info) }
+                group.addTask { await self.captureScreenImage(info: info, content: content) }
             }
             var results: [ScreenCapture] = []
             for await result in group {
@@ -75,20 +84,14 @@ final class ScreenshotManager {
     }
 
     @concurrent
-    private func captureScreenImage(info: ScreenInfo) async -> ScreenCapture? {
+    private func captureScreenImage(info: ScreenInfo, content: SCShareableContent) async -> ScreenCapture? {
         do {
-            let pngData = try await captureService.captureFullScreen(
+            let image = try await captureService.captureFullScreen(
                 displayID: info.displayID,
+                content: content,
                 pixelWidth: info.pixelWidth,
                 pixelHeight: info.pixelHeight
             )
-            guard let provider = CGDataProvider(data: pngData as CFData),
-                  let image = CGImage(
-                      pngDataProviderSource: provider,
-                      decode: nil,
-                      shouldInterpolate: false,
-                      intent: .defaultIntent
-                  ) else { return nil }
             return ScreenCapture(screenIndex: info.index, image: image, scaleFactor: info.scale)
         } catch {
             await DebugLog.log("[ScreenshotManager] Background capture failed: \(error)")
@@ -115,8 +118,9 @@ final class ScreenshotManager {
         let displayID = captureService.displayID(at: NSEvent.mouseLocation)
 
         do {
-            let pngData = try await captureService.captureFullScreen(displayID: displayID)
-            captureService.copyToClipboard(pngData: pngData)
+            let content = try await SCShareableContent.current
+            let cgImage = try await captureService.captureFullScreen(displayID: displayID, content: content)
+            captureService.copyToClipboard(cgImage: cgImage)
         } catch {
             DebugLog.log("[ScreenshotManager] Capture failed: \(error)")
         }

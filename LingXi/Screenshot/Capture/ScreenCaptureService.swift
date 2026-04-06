@@ -4,7 +4,12 @@
 //
 
 import AppKit
+import CoreImage
+import CoreMedia
+import ImageIO
+import ScreenCaptureKit
 import Synchronization
+import UniformTypeIdentifiers
 
 /// Errors that can occur during screen capture operations.
 enum ScreenCaptureError: Error, LocalizedError {
@@ -21,8 +26,9 @@ enum ScreenCaptureError: Error, LocalizedError {
 /// XPC service name — must match the XPC service's bundle identifier.
 private let captureServiceName = "io.github.airead.lingxi.CaptureService"
 
-/// Coordinates screen capture via an XPC service to isolate ScreenCaptureKit memory.
-/// When the XPC service is idle, the system terminates it and reclaims all memory.
+/// Provides screen capture in-process via ScreenCaptureKit and OCR via an XPC service
+/// to isolate Vision framework memory. When the XPC service is idle, the system
+/// terminates it and reclaims all OCR-related memory.
 @available(macOS 15.0, *)
 @MainActor
 final class ScreenCaptureService {
@@ -30,6 +36,7 @@ final class ScreenCaptureService {
 
     private var connection: NSXPCConnection?
     private var idleTask: Task<Void, Never>?
+    private static let ciContext = CIContext()
 
     private init() {}
 
@@ -41,29 +48,65 @@ final class ScreenCaptureService {
     }
 
     /// Request screen recording permission.
-    /// Uses only CoreGraphics APIs to avoid loading ScreenCaptureKit into the main process.
     func requestPermission() -> Bool {
         if hasPermission() { return true }
         CGRequestScreenCaptureAccess()
         return hasPermission()
     }
 
-    // MARK: - Capture via XPC
+    // MARK: - In-process Capture (ScreenCaptureKit)
 
-    /// Capture full screen via XPC service and return PNG data.
-    func captureFullScreen(displayID: CGDirectDisplayID, pixelWidth: UInt32 = 0, pixelHeight: UInt32 = 0) async throws -> Data {
-        let bundleID = Bundle.main.bundleIdentifier ?? ""
-        defer { scheduleIdleDisconnect() }
-
-        return try await withProxy { proxy, resumer in
-            proxy.captureFullScreen(displayID: UInt32(displayID), excludeBundleID: bundleID, pixelWidth: pixelWidth, pixelHeight: pixelHeight) { data in
-                if let data {
-                    resumer.resume(returning: data)
-                } else {
-                    resumer.resume(throwing: ScreenCaptureError.captureFailed("XPC service returned nil"))
-                }
-            }
+    /// Capture full screen as CGImage directly in the main process via ScreenCaptureKit.
+    @concurrent
+    func captureFullScreen(displayID: CGDirectDisplayID, content: SCShareableContent, pixelWidth: UInt32 = 0, pixelHeight: UInt32 = 0) async throws -> CGImage {
+        guard let display = content.displays.first(where: { $0.displayID == displayID })
+                ?? content.displays.first
+        else {
+            throw ScreenCaptureError.captureFailed("No display found")
         }
+
+        let excludedApps = content.applications.filter {
+            $0.bundleIdentifier == Bundle.main.bundleIdentifier
+        }
+        let filter: SCContentFilter = if !excludedApps.isEmpty {
+            SCContentFilter(display: display, excludingApplications: excludedApps, exceptingWindows: [])
+        } else {
+            SCContentFilter(display: display, excludingWindows: [])
+        }
+
+        let config = SCStreamConfiguration()
+        config.captureResolution = .best
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = false
+        if pixelWidth > 0 && pixelHeight > 0 {
+            config.width = Int(pixelWidth)
+            config.height = Int(pixelHeight)
+        }
+
+        let sampleBuffer = try await SCScreenshotManager.captureSampleBuffer(
+            contentFilter: filter,
+            configuration: config
+        )
+
+        guard let cgImage = Self.extractCGImage(from: sampleBuffer) else {
+            throw ScreenCaptureError.captureFailed("Failed to create CGImage from sample buffer")
+        }
+        return cgImage
+    }
+
+    /// Encode a CGImage as PNG data.
+    private nonisolated static func encodePNG(_ image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, nil)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return data as Data
+    }
+
+    private nonisolated static func extractCGImage(from sampleBuffer: CMSampleBuffer) -> CGImage? {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        return ciContext.createCGImage(ciImage, from: ciImage.extent)
     }
 
     /// Perform OCR on an image file via XPC service.
@@ -89,9 +132,9 @@ final class ScreenCaptureService {
         }
     }
 
-    private static let screenNumberKey = NSDeviceDescriptionKey("NSScreenNumber")
-
     // MARK: - Display Helpers
+
+    private static let screenNumberKey = NSDeviceDescriptionKey("NSScreenNumber")
 
     /// Get the CGDirectDisplayID for the given screen.
     func displayID(for screen: NSScreen) -> CGDirectDisplayID {
@@ -127,13 +170,17 @@ final class ScreenCaptureService {
 
     // MARK: - Clipboard
 
-    /// Copy PNG data to the specified pasteboard.
-    nonisolated func copyToClipboard(pngData: Data, pasteboard: NSPasteboard = .general) {
+    /// Copy a CGImage as PNG to the specified pasteboard.
+    nonisolated func copyToClipboard(cgImage: CGImage, pasteboard: NSPasteboard = .general) {
+        guard let pngData = Self.encodePNG(cgImage) else {
+            DebugLog.log("[ScreenCaptureService] Failed to encode CGImage as PNG for clipboard")
+            return
+        }
         pasteboard.clearContents()
         pasteboard.setData(pngData, forType: .png)
     }
 
-    // MARK: - Private
+    // MARK: - XPC Connection (OCR)
 
     /// Ensures a continuation is resumed at most once, preventing crashes from double-resume
     /// when both the XPC error handler and the reply block fire.
