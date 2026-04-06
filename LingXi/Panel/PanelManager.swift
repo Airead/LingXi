@@ -387,7 +387,7 @@ private struct PreviewPane: View {
             }
         case .image(let path, let description):
             VStack(spacing: 12) {
-                CachedImageView(url: path) {
+                CachedImageView(url: path, maxPixelSize: 512) {
                     Image(systemName: "photo")
                         .font(.system(size: 40))
                         .foregroundStyle(.secondary)
