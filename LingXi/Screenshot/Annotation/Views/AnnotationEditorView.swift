@@ -14,7 +14,7 @@ struct AnnotationEditorView: View {
             Divider()
             imageCanvas
             Divider()
-            bottomBarPlaceholder
+            bottomBar
         }
         .background(.windowBackground)
     }
@@ -30,13 +30,29 @@ struct AnnotationEditorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var bottomBarPlaceholder: some View {
-        HStack {
-            Text("Bottom Bar")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var bottomBar: some View {
+        HStack(spacing: 12) {
+            Spacer()
+            Button {
+                state.onSave?()
+            } label: {
+                Label("Save", systemImage: "square.and.arrow.down")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Button {
+                state.onCopy?()
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
-        .frame(height: 32)
+        .padding(.horizontal, 12)
+        .frame(height: 36)
         .frame(maxWidth: .infinity)
     }
 }

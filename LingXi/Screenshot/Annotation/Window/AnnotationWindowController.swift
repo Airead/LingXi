@@ -5,6 +5,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class AnnotationWindowController: NSWindowController {
@@ -23,7 +24,10 @@ final class AnnotationWindowController: NSWindowController {
         self.onClose = onClose
 
         let imageSize = image.size
-        let screenFrame = NSScreen.main?.visibleFrame ?? Self.fallbackScreenFrame
+        let mouseLocation = NSEvent.mouseLocation
+        let screenFrame = NSScreen.screens.first { $0.frame.contains(mouseLocation) }?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? Self.fallbackScreenFrame
 
         let maxWidth = screenFrame.width * Self.maxScreenFraction
         let maxHeight = screenFrame.height * Self.maxScreenFraction
@@ -39,12 +43,24 @@ final class AnnotationWindowController: NSWindowController {
         )
 
         let window = AnnotationWindow(contentRect: contentRect)
+        window.minSize = NSSize(width: Self.minWindowWidth, height: Self.minWindowHeight)
+        window.annotationState = state
         let editorView = AnnotationEditorView(state: state)
         window.contentView = NSHostingView(rootView: editorView)
 
         super.init(window: window)
 
         window.delegate = self
+
+        state.onSave = { [weak self] in
+            self?.saveImageAs()
+        }
+        state.onCopy = { [weak self] in
+            self?.copyImage()
+        }
+        state.onClose = { [weak self] in
+            self?.window?.close()
+        }
     }
 
     @available(*, unavailable)
@@ -59,6 +75,53 @@ final class AnnotationWindowController: NSWindowController {
 
     deinit {
         DebugLog.log("[Memory] AnnotationWindowController.deinit")
+    }
+
+    // MARK: - Export actions
+
+    private func copyImage() {
+        guard let rendered = renderFinalImage() else { return }
+        ImageExporter.copyToClipboard(rendered)
+        DebugLog.log("[Screenshot] Image copied to clipboard")
+        window?.close()
+    }
+
+    private func saveImageAs() {
+        guard let win = window else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png, .jpeg]
+        panel.nameFieldStringValue = "Screenshot.png"
+        panel.canCreateDirectories = true
+
+        panel.beginSheetModal(for: win) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.saveToURL(url)
+        }
+    }
+
+    private func saveToURL(_ url: URL) {
+        guard let rendered = renderFinalImage() else { return }
+        let format: ImageFormat = UTType(filenameExtension: url.pathExtension) == .jpeg ? .jpeg : .png
+        do {
+            try ImageExporter.saveToFile(rendered, url: url, format: format)
+            DebugLog.log("[Screenshot] Image saved to \(url.path)")
+            window?.close()
+        } catch {
+            DebugLog.log("[Screenshot] Save failed: \(error)")
+        }
+    }
+
+    private func renderFinalImage() -> CGImage? {
+        let sourceImage = annotationState.sourceImage
+        guard let cgImage = sourceImage.cgImage(
+            forProposedRect: nil, context: nil, hints: nil
+        ) else { return nil }
+        return ImageExporter.renderFinalImage(
+            source: cgImage,
+            imagePointSize: sourceImage.size,
+            annotations: annotationState.annotations,
+            blurCacheManager: annotationState.blurCacheManager
+        )
     }
 }
 

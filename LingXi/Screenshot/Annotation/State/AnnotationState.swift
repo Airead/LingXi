@@ -27,6 +27,9 @@ class AnnotationState {
 
     var annotations: [AnnotationItem] = []
     var selectedAnnotationId: UUID?
+    var selectedAnnotation: AnnotationItem? {
+        selectedAnnotationId.flatMap { id in annotations.first { $0.id == id } }
+    }
     var editingTextAnnotationId: UUID?
 
     // MARK: - Undo / Redo (snapshot-based)
@@ -46,6 +49,17 @@ class AnnotationState {
     // MARK: - Counter
 
     private(set) var nextCounterNumber: Int = 1
+
+    // MARK: - Actions (bridged to window controller)
+
+    @ObservationIgnored var onSave: (() -> Void)?
+    @ObservationIgnored var onCopy: (() -> Void)?
+    @ObservationIgnored var onClose: (() -> Void)?
+    @ObservationIgnored var onCancelTextEditing: (() -> Void)?
+
+    // MARK: - Shared services
+
+    @ObservationIgnored let blurCacheManager = BlurCacheManager()
 
     // MARK: - Zoom & Pan
 
@@ -118,6 +132,19 @@ class AnnotationState {
     func updateAnnotation(id: UUID, update: (inout AnnotationItem) -> Void) {
         guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
         saveState()
+        update(&annotations[index])
+    }
+
+    // MARK: - Drag operations (single undo snapshot per drag)
+
+    func beginDrag() {
+        saveState()
+    }
+
+    /// Update annotation during an active drag without creating a new undo snapshot.
+    /// Caller must call `beginDrag()` first to capture the pre-drag state.
+    func updateDragging(at index: Int, update: (inout AnnotationItem) -> Void) {
+        guard annotations.indices.contains(index) else { return }
         update(&annotations[index])
     }
 

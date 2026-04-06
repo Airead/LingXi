@@ -31,8 +31,7 @@ struct AnnotationWindowTests {
         #expect(window.titlebarAppearsTransparent)
         #expect(window.canBecomeKey)
         #expect(window.canBecomeMain)
-        #expect(window.minSize.width == 400)
-        #expect(window.minSize.height == 300)
+        // minSize is set by AnnotationWindowController, not the window itself
     }
 
     @Test("AnnotationWindowController initializes state with source image")
