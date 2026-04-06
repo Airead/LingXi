@@ -10,6 +10,7 @@ struct AnnotationCanvasView: NSViewRepresentable {
     var state: AnnotationState
 
     func makeNSView(context: Context) -> AnnotationCanvasNSView {
+        DebugLog.log("[Memory] AnnotationCanvasView.makeNSView")
         let view = AnnotationCanvasNSView(state: state)
         return view
     }
@@ -17,6 +18,10 @@ struct AnnotationCanvasView: NSViewRepresentable {
     func updateNSView(_ nsView: AnnotationCanvasNSView, context: Context) {
         nsView.state = state
         nsView.needsDisplay = true
+    }
+
+    static func dismantleNSView(_ nsView: AnnotationCanvasNSView, coordinator: ()) {
+        DebugLog.log("[Memory] AnnotationCanvasView.dismantleNSView")
     }
 }
 
@@ -26,9 +31,14 @@ final class AnnotationCanvasNSView: NSView {
     var state: AnnotationState
 
     init(state: AnnotationState) {
+        DebugLog.log("[Memory] AnnotationCanvasNSView.init")
         self.state = state
         super.init(frame: .zero)
         startObservation()
+    }
+
+    deinit {
+        DebugLog.log("[Memory] AnnotationCanvasNSView.deinit")
     }
 
     @available(*, unavailable)
@@ -62,8 +72,8 @@ final class AnnotationCanvasNSView: NSView {
             _ = self.state.fillColor
             _ = self.state.strokeWidth
             _ = self.state.fontSize
-        } onChange: {
-            DispatchQueue.main.async { [weak self] in
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
                 self?.needsDisplay = true
                 self?.startObservation()
             }

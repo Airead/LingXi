@@ -15,9 +15,17 @@ nonisolated final class BlurCacheManager {
     private var cache: [CacheKey: CGImage] = [:]
     private var insertionOrder: [CacheKey] = []
     private static let maxCacheSize = 16
-    private let ciContext = CIContext()
-    private let pixellateFilter = CIFilter.pixellate()
-    private let gaussianFilter = CIFilter.gaussianBlur()
+    private lazy var ciContext = CIContext()
+    private lazy var pixellateFilter = CIFilter.pixellate()
+    private lazy var gaussianFilter = CIFilter.gaussianBlur()
+
+    init() {
+        DebugLog.log("[Memory] BlurCacheManager.init")
+    }
+
+    deinit {
+        DebugLog.log("[Memory] BlurCacheManager.deinit, cacheSize=\(cache.count)")
+    }
 
     func blurredImage(
         source: CGImage,

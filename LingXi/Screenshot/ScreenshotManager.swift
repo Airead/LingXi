@@ -125,8 +125,10 @@ final class ScreenshotManager {
     // MARK: - Annotation editor
 
     private func openAnnotationEditor(with image: NSImage) {
+        DebugLog.log("[Memory] openAnnotationEditor: image=\(Int(image.size.width))x\(Int(image.size.height)), controllers.count=\(annotationWindowControllers.count)")
         let controller = AnnotationWindowController(image: image) { [weak self] controller in
             self?.annotationWindowControllers.removeAll { $0 === controller }
+            DebugLog.log("[Memory] onClose: controllers.count=\(self?.annotationWindowControllers.count ?? -1)")
         }
         annotationWindowControllers.append(controller)
         controller.showWindow()

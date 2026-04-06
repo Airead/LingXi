@@ -55,7 +55,12 @@ class AnnotationState {
     // MARK: - Init
 
     init(sourceImage: NSImage) {
+        DebugLog.log("[Memory] AnnotationState.init: image=\(Int(sourceImage.size.width))x\(Int(sourceImage.size.height))")
         self.sourceImage = sourceImage
+    }
+
+    deinit {
+        DebugLog.log("[Memory] AnnotationState.deinit")
     }
 
     // MARK: - Undo / Redo
@@ -127,15 +132,31 @@ class AnnotationState {
             imageHeight: CGFloat(cgImage.height)
         ).integral
 
-        guard let cropped = cgImage.cropping(to: cgRect) else { return }
+        guard let cropped = cgImage.cropping(to: cgRect),
+              let independent = Self.copyImageData(cropped) else { return }
 
         sourceImage = NSImage(
-            cgImage: cropped,
-            size: NSSize(width: cropped.width, height: cropped.height)
+            cgImage: independent,
+            size: NSSize(width: independent.width, height: independent.height)
         )
         annotations.removeAll()
         undoStack.removeAll()
         redoStack.removeAll()
         selectedAnnotationId = nil
+    }
+
+    /// Copy pixel data into a new independent CGImage so the original backing store can be freed.
+    private nonisolated static func copyImageData(_ source: CGImage) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: source.width,
+            height: source.height,
+            bitsPerComponent: source.bitsPerComponent,
+            bytesPerRow: 0,
+            space: source.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: source.bitmapInfo.rawValue
+        ) else { return nil }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: source.width, height: source.height))
+        return context.makeImage()
     }
 }
