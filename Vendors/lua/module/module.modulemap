@@ -1,0 +1,8 @@
+module CLua [system] {
+    header "../include/lua.h"
+    header "../include/luaconf.h"
+    header "../include/lualib.h"
+    header "../include/lauxlib.h"
+    header "../include/lua_swift_shim.h"
+    export *
+}
