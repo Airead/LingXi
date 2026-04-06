@@ -28,6 +28,7 @@ final class PanelManager {
     private let clipboardStore: ClipboardStore
     private let snippetStore: SnippetStore
     private let snippetExpander: SnippetExpander
+    private let leaderKeyManager: LeaderKeyManager
     private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
@@ -48,6 +49,7 @@ final class PanelManager {
         let snippetStore = SnippetStore()
         self.snippetStore = snippetStore
         self.snippetExpander = SnippetExpander(store: snippetStore)
+        self.leaderKeyManager = LeaderKeyManager()
         router.register(prefix: settings.snippetSearchPrefix, id: "snippet", provider: SnippetSearchProvider(store: snippetStore))
         self.router = router
         self.viewModel = await SearchViewModel(router: router, database: db)
@@ -84,6 +86,9 @@ final class PanelManager {
 
         if settings.snippetAutoExpandEnabled {
             snippetExpander.start()
+        }
+        if settings.leaderKeyEnabled {
+            leaderKeyManager.start()
         }
     }
 
@@ -131,6 +136,7 @@ final class PanelManager {
 
     func showWithPrefix(_ prefix: String?) {
         snippetExpander.suppress()
+        leaderKeyManager.suppress()
         let prefixQuery = prefix.map { $0 + " " }
 
         if let panel, panel.isVisible {
@@ -165,6 +171,7 @@ final class PanelManager {
         inputSourceManager.restore()
         previousApp = nil
         snippetExpander.resume()
+        leaderKeyManager.resume()
     }
 
     func setAutoExpandEnabled(_ enabled: Bool) {
@@ -172,6 +179,14 @@ final class PanelManager {
             snippetExpander.start()
         } else {
             snippetExpander.stop()
+        }
+    }
+
+    func setLeaderKeyEnabled(_ enabled: Bool) {
+        if enabled {
+            leaderKeyManager.start()
+        } else {
+            leaderKeyManager.stop()
         }
     }
 
@@ -322,7 +337,7 @@ private struct PanelContentView: View {
                 }
             }
         }
-        .background(.ultraThinMaterial)
+        .background(.ultraThickMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onExitCommand {
             onDismiss()

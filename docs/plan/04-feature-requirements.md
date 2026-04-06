@@ -445,7 +445,7 @@
   - CSS 变量 (L6-32)：`prefers-color-scheme` 媒体查询实现深色/浅色自适应
   - 虚拟滚动 (L508-595)：仅渲染可见行 + 5 行缓冲，`requestAnimationFrame` 平滑滚动
   - 结果行布局 (L160-250)：flex 布局，图标 + 标题/副标题 + 动作提示
-- WenZi 使用 WKWebView 渲染 UI；LingXi 使用 SwiftUI 原生渲染，视觉效果（毛玻璃、动画）可利用 SwiftUI 原生能力（`.background(.ultraThinMaterial)`、`.animation()`）
+- WenZi 使用 WKWebView 渲染 UI；LingXi 使用 SwiftUI 原生渲染，视觉效果（毛玻璃、动画）可利用 SwiftUI 原生能力（`.background(.ultraThickMaterial)`、`.animation()`）
 
 **需求：**
 - 搜索面板采用毛玻璃（vibrancy）背景效果

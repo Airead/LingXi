@@ -114,6 +114,11 @@ struct LingXiApp: App {
             }, action: {
                 pm.setAutoExpandEnabled(s.snippetAutoExpandEnabled)
             })
+            observeForever({
+                _ = s.leaderKeyEnabled
+            }, action: {
+                pm.setLeaderKeyEnabled(s.leaderKeyEnabled)
+            })
         }
     }
 

@@ -24,6 +24,13 @@ struct GeneralSettingsView: View {
                 Toggle("Launch at Login", isOn: $settings.launchAtLogin)
             }
 
+            Section("Leader Key") {
+                Toggle("Enable Leader Key", isOn: $settings.leaderKeyEnabled)
+                Text("Configure mappings in ~/.config/LingXi/leader.jsonc")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Appearance") {
                 Picker("Theme", selection: $settings.appearanceMode) {
                     ForEach(AppSettings.AppearanceMode.allCases) { mode in

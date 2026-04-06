@@ -104,6 +104,12 @@ final class AppSettings {
         }
     }
 
+    // MARK: - Leader Key
+
+    var leaderKeyEnabled: Bool {
+        didSet { guard leaderKeyEnabled != oldValue else { return }; save(.leaderKeyEnabled, value: leaderKeyEnabled) }
+    }
+
     // MARK: - Source hotkeys (0/0 = not set)
 
     var fileSearchHotKeyKeyCode: UInt32 {
@@ -186,6 +192,7 @@ final class AppSettings {
         case snippetSearchPrefix = "io.github.airead.lingxi.snippetSearchPrefix"
         case snippetSearchHotKeyKeyCode = "io.github.airead.lingxi.snippetSearchHotKeyKeyCode"
         case snippetSearchHotKeyModifiers = "io.github.airead.lingxi.snippetSearchHotKeyModifiers"
+        case leaderKeyEnabled = "io.github.airead.lingxi.leaderKeyEnabled"
     }
 
     // MARK: - Defaults
@@ -228,6 +235,8 @@ final class AppSettings {
         clipboardSearchHotKeyModifiers = Self.load(defaults, .clipboardSearchHotKeyModifiers) ?? 0
         snippetSearchHotKeyKeyCode = Self.load(defaults, .snippetSearchHotKeyKeyCode) ?? 0
         snippetSearchHotKeyModifiers = Self.load(defaults, .snippetSearchHotKeyModifiers) ?? 0
+
+        leaderKeyEnabled = Self.load(defaults, .leaderKeyEnabled) ?? true
 
         let modeRaw: String? = Self.load(defaults, .appearanceMode)
         appearanceMode = modeRaw.flatMap { AppearanceMode(rawValue: $0) } ?? .system
