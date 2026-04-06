@@ -22,7 +22,7 @@ struct LingXiApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("LingXi", systemImage: "sparkles") {
+        MenuBarExtra("LingXi", systemImage: "atom") {
             MenuBarMenuView()
         }
     }
@@ -82,6 +82,33 @@ struct LingXiApp: App {
                 hk.update(id: hotKeyId, keyCode: s[keyPath: kcPath], modifiers: s[keyPath: modPath])
             })
         }
+
+        // Screenshot hotkeys
+        let screenshotRegionHotKeyId = hotKeyManager.register(
+            keyCode: s.screenshotRegionHotKeyKeyCode,
+            modifiers: s.screenshotRegionHotKeyModifiers
+        ) {
+            Task { await ScreenshotManager.shared.captureRegion() }
+        }
+        let screenshotFullScreenHotKeyId = hotKeyManager.register(
+            keyCode: s.screenshotFullScreenHotKeyKeyCode,
+            modifiers: s.screenshotFullScreenHotKeyModifiers
+        ) {
+            Task { await ScreenshotManager.shared.captureFullScreen() }
+        }
+
+        observeForever({
+            _ = s.screenshotRegionHotKeyKeyCode
+            _ = s.screenshotRegionHotKeyModifiers
+        }, action: {
+            hk.update(id: screenshotRegionHotKeyId, keyCode: s.screenshotRegionHotKeyKeyCode, modifiers: s.screenshotRegionHotKeyModifiers)
+        })
+        observeForever({
+            _ = s.screenshotFullScreenHotKeyKeyCode
+            _ = s.screenshotFullScreenHotKeyModifiers
+        }, action: {
+            hk.update(id: screenshotFullScreenHotKeyId, keyCode: s.screenshotFullScreenHotKeyKeyCode, modifiers: s.screenshotFullScreenHotKeyModifiers)
+        })
 
         observeForever({
             _ = s.appearanceMode

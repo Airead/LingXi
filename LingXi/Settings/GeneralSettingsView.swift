@@ -31,6 +31,25 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Screenshot") {
+                LabeledContent("Region Capture") {
+                    HotKeyRecorderView(
+                        keyCode: $settings.screenshotRegionHotKeyKeyCode,
+                        modifiers: $settings.screenshotRegionHotKeyModifiers,
+                        allowEmpty: true
+                    )
+                    .frame(width: 160, height: 28)
+                }
+                LabeledContent("Full Screen Capture") {
+                    HotKeyRecorderView(
+                        keyCode: $settings.screenshotFullScreenHotKeyKeyCode,
+                        modifiers: $settings.screenshotFullScreenHotKeyModifiers,
+                        allowEmpty: true
+                    )
+                    .frame(width: 160, height: 28)
+                }
+            }
+
             Section("Appearance") {
                 Picker("Theme", selection: $settings.appearanceMode) {
                     ForEach(AppSettings.AppearanceMode.allCases) { mode in

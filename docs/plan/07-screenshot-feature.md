@@ -1,6 +1,7 @@
 # 截图功能设计方案
 
 > 参考项目：[Snapzy](https://github.com/duongductrong/Snapzy)（BSD-3 许可证）
+> 项目位置：/Users/fanrenhao/work/Snapzy
 
 ## 功能概述
 

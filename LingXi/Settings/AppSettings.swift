@@ -110,6 +110,21 @@ final class AppSettings {
         didSet { guard leaderKeyEnabled != oldValue else { return }; save(.leaderKeyEnabled, value: leaderKeyEnabled) }
     }
 
+    // MARK: - Screenshot hotkeys (0/0 = not set)
+
+    var screenshotRegionHotKeyKeyCode: UInt32 {
+        didSet { guard screenshotRegionHotKeyKeyCode != oldValue else { return }; save(.screenshotRegionHotKeyKeyCode, value: screenshotRegionHotKeyKeyCode) }
+    }
+    var screenshotRegionHotKeyModifiers: UInt32 {
+        didSet { guard screenshotRegionHotKeyModifiers != oldValue else { return }; save(.screenshotRegionHotKeyModifiers, value: screenshotRegionHotKeyModifiers) }
+    }
+    var screenshotFullScreenHotKeyKeyCode: UInt32 {
+        didSet { guard screenshotFullScreenHotKeyKeyCode != oldValue else { return }; save(.screenshotFullScreenHotKeyKeyCode, value: screenshotFullScreenHotKeyKeyCode) }
+    }
+    var screenshotFullScreenHotKeyModifiers: UInt32 {
+        didSet { guard screenshotFullScreenHotKeyModifiers != oldValue else { return }; save(.screenshotFullScreenHotKeyModifiers, value: screenshotFullScreenHotKeyModifiers) }
+    }
+
     // MARK: - Source hotkeys (0/0 = not set)
 
     var fileSearchHotKeyKeyCode: UInt32 {
@@ -193,6 +208,10 @@ final class AppSettings {
         case snippetSearchHotKeyKeyCode = "io.github.airead.lingxi.snippetSearchHotKeyKeyCode"
         case snippetSearchHotKeyModifiers = "io.github.airead.lingxi.snippetSearchHotKeyModifiers"
         case leaderKeyEnabled = "io.github.airead.lingxi.leaderKeyEnabled"
+        case screenshotRegionHotKeyKeyCode = "io.github.airead.lingxi.screenshotRegionHotKeyKeyCode"
+        case screenshotRegionHotKeyModifiers = "io.github.airead.lingxi.screenshotRegionHotKeyModifiers"
+        case screenshotFullScreenHotKeyKeyCode = "io.github.airead.lingxi.screenshotFullScreenHotKeyKeyCode"
+        case screenshotFullScreenHotKeyModifiers = "io.github.airead.lingxi.screenshotFullScreenHotKeyModifiers"
     }
 
     // MARK: - Defaults
@@ -237,6 +256,11 @@ final class AppSettings {
         snippetSearchHotKeyModifiers = Self.load(defaults, .snippetSearchHotKeyModifiers) ?? 0
 
         leaderKeyEnabled = Self.load(defaults, .leaderKeyEnabled) ?? true
+
+        screenshotRegionHotKeyKeyCode = Self.load(defaults, .screenshotRegionHotKeyKeyCode) ?? 0
+        screenshotRegionHotKeyModifiers = Self.load(defaults, .screenshotRegionHotKeyModifiers) ?? 0
+        screenshotFullScreenHotKeyKeyCode = Self.load(defaults, .screenshotFullScreenHotKeyKeyCode) ?? 0
+        screenshotFullScreenHotKeyModifiers = Self.load(defaults, .screenshotFullScreenHotKeyModifiers) ?? 0
 
         let modeRaw: String? = Self.load(defaults, .appearanceMode)
         appearanceMode = modeRaw.flatMap { AppearanceMode(rawValue: $0) } ?? .system

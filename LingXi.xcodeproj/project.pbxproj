@@ -6,7 +6,18 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		2C1D8C682F836019007F4760 /* LingXiCaptureService.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = 2C1D8C5D2F836019007F4760 /* LingXiCaptureService.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
+		2C1D8C662F836019007F4760 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2C8AA03B2F7E879400207826 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2C1D8C5C2F836019007F4760;
+			remoteInfo = LingXiCaptureService;
+		};
 		2C8AA0512F7E879500207826 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 2C8AA03B2F7E879400207826 /* Project object */;
@@ -23,13 +34,46 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		2C1D8C6D2F836019007F4760 /* Embed XPC Services */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolderSpec = 16;
+			files = (
+				2C1D8C682F836019007F4760 /* LingXiCaptureService.xpc in Embed XPC Services */,
+			);
+			name = "Embed XPC Services";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		2C1D8C5D2F836019007F4760 /* LingXiCaptureService.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = LingXiCaptureService.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C8AA0432F7E879400207826 /* LingXi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LingXi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C8AA0502F7E879500207826 /* LingXiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LingXiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C8AA05A2F7E879500207826 /* LingXiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LingXiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		2C1D8C692F836019007F4760 /* Exceptions for "LingXiCaptureService" folder in "LingXiCaptureService" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 2C1D8C5C2F836019007F4760 /* LingXiCaptureService */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		2C1D8C5E2F836019007F4760 /* LingXiCaptureService */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				2C1D8C692F836019007F4760 /* Exceptions for "LingXiCaptureService" folder in "LingXiCaptureService" target */,
+			);
+			path = LingXiCaptureService;
+			sourceTree = "<group>";
+		};
 		2C8AA0452F7E879400207826 /* LingXi */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = LingXi;
@@ -48,6 +92,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		2C1D8C5A2F836019007F4760 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		2C8AA0402F7E879400207826 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -78,6 +129,7 @@
 				2C8AA0452F7E879400207826 /* LingXi */,
 				2C8AA0532F7E879500207826 /* LingXiTests */,
 				2C8AA05D2F7E879500207826 /* LingXiUITests */,
+				2C1D8C5E2F836019007F4760 /* LingXiCaptureService */,
 				2C8AA0442F7E879400207826 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,6 +140,7 @@
 				2C8AA0432F7E879400207826 /* LingXi.app */,
 				2C8AA0502F7E879500207826 /* LingXiTests.xctest */,
 				2C8AA05A2F7E879500207826 /* LingXiUITests.xctest */,
+				2C1D8C5D2F836019007F4760 /* LingXiCaptureService.xpc */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -95,6 +148,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		2C1D8C5C2F836019007F4760 /* LingXiCaptureService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2C1D8C6A2F836019007F4760 /* Build configuration list for PBXNativeTarget "LingXiCaptureService" */;
+			buildPhases = (
+				2C1D8C592F836019007F4760 /* Sources */,
+				2C1D8C5A2F836019007F4760 /* Frameworks */,
+				2C1D8C5B2F836019007F4760 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				2C1D8C5E2F836019007F4760 /* LingXiCaptureService */,
+			);
+			name = LingXiCaptureService;
+			packageProductDependencies = (
+			);
+			productName = LingXiCaptureService;
+			productReference = 2C1D8C5D2F836019007F4760 /* LingXiCaptureService.xpc */;
+			productType = "com.apple.product-type.xpc-service";
+		};
 		2C8AA0422F7E879400207826 /* LingXi */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2C8AA0642F7E879500207826 /* Build configuration list for PBXNativeTarget "LingXi" */;
@@ -102,10 +177,12 @@
 				2C8AA03F2F7E879400207826 /* Sources */,
 				2C8AA0402F7E879400207826 /* Frameworks */,
 				2C8AA0412F7E879400207826 /* Resources */,
+				2C1D8C6D2F836019007F4760 /* Embed XPC Services */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				2C1D8C672F836019007F4760 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				2C8AA0452F7E879400207826 /* LingXi */,
@@ -173,6 +250,9 @@
 				LastSwiftUpdateCheck = 2630;
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
+					2C1D8C5C2F836019007F4760 = {
+						CreatedOnToolsVersion = 26.3;
+					};
 					2C8AA0422F7E879400207826 = {
 						CreatedOnToolsVersion = 26.3;
 					};
@@ -203,11 +283,19 @@
 				2C8AA0422F7E879400207826 /* LingXi */,
 				2C8AA04F2F7E879500207826 /* LingXiTests */,
 				2C8AA0592F7E879500207826 /* LingXiUITests */,
+				2C1D8C5C2F836019007F4760 /* LingXiCaptureService */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		2C1D8C5B2F836019007F4760 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		2C8AA0412F7E879400207826 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -232,6 +320,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		2C1D8C592F836019007F4760 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		2C8AA03F2F7E879400207826 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -256,6 +351,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		2C1D8C672F836019007F4760 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2C1D8C5C2F836019007F4760 /* LingXiCaptureService */;
+			targetProxy = 2C1D8C662F836019007F4760 /* PBXContainerItemProxy */;
+		};
 		2C8AA0522F7E879500207826 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 2C8AA0422F7E879400207826 /* LingXi */;
@@ -269,6 +369,58 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		2C1D8C6B2F836019007F4760 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = DW3USP9S9R;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LingXiCaptureService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = LingXiCaptureService;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.airead.lingxi.CaptureService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		2C1D8C6C2F836019007F4760 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = DW3USP9S9R;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LingXiCaptureService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = LingXiCaptureService;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.airead.lingxi.CaptureService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		2C8AA0622F7E879500207826 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -303,7 +455,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEPLOYMENT_POSTPROCESSING = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -365,8 +519,10 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				COPY_PHASE_STRIP = NO;
+				COPY_PHASE_STRIP = YES;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = NO;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -528,6 +684,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		2C1D8C6A2F836019007F4760 /* Build configuration list for PBXNativeTarget "LingXiCaptureService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2C1D8C6B2F836019007F4760 /* Debug */,
+				2C1D8C6C2F836019007F4760 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		2C8AA03E2F7E879400207826 /* Build configuration list for PBXProject "LingXi" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

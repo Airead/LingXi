@@ -427,6 +427,72 @@ struct ClipboardStoreTests {
         }
     }
 
+    // MARK: - Orphan cleanup
+
+    @Test func cleanupRemovesDBEntryWhenFileIsMissing() async {
+        let tempDir = FileManager.default.temporaryDirectory
+        let dbPath = tempDir.appendingPathComponent(
+            "test_cleanup_db_\(UUID().uuidString).db"
+        ).path
+        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+
+        var imagePath = ""
+        do {
+            let db = await DatabaseManager(databasePath: dbPath)
+            let store = ClipboardStore(database: db)
+            await store.addImageEntry(pngData: makePNGData())
+            let item = await store.items[0]
+            imagePath = item.imagePath
+            let filePath = ClipboardStore.imageDirectory.appendingPathComponent(imagePath).path
+            try? FileManager.default.removeItem(atPath: filePath)
+        }
+
+        let db = await DatabaseManager(databasePath: dbPath)
+        let store = ClipboardStore(database: db)
+        await store.addTextEntry("trigger_setup")
+        let imageItems = await store.items.filter { $0.contentType == .image }
+        #expect(imageItems.isEmpty)
+    }
+
+    @Test func cleanupRemovesOrphanedFileWithNoDBEntry() async {
+        let fm = FileManager.default
+        let imageDir = ClipboardStore.imageDirectory
+
+        let orphanName = "orphan_test_\(UUID().uuidString).png"
+        let orphanURL = imageDir.appendingPathComponent(orphanName)
+        fm.createFile(atPath: orphanURL.path, contents: makePNGData())
+        #expect(fm.fileExists(atPath: orphanURL.path))
+
+        let store = await makeStore()
+        await store.addTextEntry("trigger_setup")
+        #expect(!fm.fileExists(atPath: orphanURL.path))
+    }
+
+    @Test func cleanupKeepsValidEntries() async {
+        let tempDir = FileManager.default.temporaryDirectory
+        let dbPath = tempDir.appendingPathComponent(
+            "test_cleanup_valid_\(UUID().uuidString).db"
+        ).path
+        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+
+        do {
+            let db = await DatabaseManager(databasePath: dbPath)
+            let store = ClipboardStore(database: db)
+            await store.addImageEntry(pngData: makePNGData())
+            await store.addTextEntry("keep this")
+        }
+
+        let db = await DatabaseManager(databasePath: dbPath)
+        let store = ClipboardStore(database: db)
+        await store.addTextEntry("trigger_setup")
+        let items = await store.items
+        let imageItems = items.filter { $0.contentType == .image }
+        let textItems = items.filter { $0.textContent == "keep this" }
+        #expect(imageItems.count == 1)
+        #expect(textItems.count == 1)
+        await cleanupImageFiles(store)
+    }
+
     // MARK: - Thread safety
 
     @Test func concurrentAccessIsThreadSafe() async {

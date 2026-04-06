@@ -1,7 +1,6 @@
 import AppKit
 import CryptoKit
 import OSLog
-import Vision
 
 nonisolated struct ClipboardItem: Sendable {
     let id: Int
@@ -92,6 +91,7 @@ actor ClipboardStore {
         self.setupTask = Task { [self] in
             await createTable()
             await loadFromDatabase()
+            await cleanupOrphanedEntries()
         }
     }
 
@@ -386,6 +386,38 @@ actor ClipboardStore {
         cachedItems = rows
     }
 
+    private func cleanupOrphanedEntries() async {
+        let fm = FileManager.default
+        let imageDir = Self.imageDirectory
+
+        var idsToDelete: [Int] = []
+        for item in cachedItems where item.contentType == .image && !item.imagePath.isEmpty {
+            let filePath = imageDir.appendingPathComponent(item.imagePath).path
+            if !fm.fileExists(atPath: filePath) {
+                idsToDelete.append(item.id)
+            }
+        }
+        if !idsToDelete.isEmpty {
+            let idsSet = Set(idsToDelete)
+            let placeholders = idsToDelete.map { _ in "?" }.joined(separator: ",")
+            let bindings: [DatabaseValue] = idsToDelete.map { .integer($0) }
+            await db.execute(
+                "DELETE FROM clipboard_history WHERE id IN (\(placeholders))",
+                bindings: bindings
+            )
+            cachedItems.removeAll { idsSet.contains($0.id) }
+            _version += 1
+            Self.logger.debug("Cleaned up \(idsToDelete.count) orphaned DB entries (missing files)")
+        }
+
+        let dbPaths = Set(cachedItems.compactMap { $0.contentType == .image ? $0.imagePath : nil })
+        if let files = try? fm.contentsOfDirectory(atPath: imageDir.path) {
+            for file in files where !dbPaths.contains(file) {
+                try? fm.removeItem(at: imageDir.appendingPathComponent(file))
+            }
+        }
+    }
+
     private func checkPasteboard() {
         let pb = NSPasteboard.general
         let count = pb.changeCount
@@ -489,7 +521,14 @@ actor ClipboardStore {
     }
 
     private func performOCR(itemId: Int, imageURL: URL) async {
-        let text = await Self.recognizeText(at: imageURL)
+        let text: String
+        do {
+            text = try await ScreenCaptureService.shared.recognizeText(at: imageURL)
+        } catch {
+            Self.logger.debug("OCR via XPC failed: \(error)")
+            return
+        }
+
         guard !Task.isCancelled, !text.isEmpty else { return }
 
         guard let index = cachedItems.firstIndex(where: { $0.id == itemId }) else { return }
@@ -500,22 +539,6 @@ actor ClipboardStore {
             "UPDATE clipboard_history SET ocr_text = ? WHERE id = ?",
             bindings: [.text(text), .integer(itemId)]
         )
-    }
-
-    @concurrent
-    private static func recognizeText(at url: URL) async -> String {
-        let handler = VNImageRequestHandler(url: url)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-        do {
-            try handler.perform([request])
-        } catch {
-            logger.debug("OCR failed: \(error)")
-            return ""
-        }
-        guard let results = request.results else { return "" }
-        return results.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
     private nonisolated static func prepareTransientPasteboard(

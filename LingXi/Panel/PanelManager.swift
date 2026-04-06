@@ -387,7 +387,7 @@ private struct PreviewPane: View {
             }
         case .image(let path, let description):
             VStack(spacing: 12) {
-                CachedImageView(url: path) {
+                CachedImageView(url: path, maxPixelSize: 512) {
                     Image(systemName: "photo")
                         .font(.system(size: 40))
                         .foregroundStyle(.secondary)
@@ -431,7 +431,9 @@ private struct CachedImageView<Placeholder: View>: View {
 
     @Sendable private func loadImage() async {
         if let maxPixelSize {
-            nsImage = await ThumbnailCache.shared.loadThumbnail(for: url, maxPixelSize: maxPixelSize)
+            let scale = await MainActor.run { NSScreen.main?.backingScaleFactor ?? 2.0 }
+            let scaledSize = Int(CGFloat(maxPixelSize) * scale)
+            nsImage = await ThumbnailCache.shared.loadThumbnail(for: url, maxPixelSize: scaledSize)
         } else {
             nsImage = await ThumbnailCache.shared.loadImage(for: url)
         }
