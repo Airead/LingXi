@@ -5,8 +5,16 @@ import Testing
 
 struct ClipboardStoreTests {
 
-    private func makeStore(capacity: Int = 200) async -> ClipboardStore {
-        ClipboardStore(database: await DatabaseManager(), capacity: capacity)
+    private func makeTestImageDir() -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClipboardStoreTests_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func makeStore(capacity: Int = 200, imageDirectory: URL? = nil) async -> ClipboardStore {
+        let dir = imageDirectory ?? makeTestImageDir()
+        return ClipboardStore(database: await DatabaseManager(), capacity: capacity, imageDirectory: dir)
     }
 
     // MARK: - Basic text insertion
@@ -213,16 +221,20 @@ struct ClipboardStoreTests {
         let dbPath = tempDir.appendingPathComponent(
             "test_clipboard_\(UUID().uuidString).db"
         ).path
-        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+        let imageDir = makeTestImageDir()
+        defer {
+            try? FileManager.default.removeItem(atPath: dbPath)
+            try? FileManager.default.removeItem(at: imageDir)
+        }
 
         do {
             let db = await DatabaseManager(databasePath: dbPath)
-            let store = ClipboardStore(database: db)
+            let store = ClipboardStore(database: db, imageDirectory: imageDir)
             await store.addTextEntry("persisted")
         }
 
         let db = await DatabaseManager(databasePath: dbPath)
-        let store = ClipboardStore(database: db)
+        let store = ClipboardStore(database: db, imageDirectory: imageDir)
         // Wait for async setup (createTable + loadFromDatabase) to complete
         await store.addTextEntry("trigger_setup")
         // Remove the trigger entry and check persistence
@@ -234,8 +246,9 @@ struct ClipboardStoreTests {
     // MARK: - Image support
 
     private func cleanupImageFiles(_ store: ClipboardStore) async {
+        let imageDir = store.imageDirectory
         for item in await store.items where !item.imagePath.isEmpty {
-            let path = ClipboardStore.imageDirectory.appendingPathComponent(item.imagePath).path
+            let path = imageDir.appendingPathComponent(item.imagePath).path
             try? FileManager.default.removeItem(atPath: path)
         }
     }
@@ -318,7 +331,7 @@ struct ClipboardStoreTests {
         let store = await makeStore()
         await store.addImageEntry(pngData: makePNGData())
         let item = await store.items[0]
-        let filePath = ClipboardStore.imageDirectory.appendingPathComponent(item.imagePath).path
+        let filePath = store.imageDirectory.appendingPathComponent(item.imagePath).path
         #expect(FileManager.default.fileExists(atPath: filePath))
 
         await store.delete(itemId: item.id)
@@ -396,35 +409,31 @@ struct ClipboardStoreTests {
         let dbPath = tempDir.appendingPathComponent(
             "test_ocr_\(UUID().uuidString).db"
         ).path
-        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+        let imageDir = makeTestImageDir()
+        defer {
+            try? FileManager.default.removeItem(atPath: dbPath)
+            try? FileManager.default.removeItem(at: imageDir)
+        }
 
-        var imagePath = ""
         do {
             let db = await DatabaseManager(databasePath: dbPath)
-            let store = ClipboardStore(database: db)
+            let store = ClipboardStore(database: db, imageDirectory: imageDir)
             let png = makePNGDataWithText("Persist OCR")
             await store.addImageEntry(pngData: png)
             let itemId = await store.items[0].id
             await store.awaitPendingOCR(itemId: itemId)
             let item = await store.items[0]
             #expect(!item.ocrText.isEmpty)
-            imagePath = item.imagePath
         }
 
         // Reload from database
         let db = await DatabaseManager(databasePath: dbPath)
-        let store = ClipboardStore(database: db)
+        let store = ClipboardStore(database: db, imageDirectory: imageDir)
         // Trigger setupTask completion via a store operation
         await store.addTextEntry("trigger_setup")
         let items = await store.items.filter { $0.contentType == .image }
         #expect(items.count == 1)
         #expect(!items[0].ocrText.isEmpty)
-
-        // Cleanup
-        if !imagePath.isEmpty {
-            let path = ClipboardStore.imageDirectory.appendingPathComponent(imagePath).path
-            try? FileManager.default.removeItem(atPath: path)
-        }
     }
 
     // MARK: - Orphan cleanup
@@ -434,21 +443,25 @@ struct ClipboardStoreTests {
         let dbPath = tempDir.appendingPathComponent(
             "test_cleanup_db_\(UUID().uuidString).db"
         ).path
-        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+        let imageDir = makeTestImageDir()
+        defer {
+            try? FileManager.default.removeItem(atPath: dbPath)
+            try? FileManager.default.removeItem(at: imageDir)
+        }
 
         var imagePath = ""
         do {
             let db = await DatabaseManager(databasePath: dbPath)
-            let store = ClipboardStore(database: db)
+            let store = ClipboardStore(database: db, imageDirectory: imageDir)
             await store.addImageEntry(pngData: makePNGData())
             let item = await store.items[0]
             imagePath = item.imagePath
-            let filePath = ClipboardStore.imageDirectory.appendingPathComponent(imagePath).path
+            let filePath = imageDir.appendingPathComponent(imagePath).path
             try? FileManager.default.removeItem(atPath: filePath)
         }
 
         let db = await DatabaseManager(databasePath: dbPath)
-        let store = ClipboardStore(database: db)
+        let store = ClipboardStore(database: db, imageDirectory: imageDir)
         await store.addTextEntry("trigger_setup")
         let imageItems = await store.items.filter { $0.contentType == .image }
         #expect(imageItems.isEmpty)
@@ -456,14 +469,15 @@ struct ClipboardStoreTests {
 
     @Test func cleanupRemovesOrphanedFileWithNoDBEntry() async {
         let fm = FileManager.default
-        let imageDir = ClipboardStore.imageDirectory
+        let imageDir = makeTestImageDir()
+        defer { try? fm.removeItem(at: imageDir) }
 
         let orphanName = "orphan_test_\(UUID().uuidString).png"
         let orphanURL = imageDir.appendingPathComponent(orphanName)
         fm.createFile(atPath: orphanURL.path, contents: makePNGData())
         #expect(fm.fileExists(atPath: orphanURL.path))
 
-        let store = await makeStore()
+        let store = await makeStore(imageDirectory: imageDir)
         await store.addTextEntry("trigger_setup")
         #expect(!fm.fileExists(atPath: orphanURL.path))
     }
@@ -473,24 +487,27 @@ struct ClipboardStoreTests {
         let dbPath = tempDir.appendingPathComponent(
             "test_cleanup_valid_\(UUID().uuidString).db"
         ).path
-        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+        let imageDir = makeTestImageDir()
+        defer {
+            try? FileManager.default.removeItem(atPath: dbPath)
+            try? FileManager.default.removeItem(at: imageDir)
+        }
 
         do {
             let db = await DatabaseManager(databasePath: dbPath)
-            let store = ClipboardStore(database: db)
+            let store = ClipboardStore(database: db, imageDirectory: imageDir)
             await store.addImageEntry(pngData: makePNGData())
             await store.addTextEntry("keep this")
         }
 
         let db = await DatabaseManager(databasePath: dbPath)
-        let store = ClipboardStore(database: db)
+        let store = ClipboardStore(database: db, imageDirectory: imageDir)
         await store.addTextEntry("trigger_setup")
         let items = await store.items
         let imageItems = items.filter { $0.contentType == .image }
         let textItems = items.filter { $0.textContent == "keep this" }
         #expect(imageItems.count == 1)
         #expect(textItems.count == 1)
-        await cleanupImageFiles(store)
     }
 
     // MARK: - Thread safety

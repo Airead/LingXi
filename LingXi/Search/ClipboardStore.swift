@@ -67,7 +67,7 @@ actor ClipboardStore {
         category: "ClipboardStore"
     )
 
-    static let imageDirectory: URL = {
+    static let defaultImageDirectory: URL = {
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first!
@@ -80,14 +80,17 @@ actor ClipboardStore {
         return dir
     }()
 
+    nonisolated let imageDirectory: URL
+
     // MARK: - Init
 
     // Assigned once in nonisolated init, then only awaited/cancelled in actor-isolated methods and deinit.
     private nonisolated(unsafe) var setupTask: Task<Void, Never>?
 
-    init(database: DatabaseManager, capacity: Int = 200) {
+    init(database: DatabaseManager, capacity: Int = 200, imageDirectory: URL? = nil) {
         self.db = database
         self._capacity = capacity
+        self.imageDirectory = imageDirectory ?? Self.defaultImageDirectory
         self.setupTask = Task { [self] in
             await createTable()
             await loadFromDatabase()
@@ -141,7 +144,7 @@ actor ClipboardStore {
         _version += 1
 
         if !item.imagePath.isEmpty {
-            let fullPath = Self.imageDirectory
+            let fullPath = imageDirectory
                 .appendingPathComponent(item.imagePath).path
             try? FileManager.default.removeItem(atPath: fullPath)
         }
@@ -165,7 +168,7 @@ actor ClipboardStore {
             skipUntilChangeCount = pb.changeCount
             return true
         case .image:
-            let fileURL = Self.imageDirectory.appendingPathComponent(item.imagePath)
+            let fileURL = imageDirectory.appendingPathComponent(item.imagePath)
             guard let pngData = try? Data(contentsOf: fileURL) else { return false }
             let pb = Self.prepareTransientPasteboard(types: [.png])
             pb.setData(pngData, forType: .png)
@@ -269,7 +272,7 @@ actor ClipboardStore {
 
         let timestamp = Date().timeIntervalSince1970
         let filename = "\(Int(timestamp))_\(hashPrefix).png"
-        let fileURL = Self.imageDirectory.appendingPathComponent(filename)
+        let fileURL = imageDirectory.appendingPathComponent(filename)
 
         do {
             try pngData.write(to: fileURL)
@@ -388,7 +391,7 @@ actor ClipboardStore {
 
     private func cleanupOrphanedEntries() async {
         let fm = FileManager.default
-        let imageDir = Self.imageDirectory
+        let imageDir = imageDirectory
 
         var idsToDelete: [Int] = []
         for item in cachedItems where item.contentType == .image && !item.imagePath.isEmpty {
@@ -506,7 +509,7 @@ actor ClipboardStore {
             ocrTasks[entry.id] = nil
 
             if !entry.imagePath.isEmpty {
-                let fullPath = Self.imageDirectory
+                let fullPath = imageDirectory
                     .appendingPathComponent(entry.imagePath).path
                 try? FileManager.default.removeItem(atPath: fullPath)
             }
