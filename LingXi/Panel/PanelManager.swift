@@ -61,6 +61,17 @@ final class PanelManager {
         router.registerDefault(id: "command-promoted", provider: promotedProvider)
 
         self.router = router
+
+        Task.detached {
+            let plugins = PluginManager.loadAll()
+            for plugin in plugins {
+                await router.register(
+                    prefix: plugin.manifest.prefix,
+                    id: "lua:\(plugin.manifest.name)",
+                    provider: plugin.provider
+                )
+            }
+        }
         self.viewModel = await SearchViewModel(router: router, database: db)
 
         viewModel.onDeleteItem = { [weak self] itemId in

@@ -6,7 +6,17 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .target(
+            name: "CLua",
+            path: "Vendors/lua",
+            sources: ["Sources"],
+            publicHeadersPath: "module",
+            cSettings: [
+                .define("LUA_USE_MACOSX"),
+            ]
+        ),
+        .target(
             name: "LingXi",
+            dependencies: ["CLua"],
             path: "LingXi",
             exclude: ["Assets.xcassets"],
             swiftSettings: [
