@@ -106,23 +106,6 @@ final class ScreenCaptureService {
         return count > 0 ? displayID : CGMainDisplayID()
     }
 
-    /// Get the backing scale factor for a display.
-    func scaleFactor(for displayID: CGDirectDisplayID) -> CGFloat {
-        screen(for: displayID)?.backingScaleFactor ?? 2.0
-    }
-
-    /// Get the screen frame (in Cocoa coordinates) for a display.
-    func screenFrame(for displayID: CGDirectDisplayID) -> CGRect {
-        screen(for: displayID)?.frame ?? CGDisplayBounds(displayID)
-    }
-
-    /// Find the NSScreen matching a CGDirectDisplayID.
-    private func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
-        NSScreen.screens.first {
-            ($0.deviceDescription[Self.screenNumberKey] as? CGDirectDisplayID) == displayID
-        }
-    }
-
     // MARK: - Crop
 
     /// Crop a CGImage to the specified region.

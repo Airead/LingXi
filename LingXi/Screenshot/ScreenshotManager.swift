@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class ScreenshotManager {
@@ -11,6 +12,13 @@ final class ScreenshotManager {
 
     private let captureService = ScreenCaptureService.shared
     private var regionWindows: [RegionSelectionWindow] = []
+    private var windowCaptureInfo: [ObjectIdentifier: CaptureInfo] = [:]
+
+    private struct CaptureInfo {
+        let image: CGImage
+        let scaleFactor: CGFloat
+        let screenFrame: CGRect
+    }
 
     private init() {}
 
@@ -63,11 +71,17 @@ final class ScreenshotManager {
         }
 
         for capture in captures {
-            let window = RegionSelectionWindow(screen: screens[capture.screenIndex])
+            let screen = screens[capture.screenIndex]
+            let window = RegionSelectionWindow(screen: screen)
             window.overlayView.delegate = self
             window.overlayView.setBackgroundImage(capture.image, scaleFactor: capture.scaleFactor)
             window.makeKeyAndOrderFront(nil)
             regionWindows.append(window)
+            windowCaptureInfo[ObjectIdentifier(window)] = CaptureInfo(
+                image: capture.image,
+                scaleFactor: capture.scaleFactor,
+                screenFrame: screen.frame
+            )
         }
     }
 
@@ -77,6 +91,7 @@ final class ScreenshotManager {
             window.orderOut(nil)
         }
         regionWindows.removeAll()
+        windowCaptureInfo.removeAll()
     }
 
     @concurrent
@@ -125,12 +140,42 @@ final class ScreenshotManager {
             DebugLog.log("[ScreenshotManager] Capture failed: \(error)")
         }
     }
+
+    // MARK: - Image conversion
+
+    nonisolated private static func pngData(from image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, nil)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return data as Data
+    }
 }
 
 // MARK: - RegionSelectionOverlayDelegate
 
 extension ScreenshotManager: RegionSelectionOverlayDelegate {
-    func overlayDidCancel() {
+    func overlayDidCancel(_ overlay: RegionSelectionOverlayView) {
         dismissRegionSelection()
+    }
+
+    func overlayDidSelectRegion(_ rect: CGRect, from overlay: RegionSelectionOverlayView) {
+        guard let window = overlay.window as? RegionSelectionWindow,
+              let info = windowCaptureInfo[ObjectIdentifier(window)] else {
+            dismissRegionSelection()
+            return
+        }
+
+        let service = captureService
+        dismissRegionSelection()
+
+        Task.detached {
+            if let cropped = service.cropImage(info.image, to: rect, screenFrame: info.screenFrame, scaleFactor: info.scaleFactor),
+               let pngData = ScreenshotManager.pngData(from: cropped) {
+                await MainActor.run {
+                    service.copyToClipboard(pngData: pngData)
+                }
+            }
+        }
     }
 }
