@@ -27,6 +27,7 @@ final class PanelManager {
     private let viewModel: SearchViewModel
     private let clipboardStore: ClipboardStore
     private let snippetStore: SnippetStore
+    private let commandProvider: CommandSearchProvider
     private let snippetExpander: SnippetExpander
     private let leaderKeyManager: LeaderKeyManager
     private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
@@ -51,6 +52,14 @@ final class PanelManager {
         self.snippetExpander = SnippetExpander(store: snippetStore)
         self.leaderKeyManager = LeaderKeyManager()
         router.register(prefix: settings.snippetSearchPrefix, id: "snippet", provider: SnippetSearchProvider(store: snippetStore))
+
+        let commandProvider = CommandSearchProvider()
+        self.commandProvider = commandProvider
+        await Self.registerBuiltinCommands(commandProvider)
+        router.register(prefix: settings.commandSearchPrefix, id: "command", provider: commandProvider)
+        let promotedProvider = PromotedCommandSearchProvider(commandProvider: commandProvider)
+        router.registerDefault(id: "command-promoted", provider: promotedProvider)
+
         self.router = router
         self.viewModel = await SearchViewModel(router: router, database: db)
 
@@ -81,6 +90,14 @@ final class PanelManager {
             }
         }
 
+        viewModel.onCommandExecute = { [weak self] result in
+            guard let self else { return }
+            Task {
+                guard let entry = await self.commandProvider.entry(for: result.itemId) else { return }
+                await entry.action(result.actionContext)
+            }
+        }
+
         applySettings(settings)
         self.panel = createPanel()
 
@@ -105,6 +122,9 @@ final class PanelManager {
         router.updatePrefix(settings.clipboardSearchPrefix, forId: "clipboard")
         router.setEnabled(settings.snippetSearchEnabled, forId: "snippet")
         router.updatePrefix(settings.snippetSearchPrefix, forId: "snippet")
+        router.setEnabled(settings.commandSearchEnabled, forId: "command")
+        router.setEnabled(settings.commandSearchEnabled, forId: "command-promoted")
+        router.updatePrefix(settings.commandSearchPrefix, forId: "command")
 
         let enabled = settings.clipboardHistoryEnabled
         let capacity = settings.clipboardHistoryCapacity
@@ -285,6 +305,74 @@ final class PanelManager {
         Task {
             try? await Task.sleep(nanoseconds: 150_000_000)
             KeyboardUtils.simulatePaste()
+        }
+    }
+
+    private static func registerBuiltinCommands(_ provider: CommandSearchProvider) async {
+        let commands: [CommandEntry] = [
+            CommandEntry(
+                name: "settings", title: "Open Settings", subtitle: "Open the settings window",
+                icon: NSImage(systemSymbolName: "gear", accessibilityDescription: "Settings"),
+                action: { _ in SettingsWindowManager.shared.show() },
+                promoted: true
+            ),
+            CommandEntry(
+                name: "help", title: "Show Help", subtitle: "Open settings for available prefixes",
+                icon: NSImage(systemSymbolName: "questionmark.circle", accessibilityDescription: "Help"),
+                action: { _ in SettingsWindowManager.shared.show() }
+            ),
+            CommandEntry(
+                name: "screenshot", title: "Capture Region", subtitle: "Take a screenshot of a selected region",
+                icon: NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Screenshot"),
+                action: { _ in await ScreenshotManager.shared.captureRegion() }
+            ),
+            CommandEntry(
+                name: "screenshot-fullscreen", title: "Capture Full Screen", subtitle: "Take a screenshot of the full screen",
+                icon: NSImage(systemSymbolName: "camera", accessibilityDescription: "Full Screen"),
+                action: { _ in await ScreenshotManager.shared.captureFullScreen() }
+            ),
+            CommandEntry(
+                name: "reveal-clipboard-images", title: "Reveal Clipboard Images", subtitle: "Open clipboard images folder in Finder",
+                icon: NSImage(systemSymbolName: "photo.on.rectangle", accessibilityDescription: "Clipboard Images"),
+                action: { _ in NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: ClipboardStore.defaultImageDirectory.path) }
+            ),
+            CommandEntry(
+                name: "reveal-snippets", title: "Reveal Snippets Folder", subtitle: "Open snippets folder in Finder",
+                icon: NSImage(systemSymbolName: "folder", accessibilityDescription: "Snippets"),
+                action: { _ in NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: SnippetStore.defaultDirectory.path) }
+            ),
+            CommandEntry(
+                name: "quit", title: "Quit Application", subtitle: "Quit a running application by name",
+                icon: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "Quit"),
+                action: { args in
+                    let target = args.trimmingCharacters(in: .whitespaces)
+                    guard !target.isEmpty else { return }
+                    for app in NSWorkspace.shared.runningApplications
+                    where app.localizedName?.localizedCaseInsensitiveCompare(target) == .orderedSame {
+                        app.terminate()
+                    }
+                }
+            ),
+            CommandEntry(
+                name: "quit-all", title: "Quit All Applications", subtitle: "Quit all running applications except Finder and self",
+                icon: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Quit All"),
+                action: { _ in
+                    let selfBundleId = Bundle.main.bundleIdentifier
+                    for app in NSWorkspace.shared.runningApplications {
+                        guard app.activationPolicy == .regular else { continue }
+                        if app.bundleIdentifier == "com.apple.finder" { continue }
+                        if let selfId = selfBundleId, app.bundleIdentifier == selfId { continue }
+                        app.terminate()
+                    }
+                }
+            ),
+        ]
+        for cmd in commands {
+            do {
+                try await provider.register(cmd)
+            } catch {
+                assertionFailure("Failed to register built-in command '\(cmd.name)': \(error)")
+            }
         }
     }
 

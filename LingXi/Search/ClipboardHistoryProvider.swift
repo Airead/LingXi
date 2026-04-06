@@ -71,7 +71,7 @@ actor ClipboardHistoryProvider: SearchProvider {
         case .image:
             name = "Image: \(item.imageWidth)×\(item.imageHeight) (\(Self.formattedSize(item.imageSize)))"
             icon = nil
-            let imageURL = ClipboardStore.imageDirectory.appendingPathComponent(item.imagePath)
+            let imageURL = store.imageDirectory.appendingPathComponent(item.imagePath)
             let desc = "\(item.imageWidth)×\(item.imageHeight) · \(Self.formattedSize(item.imageSize))"
             preview = .image(path: imageURL, description: desc)
             thumbURL = imageURL

@@ -103,6 +103,15 @@ final class AppSettings {
             guard snippetSearchPrefix != oldValue else { return }; save(.snippetSearchPrefix, value: snippetSearchPrefix)
         }
     }
+    var commandSearchEnabled: Bool {
+        didSet { guard commandSearchEnabled != oldValue else { return }; save(.commandSearchEnabled, value: commandSearchEnabled) }
+    }
+    var commandSearchPrefix: String {
+        didSet {
+            if commandSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { commandSearchPrefix = oldValue; return }
+            guard commandSearchPrefix != oldValue else { return }; save(.commandSearchPrefix, value: commandSearchPrefix)
+        }
+    }
 
     // MARK: - Leader Key
 
@@ -207,6 +216,8 @@ final class AppSettings {
         case snippetSearchPrefix = "io.github.airead.lingxi.snippetSearchPrefix"
         case snippetSearchHotKeyKeyCode = "io.github.airead.lingxi.snippetSearchHotKeyKeyCode"
         case snippetSearchHotKeyModifiers = "io.github.airead.lingxi.snippetSearchHotKeyModifiers"
+        case commandSearchEnabled = "io.github.airead.lingxi.commandSearchEnabled"
+        case commandSearchPrefix = "io.github.airead.lingxi.commandSearchPrefix"
         case leaderKeyEnabled = "io.github.airead.lingxi.leaderKeyEnabled"
         case screenshotRegionHotKeyKeyCode = "io.github.airead.lingxi.screenshotRegionHotKeyKeyCode"
         case screenshotRegionHotKeyModifiers = "io.github.airead.lingxi.screenshotRegionHotKeyModifiers"
@@ -254,6 +265,9 @@ final class AppSettings {
         clipboardSearchHotKeyModifiers = Self.load(defaults, .clipboardSearchHotKeyModifiers) ?? 0
         snippetSearchHotKeyKeyCode = Self.load(defaults, .snippetSearchHotKeyKeyCode) ?? 0
         snippetSearchHotKeyModifiers = Self.load(defaults, .snippetSearchHotKeyModifiers) ?? 0
+
+        commandSearchEnabled = Self.load(defaults, .commandSearchEnabled) ?? true
+        commandSearchPrefix = Self.load(defaults, .commandSearchPrefix) ?? ">"
 
         leaderKeyEnabled = Self.load(defaults, .leaderKeyEnabled) ?? true
 

@@ -27,6 +27,7 @@ final class SearchViewModel: ObservableObject {
     private let usageBoostCap: Int = 50
     var onClipboardPaste: ((String) -> Void)?
     var onSnippetPaste: ((String) -> Void)?
+    var onCommandExecute: ((SearchResult) -> Void)?
     var onDeleteItem: ((String) -> Void)?
 
     private var searchTask: Task<Void, Never>?
@@ -91,6 +92,12 @@ final class SearchViewModel: ObservableObject {
             let executed = modifierAction.action(selected)
             if executed { recordExecution(query: currentQuery, itemId: selected.itemId) }
             return executed
+        }
+
+        if selected.resultType == .command {
+            onCommandExecute?(selected)
+            recordExecution(query: currentQuery, itemId: selected.itemId)
+            return true
         }
 
         let pasteHandler: ((String) -> Void)? = switch selected.resultType {
