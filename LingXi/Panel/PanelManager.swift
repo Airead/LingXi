@@ -38,7 +38,11 @@ final class PanelManager {
 
     init(settings: AppSettings) async {
         let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
-        let clipboardStore = ClipboardStore(database: db, capacity: settings.clipboardHistoryCapacity)
+        let clipboardStore = ClipboardStore(
+            database: db,
+            capacity: settings.clipboardHistoryCapacity,
+            imageDirectory: ClipboardStore.defaultImageDirectory
+        )
         self.clipboardStore = clipboardStore
         let copyHandler: @MainActor @Sendable (Int) -> Void = { itemId in
             Task { await clipboardStore.writeToClipboard(itemId: itemId) }

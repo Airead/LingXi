@@ -5,15 +5,9 @@ import Testing
 
 struct ClipboardStoreTests {
 
-    private func makeTestImageDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ClipboardStoreTests_\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
     private func makeStore(capacity: Int = 200, imageDirectory: URL? = nil) async -> ClipboardStore {
-        let dir = imageDirectory ?? makeTestImageDir()
+        let dir = imageDirectory ?? makeTestTempDir(label: "ClipboardStoreTests")
+        assertTestImageDirectory(dir)
         return ClipboardStore(database: await DatabaseManager(), capacity: capacity, imageDirectory: dir)
     }
 
@@ -221,7 +215,7 @@ struct ClipboardStoreTests {
         let dbPath = tempDir.appendingPathComponent(
             "test_clipboard_\(UUID().uuidString).db"
         ).path
-        let imageDir = makeTestImageDir()
+        let imageDir = makeTestTempDir(label: "ClipboardStoreTests")
         defer {
             try? FileManager.default.removeItem(atPath: dbPath)
             try? FileManager.default.removeItem(at: imageDir)
@@ -409,7 +403,7 @@ struct ClipboardStoreTests {
         let dbPath = tempDir.appendingPathComponent(
             "test_ocr_\(UUID().uuidString).db"
         ).path
-        let imageDir = makeTestImageDir()
+        let imageDir = makeTestTempDir(label: "ClipboardStoreTests")
         defer {
             try? FileManager.default.removeItem(atPath: dbPath)
             try? FileManager.default.removeItem(at: imageDir)
@@ -443,7 +437,7 @@ struct ClipboardStoreTests {
         let dbPath = tempDir.appendingPathComponent(
             "test_cleanup_db_\(UUID().uuidString).db"
         ).path
-        let imageDir = makeTestImageDir()
+        let imageDir = makeTestTempDir(label: "ClipboardStoreTests")
         defer {
             try? FileManager.default.removeItem(atPath: dbPath)
             try? FileManager.default.removeItem(at: imageDir)
@@ -469,7 +463,7 @@ struct ClipboardStoreTests {
 
     @Test func cleanupRemovesOrphanedFileWithNoDBEntry() async {
         let fm = FileManager.default
-        let imageDir = makeTestImageDir()
+        let imageDir = makeTestTempDir(label: "ClipboardStoreTests")
         defer { try? fm.removeItem(at: imageDir) }
 
         let orphanName = "orphan_test_\(UUID().uuidString).png"
@@ -487,7 +481,7 @@ struct ClipboardStoreTests {
         let dbPath = tempDir.appendingPathComponent(
             "test_cleanup_valid_\(UUID().uuidString).db"
         ).path
-        let imageDir = makeTestImageDir()
+        let imageDir = makeTestTempDir(label: "ClipboardStoreTests")
         defer {
             try? FileManager.default.removeItem(atPath: dbPath)
             try? FileManager.default.removeItem(at: imageDir)

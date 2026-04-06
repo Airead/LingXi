@@ -5,7 +5,13 @@ import Testing
 struct ClipboardHistoryProviderTests {
 
     private func makeProvider(capacity: Int = 200) async -> (ClipboardStore, ClipboardHistoryProvider) {
-        let store = ClipboardStore(database: await DatabaseManager(), capacity: capacity)
+        let imageDir = makeTestTempDir(label: "ClipboardHistoryProviderTests")
+        assertTestImageDirectory(imageDir)
+        let store = ClipboardStore(
+            database: await DatabaseManager(),
+            capacity: capacity,
+            imageDirectory: imageDir
+        )
         let provider = ClipboardHistoryProvider(store: store)
         return (store, provider)
     }

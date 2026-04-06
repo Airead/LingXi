@@ -87,10 +87,10 @@ actor ClipboardStore {
     // Assigned once in nonisolated init, then only awaited/cancelled in actor-isolated methods and deinit.
     private nonisolated(unsafe) var setupTask: Task<Void, Never>?
 
-    init(database: DatabaseManager, capacity: Int = 200, imageDirectory: URL? = nil) {
+    init(database: DatabaseManager, capacity: Int = 200, imageDirectory: URL) {
         self.db = database
         self._capacity = capacity
-        self.imageDirectory = imageDirectory ?? Self.defaultImageDirectory
+        self.imageDirectory = imageDirectory
         self.setupTask = Task { [self] in
             await createTable()
             await loadFromDatabase()

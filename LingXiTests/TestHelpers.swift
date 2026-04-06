@@ -49,6 +49,22 @@ func makeTestImage(width: Int, height: Int) -> CGImage {
     return context.makeImage()!
 }
 
+func makeTestTempDir(label: String = "LingXiTests") -> URL {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("\(label)_\(UUID().uuidString)")
+    // Force-unwrap: directory creation must succeed in tests; silent failure hides bugs.
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+}
+
+/// Crash if the directory points to the production ClipboardStore image path.
+func assertTestImageDirectory(_ dir: URL) {
+    precondition(
+        dir.standardizedFileURL != ClipboardStore.defaultImageDirectory.standardizedFileURL,
+        "Test attempted to use production image directory: \(dir.path)"
+    )
+}
+
 @MainActor
 func emptyRouter() -> SearchRouter {
     SearchRouter(defaultProvider: StubSearchProvider(results: []))
