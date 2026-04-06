@@ -91,6 +91,7 @@ actor ClipboardStore {
         self.setupTask = Task { [self] in
             await createTable()
             await loadFromDatabase()
+            await cleanupOrphanedEntries()
         }
     }
 
@@ -383,6 +384,38 @@ actor ClipboardStore {
         }
 
         cachedItems = rows
+    }
+
+    private func cleanupOrphanedEntries() async {
+        let fm = FileManager.default
+        let imageDir = Self.imageDirectory
+
+        var idsToDelete: [Int] = []
+        for item in cachedItems where item.contentType == .image && !item.imagePath.isEmpty {
+            let filePath = imageDir.appendingPathComponent(item.imagePath).path
+            if !fm.fileExists(atPath: filePath) {
+                idsToDelete.append(item.id)
+            }
+        }
+        if !idsToDelete.isEmpty {
+            let idsSet = Set(idsToDelete)
+            let placeholders = idsToDelete.map { _ in "?" }.joined(separator: ",")
+            let bindings: [DatabaseValue] = idsToDelete.map { .integer($0) }
+            await db.execute(
+                "DELETE FROM clipboard_history WHERE id IN (\(placeholders))",
+                bindings: bindings
+            )
+            cachedItems.removeAll { idsSet.contains($0.id) }
+            _version += 1
+            Self.logger.debug("Cleaned up \(idsToDelete.count) orphaned DB entries (missing files)")
+        }
+
+        let dbPaths = Set(cachedItems.compactMap { $0.contentType == .image ? $0.imagePath : nil })
+        if let files = try? fm.contentsOfDirectory(atPath: imageDir.path) {
+            for file in files where !dbPaths.contains(file) {
+                try? fm.removeItem(at: imageDir.appendingPathComponent(file))
+            }
+        }
     }
 
     private func checkPasteboard() {
