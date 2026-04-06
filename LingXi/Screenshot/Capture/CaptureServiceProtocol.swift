@@ -15,8 +15,10 @@ import Foundation
     /// - Parameters:
     ///   - displayID: The CGDirectDisplayID of the display to capture.
     ///   - excludeBundleID: Bundle ID of the app to exclude from capture. Pass empty string for none.
+    ///   - pixelWidth: Expected pixel width of the capture (0 for automatic).
+    ///   - pixelHeight: Expected pixel height of the capture (0 for automatic).
     ///   - reply: PNG data on success, nil on failure.
-    func captureFullScreen(displayID: UInt32, excludeBundleID: String, reply: @escaping @Sendable (Data?) -> Void)
+    func captureFullScreen(displayID: UInt32, excludeBundleID: String, pixelWidth: UInt32, pixelHeight: UInt32, reply: @escaping @Sendable (Data?) -> Void)
 
     /// Perform OCR on an image file and return recognized text.
     /// - Parameters:

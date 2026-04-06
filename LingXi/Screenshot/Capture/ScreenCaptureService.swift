@@ -51,12 +51,12 @@ final class ScreenCaptureService {
     // MARK: - Capture via XPC
 
     /// Capture full screen via XPC service and return PNG data.
-    func captureFullScreen(displayID: CGDirectDisplayID) async throws -> Data {
+    func captureFullScreen(displayID: CGDirectDisplayID, pixelWidth: UInt32 = 0, pixelHeight: UInt32 = 0) async throws -> Data {
         let bundleID = Bundle.main.bundleIdentifier ?? ""
         defer { scheduleIdleDisconnect() }
 
         return try await withProxy { proxy, resumer in
-            proxy.captureFullScreen(displayID: UInt32(displayID), excludeBundleID: bundleID) { data in
+            proxy.captureFullScreen(displayID: UInt32(displayID), excludeBundleID: bundleID, pixelWidth: pixelWidth, pixelHeight: pixelHeight) { data in
                 if let data {
                     resumer.resume(returning: data)
                 } else {
@@ -89,7 +89,14 @@ final class ScreenCaptureService {
         }
     }
 
+    private static let screenNumberKey = NSDeviceDescriptionKey("NSScreenNumber")
+
     // MARK: - Display Helpers
+
+    /// Get the CGDirectDisplayID for the given screen.
+    func displayID(for screen: NSScreen) -> CGDirectDisplayID {
+        (screen.deviceDescription[Self.screenNumberKey] as? CGDirectDisplayID) ?? CGMainDisplayID()
+    }
 
     /// Find the CGDirectDisplayID for the display containing the given screen point.
     func displayID(at point: CGPoint) -> CGDirectDisplayID {
@@ -112,7 +119,7 @@ final class ScreenCaptureService {
     /// Find the NSScreen matching a CGDirectDisplayID.
     private func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
         NSScreen.screens.first {
-            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID
+            ($0.deviceDescription[Self.screenNumberKey] as? CGDirectDisplayID) == displayID
         }
     }
 
@@ -188,7 +195,9 @@ final class ScreenCaptureService {
         let conn = NSXPCConnection(serviceName: captureServiceName)
         conn.remoteObjectInterface = NSXPCInterface(with: (any LingXiCaptureServiceProtocol).self)
         conn.interruptionHandler = {
-            NSLog("[ScreenCaptureService] XPC connection interrupted; service will restart automatically")
+            Task { @MainActor in
+                DebugLog.log("[ScreenCaptureService] XPC connection interrupted; service will restart automatically")
+            }
         }
         conn.invalidationHandler = { [weak self] in
             Task { @MainActor in

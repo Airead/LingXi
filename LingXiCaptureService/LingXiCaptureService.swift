@@ -15,7 +15,7 @@ import Vision
 /// When the service is idle, the system can terminate it, reclaiming all ScreenCaptureKit memory.
 class LingXiCaptureService: NSObject, LingXiCaptureServiceProtocol {
 
-    func captureFullScreen(displayID: UInt32, excludeBundleID: String, reply: @escaping (Data?) -> Void) {
+    func captureFullScreen(displayID: UInt32, excludeBundleID: String, pixelWidth: UInt32, pixelHeight: UInt32, reply: @escaping (Data?) -> Void) {
         Task {
             do {
                 let content = try await SCShareableContent.current
@@ -31,6 +31,10 @@ class LingXiCaptureService: NSObject, LingXiCaptureServiceProtocol {
                 config.captureResolution = .best
                 config.pixelFormat = kCVPixelFormatType_32BGRA
                 config.showsCursor = false
+                if pixelWidth > 0 && pixelHeight > 0 {
+                    config.width = Int(pixelWidth)
+                    config.height = Int(pixelHeight)
+                }
 
                 let sampleBuffer = try await SCScreenshotManager.captureSampleBuffer(
                     contentFilter: filter,

@@ -5,30 +5,116 @@
 
 import AppKit
 
-/// Coordinates the screenshot workflow: capture, region selection, and output.
 @MainActor
 final class ScreenshotManager {
     static let shared = ScreenshotManager()
 
     private let captureService = ScreenCaptureService.shared
+    private var regionWindows: [RegionSelectionWindow] = []
 
     private init() {}
 
-    /// Capture a region screenshot.
     func captureRegion() async {
-        await captureAndCopy()
+        guard ensurePermission() else { return }
+        await showRegionSelection()
     }
 
-    /// Capture full screen screenshot and copy to clipboard.
+    // MARK: - Region selection
+
+    private struct ScreenInfo: Sendable {
+        let index: Int
+        let displayID: CGDirectDisplayID
+        let scale: CGFloat
+        let pixelWidth: UInt32
+        let pixelHeight: UInt32
+    }
+
+    private struct CaptureResult: @unchecked Sendable {
+        let screenIndex: Int
+        let image: CGImage
+        let scaleFactor: CGFloat
+    }
+
+    private func showRegionSelection() async {
+        dismissRegionSelection()
+
+        let screens = NSScreen.screens
+
+        let screenInfos: [ScreenInfo] = screens.enumerated().map { index, screen in
+            let scale = screen.backingScaleFactor
+            return ScreenInfo(
+                index: index,
+                displayID: captureService.displayID(for: screen),
+                scale: scale,
+                pixelWidth: UInt32(screen.frame.width * scale),
+                pixelHeight: UInt32(screen.frame.height * scale)
+            )
+        }
+
+        let captures: [CaptureResult] = await withTaskGroup(of: CaptureResult?.self) { group in
+            for info in screenInfos {
+                group.addTask { await self.captureScreenImage(info: info) }
+            }
+            var results: [CaptureResult] = []
+            for await result in group {
+                if let result { results.append(result) }
+            }
+            return results
+        }
+
+        for capture in captures {
+            let window = RegionSelectionWindow(screen: screens[capture.screenIndex])
+            window.overlayView.delegate = self
+            window.overlayView.setBackgroundImage(capture.image, scaleFactor: capture.scaleFactor)
+            window.makeKeyAndOrderFront(nil)
+            regionWindows.append(window)
+        }
+    }
+
+    private func dismissRegionSelection() {
+        for window in regionWindows {
+            window.overlayView.clearBackgroundImage()
+            window.orderOut(nil)
+        }
+        regionWindows.removeAll()
+    }
+
+    @concurrent
+    private func captureScreenImage(info: ScreenInfo) async -> CaptureResult? {
+        do {
+            let pngData = try await captureService.captureFullScreen(
+                displayID: info.displayID,
+                pixelWidth: info.pixelWidth,
+                pixelHeight: info.pixelHeight
+            )
+            guard let provider = CGDataProvider(data: pngData as CFData),
+                  let image = CGImage(
+                      pngDataProviderSource: provider,
+                      decode: nil,
+                      shouldInterpolate: false,
+                      intent: .defaultIntent
+                  ) else { return nil }
+            return CaptureResult(screenIndex: info.index, image: image, scaleFactor: info.scale)
+        } catch {
+            await DebugLog.log("[ScreenshotManager] Background capture failed: \(error)")
+            return nil
+        }
+    }
+
     func captureFullScreen() async {
         await captureAndCopy()
     }
 
-    private func captureAndCopy() async {
+    private func ensurePermission() -> Bool {
         guard captureService.requestPermission() else {
             DebugLog.log("[ScreenshotManager] Screen recording permission denied")
-            return
+            return false
         }
+        return true
+    }
+
+    private func captureAndCopy() async {
+        guard ensurePermission() else { return }
 
         let displayID = captureService.displayID(at: NSEvent.mouseLocation)
 
@@ -38,5 +124,13 @@ final class ScreenshotManager {
         } catch {
             DebugLog.log("[ScreenshotManager] Capture failed: \(error)")
         }
+    }
+}
+
+// MARK: - RegionSelectionOverlayDelegate
+
+extension ScreenshotManager: RegionSelectionOverlayDelegate {
+    func overlayDidCancel() {
+        dismissRegionSelection()
     }
 }
