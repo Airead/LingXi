@@ -431,7 +431,9 @@ private struct CachedImageView<Placeholder: View>: View {
 
     @Sendable private func loadImage() async {
         if let maxPixelSize {
-            nsImage = await ThumbnailCache.shared.loadThumbnail(for: url, maxPixelSize: maxPixelSize)
+            let scale = await MainActor.run { NSScreen.main?.backingScaleFactor ?? 2.0 }
+            let scaledSize = Int(CGFloat(maxPixelSize) * scale)
+            nsImage = await ThumbnailCache.shared.loadThumbnail(for: url, maxPixelSize: scaledSize)
         } else {
             nsImage = await ThumbnailCache.shared.loadImage(for: url)
         }
