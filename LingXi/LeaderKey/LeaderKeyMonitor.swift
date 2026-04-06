@@ -19,6 +19,10 @@ protocol LeaderKeyMonitorDelegate: AnyObject {
 /// never blocks waiting for the main thread.
 ///
 /// Runs on a dedicated background thread with its own CFRunLoop.
+///
+/// NOTE: Uses NSLock + @unchecked Sendable instead of Swift actor because
+/// the CGEventTap callback is a C function pointer that requires synchronous
+/// access — an actor's async isolation would deadlock the event tap.
 final class LeaderKeyMonitor: @unchecked Sendable {
 
     /// Must be set on the main thread. Always read via `DispatchQueue.main.async`
@@ -30,7 +34,11 @@ final class LeaderKeyMonitor: @unchecked Sendable {
     private let lock = NSLock()
     private var configs: [String: LeaderConfig] = [:]
     private var suppressed = false
-    private var isActive = false
+    private var state: LeaderState = .idle
+    private var subKeyMatched = false
+    private var swallowedKeycodes: Set<UInt16> = []
+    private var pressTimestamp: UInt64 = 0
+    private static let holdThresholdNanos: UInt64 = 300_000_000 // 300ms
     private var activeTriggerKeycode: UInt16 = 0
     private var activeTriggerFlagBit: UInt64 = 0
     private var activeConfig: LeaderConfig?
@@ -51,32 +59,41 @@ final class LeaderKeyMonitor: @unchecked Sendable {
     }
 
     func start() {
-        let shouldStart = lock.withLock { thread == nil }
-        guard shouldStart else { return }
-        let bg = Thread { [weak self] in
-            self?.runEventTap()
+        let bg: Thread? = lock.withLock {
+            guard thread == nil else { return nil }
+            let t = Thread { [weak self] in
+                self?.runEventTap()
+            }
+            t.name = "io.github.airead.lingxi.LeaderKeyMonitor"
+            t.qualityOfService = .userInteractive
+            thread = t
+            return t
         }
-        bg.name = "io.github.airead.lingxi.LeaderKeyMonitor"
-        bg.qualityOfService = .userInteractive
-        bg.start()
-        lock.withLock { thread = bg }
+        bg?.start()
     }
 
     func stop() {
-        let (tap, loop, hadThread): (CFMachPort?, CFRunLoop?, Bool) = lock.withLock {
+        let (tap, loop, hadThread, wasActive): (CFMachPort?, CFRunLoop?, Bool, Bool) = lock.withLock {
             let t = eventTap
             let l = runLoop
             let had = thread != nil
+            let active = state != .idle
             eventTap = nil
             runLoop = nil
             thread = nil
             deactivateLocked()
             previousModFlags = 0
-            return (t, l, had)
+            return (t, l, had, active)
         }
 
         if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
         if let loop { CFRunLoopStop(loop) }
+
+        if wasActive {
+            DispatchQueue.main.async { [weak self] in
+                self?.delegate?.leaderMonitorDidDeactivate()
+            }
+        }
 
         if hadThread {
             let result = tapStopped.wait(timeout: .now() + 2)
@@ -89,7 +106,7 @@ final class LeaderKeyMonitor: @unchecked Sendable {
     func suppress() {
         let wasActive: Bool = lock.withLock {
             suppressed = true
-            guard isActive else { return false }
+            guard state != .idle else { return false }
             deactivateLocked()
             return true
         }
@@ -192,7 +209,7 @@ final class LeaderKeyMonitor: @unchecked Sendable {
             if isDown && !wasDown {
                 return onTriggerPressLocked(keyName: triggerName, keycode: keycode, flagBit: info.flagBit)
             } else if !isDown && wasDown {
-                return onTriggerReleaseLocked(keycode: keycode)
+                return onTriggerReleaseLocked(flagBit: info.flagBit)
             }
             return .passthrough
         }
@@ -210,6 +227,12 @@ final class LeaderKeyMonitor: @unchecked Sendable {
                 self?.delegate?.leaderMonitorDidDeactivate()
             }
             return Unmanaged.passUnretained(event)
+        case .switched(let config):
+            DispatchQueue.main.async { [weak self] in
+                self?.delegate?.leaderMonitorDidDeactivate()
+                self?.delegate?.leaderMonitorDidActivate(config)
+            }
+            return Unmanaged.passUnretained(event)
         }
     }
 
@@ -217,15 +240,17 @@ final class LeaderKeyMonitor: @unchecked Sendable {
 
     private func handleKeyDown(keycode: UInt16, flags: UInt64, event: CGEvent) -> Unmanaged<CGEvent>? {
         let result: KeyDownResult = lock.withLock {
-            guard isActive else { return .passthrough }
+            guard state != .idle else { return .passthrough }
 
             // Esc dismisses leader mode
             if keycode == UInt16(kVK_Escape) {
                 deactivateLocked()
+                swallowedKeycodes.insert(keycode)
                 return .dismissed
             }
 
             guard let keyName = LeaderKeycode.keycodeToName[keycode] else {
+                swallowedKeycodes.insert(keycode)
                 return .swallow
             }
 
@@ -233,7 +258,8 @@ final class LeaderKeyMonitor: @unchecked Sendable {
             let extraMods = flags & (
                 CGEventFlags.maskCommand.rawValue |
                 CGEventFlags.maskControl.rawValue |
-                CGEventFlags.maskAlternate.rawValue
+                CGEventFlags.maskAlternate.rawValue |
+                CGEventFlags.maskShift.rawValue
             )
             if (extraMods & ~activeTriggerFlagBit) != 0 {
                 return .swallow
@@ -241,10 +267,17 @@ final class LeaderKeyMonitor: @unchecked Sendable {
 
             if let config = activeConfig,
                let mapping = config.mappingsByKey[keyName] {
-                deactivateLocked()
+                swallowedKeycodes.insert(keycode)
+                if state == .toggled {
+                    deactivateLocked()
+                    return .matchedAndDismissed(mapping)
+                }
+                // holding: execute but stay active for more sub-keys
+                subKeyMatched = true
                 return .matched(mapping)
             }
 
+            swallowedKeycodes.insert(keycode)
             return .swallow
         }
 
@@ -263,40 +296,77 @@ final class LeaderKeyMonitor: @unchecked Sendable {
                 self?.delegate?.leaderMonitorDidMatch(mapping)
             }
             return nil
+        case .matchedAndDismissed(let mapping):
+            DispatchQueue.main.async { [weak self] in
+                self?.delegate?.leaderMonitorDidMatch(mapping)
+                self?.delegate?.leaderMonitorDidDeactivate()
+            }
+            return nil
         }
     }
 
     // MARK: - KeyUp
 
     private func handleKeyUp(keycode: UInt16, event: CGEvent) -> Unmanaged<CGEvent>? {
-        let active = lock.withLock { isActive }
-        if active, LeaderKeycode.keycodeToName[keycode] != nil {
-            return nil
+        let shouldSwallow: Bool = lock.withLock {
+            swallowedKeycodes.remove(keycode) != nil
         }
-        return Unmanaged.passUnretained(event)
+        return shouldSwallow ? nil : Unmanaged.passUnretained(event)
     }
 
     // MARK: - Trigger logic (called within lock)
 
     private func onTriggerPressLocked(keyName: String, keycode: UInt16, flagBit: UInt64) -> FlagsAction {
-        guard !isActive, !suppressed, let config = configs[keyName] else {
+        // In toggled mode, pressing any trigger closes the panel
+        if state == .toggled {
+            let wasSameTrigger = activeTriggerKeycode == keycode
+            deactivateLocked()
+            if wasSameTrigger {
+                return .deactivated
+            }
+            // Different trigger: close current, then try to activate new one below
+            if !suppressed, let config = configs[keyName] {
+                state = .holding
+                subKeyMatched = false
+                pressTimestamp = DispatchTime.now().uptimeNanoseconds
+                activeTriggerKeycode = keycode
+                activeTriggerFlagBit = flagBit
+                activeConfig = config
+                return .switched(config)
+            }
+            return .deactivated
+        }
+        guard state == .idle, !suppressed, let config = configs[keyName] else {
             return .passthrough
         }
-        isActive = true
+        state = .holding
+        subKeyMatched = false
+        pressTimestamp = DispatchTime.now().uptimeNanoseconds
         activeTriggerKeycode = keycode
         activeTriggerFlagBit = flagBit
         activeConfig = config
         return .activated(config)
     }
 
-    private func onTriggerReleaseLocked(keycode: UInt16) -> FlagsAction {
-        guard isActive, activeTriggerKeycode == keycode else { return .passthrough }
-        deactivateLocked()
-        return .deactivated
+    private func onTriggerReleaseLocked(flagBit: UInt64) -> FlagsAction {
+        guard state == .holding, activeTriggerFlagBit == flagBit else { return .passthrough }
+        let elapsed = DispatchTime.now().uptimeNanoseconds - pressTimestamp
+        if subKeyMatched || elapsed >= Self.holdThresholdNanos {
+            // Sub-keys were pressed or held long enough — close panel
+            deactivateLocked()
+            return .deactivated
+        }
+        // Quick tap with no sub-key — enter toggle mode, panel stays open
+        state = .toggled
+        return .passthrough
     }
 
     private func deactivateLocked() {
-        isActive = false
+        state = .idle
+        subKeyMatched = false
+        // Note: swallowedKeycodes is NOT cleared here — pending keyUp
+        // events arrive after deactivation and must still be swallowed.
+        pressTimestamp = 0
         activeTriggerKeycode = 0
         activeTriggerFlagBit = 0
         activeConfig = nil
@@ -309,6 +379,14 @@ private enum FlagsAction {
     case passthrough
     case activated(LeaderConfig)
     case deactivated
+    /// Deactivated the previous config, then activated a new one.
+    case switched(LeaderConfig)
+}
+
+private enum LeaderState {
+    case idle
+    case holding
+    case toggled
 }
 
 private enum KeyDownResult {
@@ -316,4 +394,5 @@ private enum KeyDownResult {
     case swallow
     case dismissed
     case matched(LeaderMapping)
+    case matchedAndDismissed(LeaderMapping)
 }

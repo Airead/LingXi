@@ -54,7 +54,6 @@ final class LeaderKeyManager {
     // MARK: - Action execution
 
     private func executeMapping(_ mapping: LeaderMapping) {
-        closePanel()
         if let app = mapping.app {
             launchApp(app)
         } else if let exec = mapping.exec {
