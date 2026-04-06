@@ -54,6 +54,7 @@ nonisolated struct SearchResult: Identifiable, Sendable {
     var score: Double
     var previewData: PreviewData?
     var modifierActions: [ActionModifier: ModifierAction] = [:]
+    var actionContext: String = ""
     var openWithBundleId: String?
     var thumbnailURL: URL?
 
