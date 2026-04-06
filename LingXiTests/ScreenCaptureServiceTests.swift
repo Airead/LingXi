@@ -7,24 +7,6 @@ import AppKit
 import Testing
 @testable import LingXi
 
-/// Create a test CGImage with the specified pixel dimensions.
-private func makeTestImage(width: Int, height: Int) -> CGImage {
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let context = CGContext(
-        data: nil,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: width * 4,
-        space: colorSpace,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    // Fill with a solid color so the image is non-trivial
-    context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
-    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-    return context.makeImage()!
-}
-
 @Suite("ScreenCaptureService")
 struct ScreenCaptureServiceTests {
 

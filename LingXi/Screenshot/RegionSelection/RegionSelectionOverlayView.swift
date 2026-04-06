@@ -8,6 +8,7 @@ import Carbon.HIToolbox
 import QuartzCore
 
 /// Delegate for region selection overlay events.
+@MainActor
 protocol RegionSelectionOverlayDelegate: AnyObject {
     func overlayDidCancel(_ overlay: RegionSelectionOverlayView)
     func overlayDidSelectRegion(_ rect: CGRect, from overlay: RegionSelectionOverlayView)
@@ -213,6 +214,12 @@ final class RegionSelectionOverlayView: NSView {
         selectionBorderLayer.path = CGPath(rect: selectionRect, transform: nil)
         updateDimMask()
         updateSizeIndicator()
+    }
+
+    /// Reset all selection state so the view can be reused from the window pool.
+    func resetSelectionState() {
+        resetSelection()
+        dragOrigin = nil
     }
 
     private func resetSelection() {

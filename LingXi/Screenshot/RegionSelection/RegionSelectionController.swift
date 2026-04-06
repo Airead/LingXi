@@ -21,12 +21,12 @@ struct SelectionResult {
 }
 
 /// Coordinates the region selection flow across overlay windows.
-/// Uses async/await via CheckedContinuation to wrap the delegate-based overlay.
 @MainActor
 final class RegionSelectionController {
     static let shared = RegionSelectionController()
 
-    private var regionWindows: [RegionSelectionWindow] = []
+    private var windowPool: [RegionSelectionWindow] = []
+    private var activeWindows: [RegionSelectionWindow] = []
     private var windowCaptureInfo: [ObjectIdentifier: CaptureInfo] = [:]
     private var continuation: CheckedContinuation<SelectionResult?, Never>?
 
@@ -36,30 +36,33 @@ final class RegionSelectionController {
         let screenFrame: CGRect
     }
 
-    private init() {}
+    private var poolInitialized = false
+
+    init() {}
 
     /// Start region selection on the given screens with pre-captured images.
     /// Returns the selection result, or nil if the user cancels.
     func startSelection(captures: [ScreenCapture], screens: [NSScreen]) async -> SelectionResult? {
         cancelSelection()
+        ensurePoolInitialized()
 
         for capture in captures {
             let screen = screens[capture.screenIndex]
-            let window = RegionSelectionWindow(screen: screen)
+            let window = acquireWindow(for: screen)
             window.overlayView.delegate = self
             window.overlayView.setBackgroundImage(capture.image, scaleFactor: capture.scaleFactor)
             window.makeKeyAndOrderFront(nil)
-            regionWindows.append(window)
-            windowCaptureInfo[ObjectIdentifier(window)] = CaptureInfo(
-                image: capture.image,
-                scaleFactor: capture.scaleFactor,
-                screenFrame: screen.frame
-            )
+            registerWindow(window, image: capture.image, scaleFactor: capture.scaleFactor, screenFrame: screen.frame)
         }
 
-        return await withCheckedContinuation { continuation in
-            self.continuation = continuation
-        }
+        return await suspendForSelection()
+    }
+
+    /// Await a selection on a specific window without showing it.
+    func awaitSelection(window: RegionSelectionWindow, image: CGImage, scaleFactor: CGFloat, screenFrame: CGRect) async -> SelectionResult? {
+        cancelSelection()
+        registerWindow(window, image: image, scaleFactor: scaleFactor, screenFrame: screenFrame)
+        return await suspendForSelection()
     }
 
     /// Cancel the current selection, causing startSelection to return nil.
@@ -67,22 +70,73 @@ final class RegionSelectionController {
         finish(with: nil)
     }
 
+    private func registerWindow(_ window: RegionSelectionWindow, image: CGImage, scaleFactor: CGFloat, screenFrame: CGRect) {
+        activeWindows.append(window)
+        windowCaptureInfo[ObjectIdentifier(window)] = CaptureInfo(
+            image: image,
+            scaleFactor: scaleFactor,
+            screenFrame: screenFrame
+        )
+    }
+
+    private func suspendForSelection() async -> SelectionResult? {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    // MARK: - Window pool
+
+    private func ensurePoolInitialized() {
+        guard !poolInitialized else { return }
+        poolInitialized = true
+        rebuildWindowPool()
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.rebuildWindowPool()
+            }
+        }
+    }
+
+    private func rebuildWindowPool() {
+        for window in windowPool {
+            window.overlayView.clearBackgroundImage()
+            window.orderOut(nil)
+        }
+        windowPool = NSScreen.screens.map { RegionSelectionWindow(screen: $0) }
+    }
+
+    private func acquireWindow(for screen: NSScreen) -> RegionSelectionWindow {
+        if let index = windowPool.firstIndex(where: { $0.frame == screen.frame }) {
+            return windowPool.remove(at: index)
+        }
+        return RegionSelectionWindow(screen: screen)
+    }
+
+    private func returnWindows() {
+        for window in activeWindows {
+            window.overlayView.delegate = nil
+            window.overlayView.clearBackgroundImage()
+            window.overlayView.resetSelectionState()
+            window.orderOut(nil)
+            windowPool.append(window)
+        }
+        activeWindows.removeAll()
+        windowCaptureInfo.removeAll()
+    }
+
     // MARK: - Private
 
     private func finish(with result: SelectionResult?) {
         let pending = continuation
         continuation = nil
-        dismissAll()
+        returnWindows()
         pending?.resume(returning: result)
-    }
-
-    private func dismissAll() {
-        for window in regionWindows {
-            window.overlayView.clearBackgroundImage()
-            window.orderOut(nil)
-        }
-        regionWindows.removeAll()
-        windowCaptureInfo.removeAll()
     }
 }
 

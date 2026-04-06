@@ -17,6 +17,7 @@ final class ScreenshotManager {
 
     func captureRegion() async {
         guard ensurePermission() else { return }
+        hideAppWindows()
         await showRegionSelection()
     }
 
@@ -106,6 +107,7 @@ final class ScreenshotManager {
 
     private func captureAndCopy() async {
         guard ensurePermission() else { return }
+        hideAppWindows()
 
         let displayID = captureService.displayID(at: NSEvent.mouseLocation)
 
@@ -117,9 +119,17 @@ final class ScreenshotManager {
         }
     }
 
+    // MARK: - Window management
+
+    private func hideAppWindows() {
+        for window in NSApp.windows where window is FloatingPanel && window.isVisible {
+            window.orderOut(nil)
+        }
+    }
+
     // MARK: - Image conversion
 
-    nonisolated private static func pngData(from image: CGImage) -> Data? {
+    nonisolated static func pngData(from image: CGImage) -> Data? {
         let data = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, UTType.png.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(dest, image, nil)
