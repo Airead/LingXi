@@ -8,6 +8,7 @@ import SwiftUI
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case search
+    case permissions
 
     var id: String { rawValue }
 
@@ -15,6 +16,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .search: "Search"
+        case .permissions: "Permissions"
         }
     }
 
@@ -22,6 +24,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gear"
         case .search: "magnifyingglass"
+        case .permissions: "shield.lefthalf.filled"
         }
     }
 }
@@ -44,6 +47,8 @@ struct SettingsView: View {
                 GeneralSettingsView(settings: settings)
             case .search:
                 SearchSettingsView(settings: settings)
+            case .permissions:
+                PermissionsSettingsView()
             }
         }
     }
