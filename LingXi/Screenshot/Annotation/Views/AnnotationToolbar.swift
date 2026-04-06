@@ -10,9 +10,11 @@ struct AnnotationToolbar: View {
 
     @State private var showColorPopover = false
     @State private var showStrokeWidthPopover = false
+    @State private var showFontSizePopover = false
 
     private static let enabledTools: Set<AnnotationTool> = [
-        .selection, .rectangle, .filledRectangle, .ellipse, .arrow, .line, .pencil, .highlighter,
+        .selection, .rectangle, .filledRectangle, .ellipse, .arrow, .line,
+        .pencil, .highlighter, .text, .counter, .blur, .crop,
     ]
 
     private static let presetColors: [Color] = [
@@ -20,6 +22,7 @@ struct AnnotationToolbar: View {
     ]
 
     private static let strokeWidths: [CGFloat] = [1, 2, 3, 5, 8]
+    private static let fontSizes: [CGFloat] = [12, 14, 16, 20, 24, 32, 48]
 
     var body: some View {
         HStack(spacing: 12) {
@@ -28,6 +31,12 @@ struct AnnotationToolbar: View {
             colorSection
             Divider().frame(height: 24)
             strokeWidthButton
+            if state.selectedTool == .text || state.selectedTool == .counter {
+                fontSizeButton
+            }
+            if state.selectedTool == .blur {
+                blurTypeToggle
+            }
             Spacer()
         }
         .padding(.horizontal, 12)
@@ -118,43 +127,88 @@ struct AnnotationToolbar: View {
     // MARK: - Stroke width button
 
     private var strokeWidthButton: some View {
-        Button {
-            showStrokeWidthPopover = true
-        } label: {
-            HStack(spacing: 4) {
+        popoverPicker(
+            isPresented: $showStrokeWidthPopover,
+            values: Self.strokeWidths,
+            selected: state.strokeWidth,
+            onSelect: { state.strokeWidth = $0 },
+            triggerLabel: {
                 RoundedRectangle(cornerRadius: 1)
                     .fill(Color.primary)
                     .frame(width: 16, height: max(2, state.strokeWidth))
+            },
+            rowLabel: { width in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.primary)
+                    .frame(width: 40, height: max(2, width))
+            },
+            rowDetail: { width in "\(Int(width))px" }
+        )
+    }
+
+    // MARK: - Font size button
+
+    private var fontSizeButton: some View {
+        popoverPicker(
+            isPresented: $showFontSizePopover,
+            values: Self.fontSizes,
+            selected: state.fontSize,
+            onSelect: { state.fontSize = $0 },
+            triggerLabel: {
+                Text("\(Int(state.fontSize))pt")
+                    .font(.system(size: 12))
+            },
+            rowLabel: { size in
+                Text("Aa")
+                    .font(.system(size: min(size, 20)))
+            },
+            rowDetail: { size in "\(Int(size))pt" }
+        )
+    }
+
+    private func popoverPicker<Trigger: View, RowLabel: View>(
+        isPresented: Binding<Bool>,
+        values: [CGFloat],
+        selected: CGFloat,
+        onSelect: @escaping (CGFloat) -> Void,
+        @ViewBuilder triggerLabel: () -> Trigger,
+        @ViewBuilder rowLabel: @escaping (CGFloat) -> RowLabel,
+        rowDetail: @escaping (CGFloat) -> String
+    ) -> some View {
+        Button {
+            isPresented.wrappedValue = true
+        } label: {
+            HStack(spacing: 4) {
+                triggerLabel()
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8))
                     .foregroundStyle(.secondary)
             }
-            .frame(width: 40, height: 32)
+            .frame(height: 32)
+            .padding(.horizontal, 8)
             .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(showStrokeWidthPopover
+                    .fill(isPresented.wrappedValue
                           ? Color.accentColor.opacity(0.2)
                           : Color.clear)
             )
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showStrokeWidthPopover) {
+        .popover(isPresented: isPresented) {
             VStack(spacing: 0) {
-                ForEach(Array(Self.strokeWidths.enumerated()), id: \.offset) { _, width in
+                ForEach(values, id: \.self) { value in
                     Button {
-                        state.strokeWidth = width
-                        showStrokeWidthPopover = false
+                        onSelect(value)
+                        isPresented.wrappedValue = false
                     } label: {
                         HStack {
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(Color.primary)
-                                .frame(width: 40, height: max(2, width))
+                            rowLabel(value)
                             Spacer()
-                            Text("\(Int(width))px")
+                            Text(rowDetail(value))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            if state.strokeWidth == width {
+                            if selected == value {
                                 Image(systemName: "checkmark")
                                     .font(.caption)
                                     .foregroundStyle(Color.accentColor)
@@ -170,5 +224,33 @@ struct AnnotationToolbar: View {
             .frame(width: 140)
             .padding(.vertical, 4)
         }
+    }
+
+    // MARK: - Blur type toggle
+
+    private var blurTypeToggle: some View {
+        HStack(spacing: 2) {
+            blurTypeButton(.pixelate)
+            blurTypeButton(.gaussian)
+        }
+    }
+
+    private func blurTypeButton(_ type: BlurType) -> some View {
+        Button {
+            state.blurType = type
+        } label: {
+            Image(systemName: type.systemImage)
+                .font(.system(size: 14))
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(state.blurType == type
+                              ? Color.accentColor.opacity(0.2)
+                              : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(type.label)
     }
 }

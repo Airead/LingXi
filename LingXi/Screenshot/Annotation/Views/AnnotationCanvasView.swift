@@ -41,6 +41,13 @@ final class AnnotationCanvasNSView: NSView {
     override var mouseDownCanMoveWindow: Bool { false }
 
     private static let minimumPointDistance: CGFloat = 2.0
+    private static let defaultFontName = "Helvetica"
+
+    private var activeTextField: NSTextField?
+    private var textInsertionPoint: CGPoint?
+    private let blurCacheManager = BlurCacheManager()
+    private var cachedSourceCGImage: CGImage?
+    private var cachedSourceImageId: ObjectIdentifier?
 
     private func startObservation() {
         withObservationTracking {
@@ -54,6 +61,7 @@ final class AnnotationCanvasNSView: NSView {
             _ = self.state.strokeColor
             _ = self.state.fillColor
             _ = self.state.strokeWidth
+            _ = self.state.fontSize
         } onChange: {
             DispatchQueue.main.async { [weak self] in
                 self?.needsDisplay = true
@@ -109,20 +117,23 @@ final class AnnotationCanvasNSView: NSView {
         cgContext.translateBy(x: origin.x, y: origin.y)
         cgContext.scaleBy(x: scale, y: scale)
 
-        drawSourceImage(in: cgContext)
-        drawAnnotations(in: cgContext)
-        drawCurrentStroke(in: cgContext)
+        let cgImage = resolvedSourceCGImage()
+        drawSourceImage(cgImage, in: cgContext)
+
+        let renderer = AnnotationRenderer(
+            context: cgContext,
+            sourceImage: cgImage,
+            blurCacheManager: blurCacheManager
+        )
+        drawAnnotations(renderer)
+        drawCurrentStroke(renderer)
 
         cgContext.restoreGState()
     }
 
-    private func drawSourceImage(in context: CGContext) {
-        guard let cgImage = state.sourceImage.cgImage(
-            forProposedRect: nil, context: nil, hints: nil
-        ) else { return }
+    private func drawSourceImage(_ cgImage: CGImage?, in context: CGContext) {
+        guard let cgImage else { return }
         let imageSize = state.sourceImage.size
-        // isFlipped = true, so y=0 is top. CGContext.draw expects origin at bottom-left,
-        // so flip vertically within image space.
         context.saveGState()
         context.translateBy(x: 0, y: imageSize.height)
         context.scaleBy(x: 1, y: -1)
@@ -130,19 +141,26 @@ final class AnnotationCanvasNSView: NSView {
         context.restoreGState()
     }
 
-    private func drawAnnotations(in context: CGContext) {
-        let renderer = AnnotationRenderer(context: context)
+    private func resolvedSourceCGImage() -> CGImage? {
+        let id = ObjectIdentifier(state.sourceImage)
+        if cachedSourceImageId != id {
+            cachedSourceCGImage = state.sourceImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            cachedSourceImageId = id
+            blurCacheManager.clearCache()
+        }
+        return cachedSourceCGImage
+    }
+
+    private func drawAnnotations(_ renderer: AnnotationRenderer) {
         renderer.render(state.annotations)
     }
 
-    private func drawCurrentStroke(in context: CGContext) {
+    private func drawCurrentStroke(_ renderer: AnnotationRenderer) {
         guard state.isDrawing else { return }
 
         let properties = currentProperties()
-        let renderer = AnnotationRenderer(context: context)
 
         if state.selectedTool.isPathBased {
-            // Path-based preview (pencil / highlighter)
             if let previewItem = AnnotationFactory.makePathAnnotation(
                 tool: state.selectedTool,
                 points: state.currentPoints,
@@ -152,8 +170,11 @@ final class AnnotationCanvasNSView: NSView {
             }
         } else if let start = state.drawingStartPoint,
                   let end = state.drawingEndPoint {
-            // Two-point preview (rectangle, ellipse, line, arrow)
-            if let previewItem = AnnotationFactory.makeAnnotation(
+            let rect = AnnotationFactory.normalizedRect(from: start, to: end)
+
+            if state.selectedTool == .crop {
+                renderer.renderCropOverlay(rect: rect, imageSize: state.sourceImage.size)
+            } else if let previewItem = AnnotationFactory.makeAnnotation(
                 tool: state.selectedTool,
                 from: start,
                 to: end,
@@ -169,9 +190,69 @@ final class AnnotationCanvasNSView: NSView {
             strokeColor: state.strokeColor,
             fillColor: state.fillColor,
             strokeWidth: state.strokeWidth,
-            fontSize: 14.0,
-            fontName: "Helvetica"
+            fontSize: state.fontSize,
+            fontName: Self.defaultFontName,
+            blurType: state.blurType
         )
+    }
+
+    // MARK: - Text field editing
+
+    private func showTextField(at viewPoint: CGPoint, imagePoint: CGPoint) {
+        textInsertionPoint = imagePoint
+
+        let scale = displayScale
+        let fontSize = state.fontSize * scale
+
+        let textField = NSTextField()
+        textField.isEditable = true
+        textField.isBordered = false
+        textField.drawsBackground = false
+        textField.focusRingType = .none
+        let properties = currentProperties()
+        textField.font = NSFont(name: properties.fontName, size: fontSize)
+            ?? NSFont.systemFont(ofSize: fontSize)
+        textField.textColor = NSColor(state.strokeColor)
+        textField.placeholderString = "Type here"
+        textField.cell?.wraps = false
+        textField.cell?.isScrollable = true
+        textField.sizeToFit()
+        textField.frame = NSRect(
+            x: viewPoint.x,
+            y: viewPoint.y,
+            width: max(100 * scale, bounds.width - viewPoint.x - 8),
+            height: fontSize + 8
+        )
+        textField.target = self
+        textField.action = #selector(textFieldAction(_:))
+
+        addSubview(textField)
+        window?.makeFirstResponder(textField)
+        activeTextField = textField
+    }
+
+    @objc private func textFieldAction(_ sender: NSTextField) {
+        commitActiveTextField()
+    }
+
+    private func commitActiveTextField() {
+        guard let textField = activeTextField,
+              let imagePoint = textInsertionPoint else { return }
+
+        let text = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        textField.removeFromSuperview()
+        activeTextField = nil
+        textInsertionPoint = nil
+
+        guard !text.isEmpty else { return }
+
+        let properties = currentProperties()
+        let item = AnnotationFactory.makeTextAnnotation(
+            at: imagePoint,
+            text: text,
+            properties: properties
+        )
+        state.addAnnotation(item)
     }
 
     // MARK: - Mouse events
@@ -179,6 +260,25 @@ final class AnnotationCanvasNSView: NSView {
     override func mouseDown(with event: NSEvent) {
         let viewPoint = convert(event.locationInWindow, from: nil)
         let imagePoint = displayToImage(viewPoint)
+
+        switch state.selectedTool {
+        case .text:
+            commitActiveTextField()
+            showTextField(at: viewPoint, imagePoint: imagePoint)
+            return
+        case .counter:
+            commitActiveTextField()
+            let properties = currentProperties()
+            let item = AnnotationFactory.makeCounterAnnotation(
+                at: imagePoint,
+                number: state.nextCounterNumber,
+                properties: properties
+            )
+            state.addAnnotation(item)
+            return
+        default:
+            break
+        }
 
         guard supportedDrawingTool else { return }
 
@@ -236,7 +336,10 @@ final class AnnotationCanvasNSView: NSView {
                 return
             }
 
-            if let item = AnnotationFactory.makeAnnotation(
+            if state.selectedTool == .crop {
+                let rect = AnnotationFactory.normalizedRect(from: start, to: end)
+                state.applyCrop(rect: rect)
+            } else if let item = AnnotationFactory.makeAnnotation(
                 tool: state.selectedTool,
                 from: start,
                 to: end,
@@ -250,9 +353,20 @@ final class AnnotationCanvasNSView: NSView {
         }
     }
 
+    override func keyDown(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == "\u{1B}", activeTextField != nil {
+            activeTextField?.removeFromSuperview()
+            activeTextField = nil
+            textInsertionPoint = nil
+            return
+        }
+        super.keyDown(with: event)
+    }
+
     private var supportedDrawingTool: Bool {
         switch state.selectedTool {
-        case .rectangle, .filledRectangle, .ellipse, .line, .arrow, .pencil, .highlighter:
+        case .rectangle, .filledRectangle, .ellipse, .line, .arrow, .pencil, .highlighter,
+             .blur, .crop:
             true
         default:
             false

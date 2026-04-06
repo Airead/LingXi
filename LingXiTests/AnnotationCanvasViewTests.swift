@@ -274,4 +274,67 @@ struct AnnotationFactoryTests {
         )
         #expect(item == nil)
     }
+
+    // MARK: - Text annotation factory
+
+    @Test("creates text annotation at position")
+    func textAnnotation() {
+        let position = CGPoint(x: 20, y: 30)
+        let item = AnnotationFactory.makeTextAnnotation(
+            at: position,
+            text: "Hello",
+            properties: makeProperties()
+        )
+        if case .text(let t) = item.type {
+            #expect(t == "Hello")
+        } else {
+            Issue.record("Expected text type")
+        }
+        #expect(item.bounds.origin == position)
+        #expect(item.bounds.width > 0)
+        #expect(item.bounds.height > 0)
+    }
+
+    // MARK: - Blur annotation factory
+
+    @Test("creates blur annotation with blur type")
+    func blurAnnotation() {
+        let props = AnnotationProperties(
+            strokeColor: .red, fillColor: .clear, strokeWidth: 2.0,
+            fontSize: 14.0, fontName: "Helvetica", blurType: .gaussian
+        )
+        let item = AnnotationFactory.makeAnnotation(
+            tool: .blur,
+            from: CGPoint(x: 10, y: 20),
+            to: CGPoint(x: 60, y: 70),
+            properties: props
+        )
+        #expect(item != nil)
+        if case .blur(let type) = item?.type {
+            #expect(type == .gaussian)
+        } else {
+            Issue.record("Expected blur type")
+        }
+        #expect(item?.bounds == CGRect(x: 10, y: 20, width: 50, height: 50))
+    }
+
+    @Test("creates counter annotation centered at position")
+    func counterAnnotation() {
+        let position = CGPoint(x: 50, y: 50)
+        let item = AnnotationFactory.makeCounterAnnotation(
+            at: position,
+            number: 3,
+            properties: makeProperties()
+        )
+        if case .counter(let n) = item.type {
+            #expect(n == 3)
+        } else {
+            Issue.record("Expected counter type")
+        }
+        // Bounds should be centered on the position
+        let tolerance: CGFloat = 0.01
+        #expect(abs(item.bounds.midX - position.x) < tolerance)
+        #expect(abs(item.bounds.midY - position.y) < tolerance)
+        #expect(item.bounds.width > 0)
+    }
 }

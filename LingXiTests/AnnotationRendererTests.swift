@@ -288,13 +288,30 @@ struct AnnotationRendererTests {
         #expect(away.a == 0, "Point away from highlight should be transparent")
     }
 
-    // MARK: - Unsupported type is a no-op
+    // MARK: - Text
 
-    @Test("unsupported annotation type does not crash")
-    func unsupportedType() {
+    @Test("renders text annotation")
+    func textAnnotation() {
         let context = makeContext()
         let item = AnnotationItem(
-            type: .text("hello"),
+            type: .text("Hello"),
+            bounds: CGRect(x: 10, y: 10, width: 50, height: 20),
+            properties: makeProperties(strokeColor: .red, strokeWidth: 1.0)
+        )
+
+        let renderer = AnnotationRenderer(context: context)
+        renderer.render([item])
+
+        // Text area should have painted pixels
+        let textArea = pixelColor(in: context, x: 15, y: 18)
+        #expect(textArea.a > 0, "Text area should be painted")
+    }
+
+    @Test("empty text does not render")
+    func emptyText() {
+        let context = makeContext()
+        let item = AnnotationItem(
+            type: .text(""),
             bounds: CGRect(x: 10, y: 10, width: 50, height: 20),
             properties: makeProperties()
         )
@@ -302,8 +319,85 @@ struct AnnotationRendererTests {
         let renderer = AnnotationRenderer(context: context)
         renderer.render([item])
 
-        // Just verifying no crash
-        let pixel = pixelColor(in: context, x: 0, y: 0)
-        #expect(pixel.a == 0)
+        let pixel = pixelColor(in: context, x: 15, y: 15)
+        #expect(pixel.a == 0, "Empty text should not render")
+    }
+
+    // MARK: - Counter
+
+    @Test("renders counter with filled circle and number")
+    func counterAnnotation() {
+        let context = makeContext()
+        let item = AnnotationItem(
+            type: .counter(1),
+            bounds: CGRect(x: 30, y: 30, width: 30, height: 30),
+            properties: makeProperties(strokeColor: .red, strokeWidth: 1.0)
+        )
+
+        let renderer = AnnotationRenderer(context: context)
+        renderer.render([item])
+
+        // Center of the counter circle should be painted
+        let center = pixelColor(in: context, x: 45, y: 45)
+        #expect(center.a > 0, "Counter center should be painted")
+
+        // Well outside should be empty
+        let outside = pixelColor(in: context, x: 5, y: 5)
+        #expect(outside.a == 0, "Outside counter should be transparent")
+    }
+
+    // MARK: - Blur
+
+    @Test("renders blur annotation when sourceImage is provided")
+    func blurWithSourceImage() {
+        let context = makeContext()
+        // Create a source image with a solid red fill
+        let sourceContext = CGContext(
+            data: nil,
+            width: Self.canvasWidth,
+            height: Self.canvasHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: Self.canvasWidth * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        sourceContext.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        sourceContext.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        let sourceImage = sourceContext.makeImage()!
+        let blurManager = BlurCacheManager()
+
+        let item = AnnotationItem(
+            type: .blur(.pixelate),
+            bounds: CGRect(x: 20, y: 20, width: 40, height: 40),
+            properties: makeProperties()
+        )
+
+        let renderer = AnnotationRenderer(
+            context: context,
+            sourceImage: sourceImage,
+            blurCacheManager: blurManager
+        )
+        renderer.render([item])
+
+        // The blur region should have painted pixels
+        let center = pixelColor(in: context, x: 40, y: 40)
+        #expect(center.a > 0, "Blur region should be painted")
+    }
+
+    @Test("blur without sourceImage is a no-op")
+    func blurWithoutSourceImage() {
+        let context = makeContext()
+        let item = AnnotationItem(
+            type: .blur(.pixelate),
+            bounds: CGRect(x: 10, y: 10, width: 50, height: 50),
+            properties: makeProperties()
+        )
+
+        let renderer = AnnotationRenderer(context: context)
+        renderer.render([item])
+
+        // Should not crash, and nothing rendered
+        let pixel = pixelColor(in: context, x: 30, y: 30)
+        #expect(pixel.a == 0, "Blur without source should not render")
     }
 }

@@ -237,6 +237,27 @@ struct AnnotationStateTests {
         #expect(state.annotations.first?.bounds == CGRect(x: 0, y: 0, width: 50, height: 50))
     }
 
+    // MARK: - Crop
+
+    @Test("applyCrop changes source image size and clears annotations")
+    func applyCrop() {
+        let image = NSImage(size: NSSize(width: 200, height: 200))
+        image.lockFocus()
+        NSColor.red.setFill()
+        NSRect(x: 0, y: 0, width: 200, height: 200).fill()
+        image.unlockFocus()
+        let state = AnnotationState(sourceImage: image)
+        state.addAnnotation(makeItem())
+
+        state.applyCrop(rect: CGRect(x: 50, y: 50, width: 100, height: 100))
+
+        #expect(state.annotations.isEmpty, "Crop should clear annotations")
+        #expect(state.sourceImage.size.width == 100, "Cropped width should be 100")
+        #expect(state.sourceImage.size.height == 100, "Cropped height should be 100")
+        #expect(!state.canUndo, "Crop should clear undo stack")
+        #expect(!state.canRedo, "Crop should clear redo stack")
+    }
+
     // MARK: - AnnotationTool
 
     @Test("all tools have unique shortcut keys")

@@ -5,9 +5,23 @@
 
 import SwiftUI
 
-enum BlurType: Equatable {
+enum BlurType: Equatable, Hashable {
     case pixelate
     case gaussian
+
+    var label: String {
+        switch self {
+        case .pixelate: "Mosaic"
+        case .gaussian: "Gaussian"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .pixelate: "squareshape.split.3x3"
+        case .gaussian: "aqi.medium"
+        }
+    }
 }
 
 enum AnnotationType: Equatable {
@@ -29,6 +43,15 @@ struct AnnotationProperties: Equatable {
     var strokeWidth: CGFloat
     var fontSize: CGFloat
     var fontName: String
+    var blurType: BlurType = .pixelate
+
+    nonisolated func textFont() -> NSFont {
+        NSFont(name: fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
+    }
+
+    nonisolated func textAttributes() -> [NSAttributedString.Key: Any] {
+        [.font: textFont(), .foregroundColor: NSColor(strokeColor)]
+    }
 }
 
 struct AnnotationItem: Identifiable, Equatable {

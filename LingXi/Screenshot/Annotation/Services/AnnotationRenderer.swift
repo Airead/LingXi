@@ -8,9 +8,15 @@ import SwiftUI
 
 nonisolated struct AnnotationRenderer {
     private let context: CGContext
+    private let nsContext: NSGraphicsContext
+    private let sourceImage: CGImage?
+    private let blurCacheManager: BlurCacheManager?
 
-    init(context: CGContext) {
+    init(context: CGContext, sourceImage: CGImage? = nil, blurCacheManager: BlurCacheManager? = nil) {
         self.context = context
+        self.nsContext = NSGraphicsContext(cgContext: context, flipped: true)
+        self.sourceImage = sourceImage
+        self.blurCacheManager = blurCacheManager
     }
 
     func render(_ items: [AnnotationItem]) {
@@ -37,8 +43,12 @@ nonisolated struct AnnotationRenderer {
             renderPath(points, properties: item.properties)
         case .highlight(let points):
             renderHighlight(points, properties: item.properties)
-        default:
-            break
+        case .text(let text):
+            renderText(text, bounds: item.bounds, properties: item.properties)
+        case .counter(let number):
+            renderCounter(number, bounds: item.bounds, properties: item.properties)
+        case .blur(let blurType):
+            renderBlur(blurType, bounds: item.bounds)
         }
     }
 
@@ -95,7 +105,7 @@ nonisolated struct AnnotationRenderer {
             y: end.y - headLength * uy
         )
 
-        // Build the filled shape: start(thin) → headBase(medium) → wing(wide) → tip → wing → headBase → start
+        // Build the filled shape: start(thin) -> headBase(medium) -> wing(wide) -> tip -> wing -> headBase -> start
         let tailL = CGPoint(x: start.x + px * tailHalfWidth, y: start.y + py * tailHalfWidth)
         let tailR = CGPoint(x: start.x - px * tailHalfWidth, y: start.y - py * tailHalfWidth)
         let bodyL = CGPoint(x: headBase.x + px * bodyHalfWidth, y: headBase.y + py * bodyHalfWidth)
@@ -143,6 +153,78 @@ nonisolated struct AnnotationRenderer {
             context.addLine(to: points[i])
         }
         context.strokePath()
+    }
+
+    // MARK: - Text
+
+    private func renderText(_ text: String, bounds: CGRect, properties: AnnotationProperties) {
+        guard !text.isEmpty else { return }
+        drawAttributedString(NSAttributedString(string: text, attributes: properties.textAttributes()), at: bounds.origin)
+    }
+
+    // MARK: - Counter
+
+    private func renderCounter(_ number: Int, bounds: CGRect, properties: AnnotationProperties) {
+        context.setFillColor(cgColor(from: properties.strokeColor))
+        context.fillEllipse(in: bounds)
+
+        let font = NSFont.monospacedSystemFont(ofSize: bounds.width * 0.5, weight: .bold)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+        ]
+        let attrString = NSAttributedString(string: "\(number)", attributes: attributes)
+        let textSize = attrString.size()
+        let textOrigin = CGPoint(
+            x: bounds.midX - textSize.width / 2,
+            y: bounds.midY - textSize.height / 2
+        )
+        drawAttributedString(attrString, at: textOrigin)
+    }
+
+    private func drawAttributedString(_ attrString: NSAttributedString, at point: CGPoint) {
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsContext
+        attrString.draw(at: point)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    // MARK: - Blur
+
+    private func renderBlur(_ blurType: BlurType, bounds: CGRect) {
+        guard let sourceImage, let blurCacheManager else { return }
+        let rect = bounds.integral
+        guard rect.width > 0, rect.height > 0 else { return }
+
+        let imageSize = CGSize(width: sourceImage.width, height: sourceImage.height)
+        let cgRect = rect.verticallyFlipped(imageHeight: imageSize.height)
+
+        guard let blurred = blurCacheManager.blurredImage(
+            source: sourceImage,
+            rect: cgRect,
+            blurType: blurType
+        ) else { return }
+
+        context.saveGState()
+        context.translateBy(x: rect.origin.x, y: rect.origin.y + rect.height)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(blurred, in: CGRect(origin: .zero, size: rect.size))
+        context.restoreGState()
+    }
+
+    // MARK: - Crop overlay
+
+    func renderCropOverlay(rect: CGRect, imageSize: CGSize) {
+        context.setFillColor(CGColor(gray: 0, alpha: 0.5))
+
+        context.fill(CGRect(x: 0, y: 0, width: imageSize.width, height: rect.minY))
+        context.fill(CGRect(x: 0, y: rect.maxY, width: imageSize.width, height: imageSize.height - rect.maxY))
+        context.fill(CGRect(x: 0, y: rect.minY, width: rect.minX, height: rect.height))
+        context.fill(CGRect(x: rect.maxX, y: rect.minY, width: imageSize.width - rect.maxX, height: rect.height))
+
+        context.setStrokeColor(CGColor.white)
+        context.setLineWidth(1.0)
+        context.stroke(rect)
     }
 
     // MARK: - Color conversion

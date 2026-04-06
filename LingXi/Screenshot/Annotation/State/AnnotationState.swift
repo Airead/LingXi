@@ -20,6 +20,7 @@ class AnnotationState {
     var strokeColor: Color = .red
     var fillColor: Color = .clear
     var strokeWidth: CGFloat = 3.0
+    var fontSize: CGFloat = 16.0
     var blurType: BlurType = .pixelate
 
     // MARK: - Annotations
@@ -32,8 +33,8 @@ class AnnotationState {
 
     private static let maxUndoLevels = 50
 
-    private(set) var undoStack: [[AnnotationItem]] = []
-    private(set) var redoStack: [[AnnotationItem]] = []
+    private var undoStack: [[AnnotationItem]] = []
+    private var redoStack: [[AnnotationItem]] = []
 
     // MARK: - Drawing state
 
@@ -113,5 +114,28 @@ class AnnotationState {
         guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
         saveState()
         update(&annotations[index])
+    }
+
+    // MARK: - Crop
+
+    func applyCrop(rect: CGRect) {
+        guard let cgImage = sourceImage.cgImage(
+            forProposedRect: nil, context: nil, hints: nil
+        ) else { return }
+
+        let cgRect = rect.verticallyFlipped(
+            imageHeight: CGFloat(cgImage.height)
+        ).integral
+
+        guard let cropped = cgImage.cropping(to: cgRect) else { return }
+
+        sourceImage = NSImage(
+            cgImage: cropped,
+            size: NSSize(width: cropped.width, height: cropped.height)
+        )
+        annotations.removeAll()
+        undoStack.removeAll()
+        redoStack.removeAll()
+        selectedAnnotationId = nil
     }
 }
