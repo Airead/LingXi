@@ -4,7 +4,6 @@
 //
 
 import AppKit
-import UniformTypeIdentifiers
 
 @MainActor
 final class ScreenshotManager {
@@ -12,6 +11,7 @@ final class ScreenshotManager {
 
     private let captureService = ScreenCaptureService.shared
     private let regionController = RegionSelectionController.shared
+    private var annotationWindowControllers: [AnnotationWindowController] = []
 
     private init() {}
 
@@ -61,14 +61,17 @@ final class ScreenshotManager {
         }
 
         let service = captureService
-        Task.detached {
-            if let cropped = service.cropImage(result.image, to: result.region, screenFrame: result.screenFrame, scaleFactor: result.scaleFactor),
-               let pngData = ScreenshotManager.pngData(from: cropped) {
-                await MainActor.run {
-                    service.copyToClipboard(pngData: pngData)
-                }
-            }
-        }
+        let cropped = await Task.detached {
+            service.cropImage(result.image, to: result.region, screenFrame: result.screenFrame, scaleFactor: result.scaleFactor)
+        }.value
+
+        guard let croppedImage = cropped else { return }
+
+        let nsImage = NSImage(cgImage: croppedImage, size: NSSize(
+            width: CGFloat(croppedImage.width) / result.scaleFactor,
+            height: CGFloat(croppedImage.height) / result.scaleFactor
+        ))
+        openAnnotationEditor(with: nsImage)
     }
 
     @concurrent
@@ -119,6 +122,16 @@ final class ScreenshotManager {
         }
     }
 
+    // MARK: - Annotation editor
+
+    private func openAnnotationEditor(with image: NSImage) {
+        let controller = AnnotationWindowController(image: image) { [weak self] controller in
+            self?.annotationWindowControllers.removeAll { $0 === controller }
+        }
+        annotationWindowControllers.append(controller)
+        controller.showWindow()
+    }
+
     // MARK: - Window management
 
     private func hideAppWindows() {
@@ -127,14 +140,5 @@ final class ScreenshotManager {
         }
     }
 
-    // MARK: - Image conversion
-
-    nonisolated static func pngData(from image: CGImage) -> Data? {
-        let data = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, UTType.png.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(dest, image, nil)
-        guard CGImageDestinationFinalize(dest) else { return nil }
-        return data as Data
-    }
 }
 
