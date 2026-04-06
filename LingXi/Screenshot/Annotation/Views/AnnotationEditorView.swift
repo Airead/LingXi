@@ -10,7 +10,7 @@ struct AnnotationEditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbarPlaceholder
+            toolbar
             Divider()
             imageCanvas
             Divider()
@@ -21,20 +21,12 @@ struct AnnotationEditorView: View {
 
     // MARK: - Subviews
 
-    private var toolbarPlaceholder: some View {
-        HStack {
-            Text("Toolbar")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(height: 40)
-        .frame(maxWidth: .infinity)
+    private var toolbar: some View {
+        AnnotationToolbar(state: state)
     }
 
     private var imageCanvas: some View {
-        Image(nsImage: state.sourceImage)
-            .resizable()
-            .aspectRatio(contentMode: .fit)
+        AnnotationCanvasView(state: state)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
