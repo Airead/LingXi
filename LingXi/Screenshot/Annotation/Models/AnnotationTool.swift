@@ -53,6 +53,15 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         }
     }
 
+    var isPathBased: Bool {
+        switch self {
+        case .pencil, .highlighter:
+            true
+        default:
+            false
+        }
+    }
+
     var displayName: String {
         switch self {
         case .selection: "Selection"

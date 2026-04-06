@@ -40,12 +40,15 @@ final class AnnotationCanvasNSView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 
+    private static let minimumPointDistance: CGFloat = 2.0
+
     private func startObservation() {
         withObservationTracking {
             _ = self.state.annotations
             _ = self.state.isDrawing
             _ = self.state.drawingStartPoint
             _ = self.state.drawingEndPoint
+            _ = self.state.currentPoints
             _ = self.state.selectedTool
             _ = self.state.sourceImage
             _ = self.state.strokeColor
@@ -133,19 +136,31 @@ final class AnnotationCanvasNSView: NSView {
     }
 
     private func drawCurrentStroke(in context: CGContext) {
-        guard state.isDrawing,
-              let start = state.drawingStartPoint,
-              let end = state.drawingEndPoint else { return }
+        guard state.isDrawing else { return }
 
         let properties = currentProperties()
-        if let previewItem = AnnotationFactory.makeAnnotation(
-            tool: state.selectedTool,
-            from: start,
-            to: end,
-            properties: properties
-        ) {
-            let renderer = AnnotationRenderer(context: context)
-            renderer.render([previewItem])
+        let renderer = AnnotationRenderer(context: context)
+
+        if state.selectedTool.isPathBased {
+            // Path-based preview (pencil / highlighter)
+            if let previewItem = AnnotationFactory.makePathAnnotation(
+                tool: state.selectedTool,
+                points: state.currentPoints,
+                properties: properties
+            ) {
+                renderer.render([previewItem])
+            }
+        } else if let start = state.drawingStartPoint,
+                  let end = state.drawingEndPoint {
+            // Two-point preview (rectangle, ellipse, line, arrow)
+            if let previewItem = AnnotationFactory.makeAnnotation(
+                tool: state.selectedTool,
+                from: start,
+                to: end,
+                properties: properties
+            ) {
+                renderer.render([previewItem])
+            }
         }
     }
 
@@ -168,48 +183,76 @@ final class AnnotationCanvasNSView: NSView {
         guard supportedDrawingTool else { return }
 
         state.isDrawing = true
-        state.drawingStartPoint = imagePoint
-        state.drawingEndPoint = imagePoint
+
+        if state.selectedTool.isPathBased {
+            state.currentPoints = [imagePoint]
+        } else {
+            state.drawingStartPoint = imagePoint
+            state.drawingEndPoint = imagePoint
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard state.isDrawing else { return }
         let viewPoint = convert(event.locationInWindow, from: nil)
-        state.drawingEndPoint = displayToImage(viewPoint)
+        let imagePoint = displayToImage(viewPoint)
+
+        if state.selectedTool.isPathBased {
+            // Skip points too close to the last one to limit array growth
+            if let last = state.currentPoints.last,
+               hypot(imagePoint.x - last.x, imagePoint.y - last.y) < Self.minimumPointDistance {
+                return
+            }
+            state.currentPoints.append(imagePoint)
+        } else {
+            state.drawingEndPoint = imagePoint
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard state.isDrawing,
-              let start = state.drawingStartPoint,
-              let end = state.drawingEndPoint else { return }
+        guard state.isDrawing else { return }
 
         state.isDrawing = false
+        let properties = currentProperties()
 
-        let minDragDistance: CGFloat = 2.0
-        let distance = hypot(end.x - start.x, end.y - start.y)
-        guard distance >= minDragDistance else {
+        if state.selectedTool.isPathBased {
+            if let item = AnnotationFactory.makePathAnnotation(
+                tool: state.selectedTool,
+                points: state.currentPoints,
+                properties: properties
+            ) {
+                state.addAnnotation(item)
+            }
+            state.currentPoints.removeAll()
+        } else {
+            guard let start = state.drawingStartPoint,
+                  let end = state.drawingEndPoint else { return }
+
+            let minDragDistance = Self.minimumPointDistance
+            let distance = hypot(end.x - start.x, end.y - start.y)
+            guard distance >= minDragDistance else {
+                state.drawingStartPoint = nil
+                state.drawingEndPoint = nil
+                return
+            }
+
+            if let item = AnnotationFactory.makeAnnotation(
+                tool: state.selectedTool,
+                from: start,
+                to: end,
+                properties: properties
+            ) {
+                state.addAnnotation(item)
+            }
+
             state.drawingStartPoint = nil
             state.drawingEndPoint = nil
-            return
         }
-
-        let properties = currentProperties()
-        if let item = AnnotationFactory.makeAnnotation(
-            tool: state.selectedTool,
-            from: start,
-            to: end,
-            properties: properties
-        ) {
-            state.addAnnotation(item)
-        }
-
-        state.drawingStartPoint = nil
-        state.drawingEndPoint = nil
     }
 
     private var supportedDrawingTool: Bool {
         switch state.selectedTool {
-        case .rectangle, .filledRectangle, .ellipse, .line:
+        case .rectangle, .filledRectangle, .ellipse, .line, .arrow, .pencil, .highlighter:
             true
         default:
             false

@@ -28,6 +28,8 @@ enum AnnotationFactory {
             type = .filledRectangle(rect)
         case .ellipse:
             type = .ellipse(rect)
+        case .arrow:
+            type = .arrow(start: startPoint, end: endPoint)
         case .line:
             type = .line(start: startPoint, end: endPoint)
         default:
@@ -35,5 +37,33 @@ enum AnnotationFactory {
         }
 
         return AnnotationItem(type: type, bounds: rect, properties: properties)
+    }
+
+    static func makePathAnnotation(
+        tool: AnnotationTool,
+        points: [CGPoint],
+        properties: AnnotationProperties
+    ) -> AnnotationItem? {
+        guard points.count >= 2 else { return nil }
+
+        var minX = points[0].x, maxX = minX
+        var minY = points[0].y, maxY = minY
+        for p in points.dropFirst() {
+            minX = min(minX, p.x); maxX = max(maxX, p.x)
+            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        }
+        let bounds = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+
+        let type: AnnotationType
+        switch tool {
+        case .pencil:
+            type = .path(points)
+        case .highlighter:
+            type = .highlight(points)
+        default:
+            return nil
+        }
+
+        return AnnotationItem(type: type, bounds: bounds, properties: properties)
     }
 }

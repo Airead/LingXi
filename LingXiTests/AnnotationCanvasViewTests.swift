@@ -173,6 +173,25 @@ struct AnnotationFactoryTests {
         }
     }
 
+    @Test("creates arrow preserving start and end points")
+    func arrow() {
+        let start = CGPoint(x: 10, y: 20)
+        let end = CGPoint(x: 90, y: 80)
+        let item = AnnotationFactory.makeAnnotation(
+            tool: .arrow,
+            from: start,
+            to: end,
+            properties: makeProperties()
+        )
+        #expect(item != nil)
+        if case .arrow(let s, let e) = item?.type {
+            #expect(s == start)
+            #expect(e == end)
+        } else {
+            Issue.record("Expected arrow type")
+        }
+    }
+
     @Test("unsupported tool returns nil")
     func unsupportedTool() {
         let item = AnnotationFactory.makeAnnotation(
@@ -190,7 +209,7 @@ struct AnnotationFactoryTests {
         let end = CGPoint(x: 10, y: 50)
         let expectedBounds = CGRect(x: 10, y: 10, width: 20, height: 40)
 
-        for tool in [AnnotationTool.rectangle, .filledRectangle, .ellipse, .line] {
+        for tool in [AnnotationTool.rectangle, .filledRectangle, .ellipse, .line, .arrow] {
             let item = AnnotationFactory.makeAnnotation(
                 tool: tool,
                 from: start,
@@ -199,5 +218,60 @@ struct AnnotationFactoryTests {
             )
             #expect(item?.bounds == expectedBounds, "Bounds should be normalized for \(tool)")
         }
+    }
+
+    // MARK: - Path annotation factory
+
+    @Test("creates pencil path annotation from points")
+    func pencilPath() {
+        let points = [CGPoint(x: 10, y: 20), CGPoint(x: 50, y: 60), CGPoint(x: 90, y: 30)]
+        let item = AnnotationFactory.makePathAnnotation(
+            tool: .pencil,
+            points: points,
+            properties: makeProperties()
+        )
+        #expect(item != nil)
+        if case .path(let p) = item?.type {
+            #expect(p == points)
+        } else {
+            Issue.record("Expected path type")
+        }
+        #expect(item?.bounds == CGRect(x: 10, y: 20, width: 80, height: 40))
+    }
+
+    @Test("creates highlighter annotation from points")
+    func highlighterPath() {
+        let points = [CGPoint(x: 5, y: 10), CGPoint(x: 95, y: 10)]
+        let item = AnnotationFactory.makePathAnnotation(
+            tool: .highlighter,
+            points: points,
+            properties: makeProperties()
+        )
+        #expect(item != nil)
+        if case .highlight(let p) = item?.type {
+            #expect(p == points)
+        } else {
+            Issue.record("Expected highlight type")
+        }
+    }
+
+    @Test("path annotation with fewer than 2 points returns nil")
+    func pathTooFewPoints() {
+        let item = AnnotationFactory.makePathAnnotation(
+            tool: .pencil,
+            points: [CGPoint(x: 10, y: 20)],
+            properties: makeProperties()
+        )
+        #expect(item == nil)
+    }
+
+    @Test("path annotation with unsupported tool returns nil")
+    func pathUnsupportedTool() {
+        let item = AnnotationFactory.makePathAnnotation(
+            tool: .rectangle,
+            points: [CGPoint(x: 10, y: 20), CGPoint(x: 50, y: 60)],
+            properties: makeProperties()
+        )
+        #expect(item == nil)
     }
 }

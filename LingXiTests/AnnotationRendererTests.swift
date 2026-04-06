@@ -169,6 +169,125 @@ struct AnnotationRendererTests {
         #expect(lineMid.a > 0, "Line midpoint should be painted")
     }
 
+    // MARK: - Arrow
+
+    @Test("renders arrow with shaft and arrowhead")
+    func arrow() {
+        let context = makeContext()
+        let item = AnnotationItem(
+            type: .arrow(start: CGPoint(x: 10, y: 50), end: CGPoint(x: 90, y: 50)),
+            bounds: CGRect(x: 10, y: 49, width: 80, height: 2),
+            properties: makeProperties(strokeColor: .red, strokeWidth: 2.0)
+        )
+
+        let renderer = AnnotationRenderer(context: context)
+        renderer.render([item])
+
+        // Shaft midpoint should be painted
+        let mid = pixelColor(in: context, x: 50, y: 50)
+        #expect(mid.a > 0, "Arrow shaft midpoint should be painted")
+
+        // Arrowhead tip (at end point) should be painted
+        let tip = pixelColor(in: context, x: 89, y: 50)
+        #expect(tip.a > 0, "Arrow tip area should be painted")
+
+        // Well away from the arrow should be empty
+        let away = pixelColor(in: context, x: 50, y: 10)
+        #expect(away.a == 0, "Point away from arrow should be transparent")
+    }
+
+    @Test("arrow with zero length does not crash")
+    func arrowZeroLength() {
+        let context = makeContext()
+        let item = AnnotationItem(
+            type: .arrow(start: CGPoint(x: 50, y: 50), end: CGPoint(x: 50, y: 50)),
+            bounds: CGRect(x: 50, y: 50, width: 0, height: 0),
+            properties: makeProperties(strokeColor: .red, strokeWidth: 2.0)
+        )
+
+        let renderer = AnnotationRenderer(context: context)
+        renderer.render([item])
+        // Just verifying no crash
+    }
+
+    // MARK: - Path (freehand pencil)
+
+    @Test("renders freehand path")
+    func freehandPath() {
+        let context = makeContext()
+        let points = [
+            CGPoint(x: 10, y: 50),
+            CGPoint(x: 30, y: 50),
+            CGPoint(x: 50, y: 50),
+            CGPoint(x: 70, y: 50),
+            CGPoint(x: 90, y: 50),
+        ]
+        let item = AnnotationItem(
+            type: .path(points),
+            bounds: CGRect(x: 10, y: 49, width: 80, height: 2),
+            properties: makeProperties(strokeColor: .red, strokeWidth: 3.0)
+        )
+
+        let renderer = AnnotationRenderer(context: context)
+        renderer.render([item])
+
+        // Points along the path should be painted
+        let p1 = pixelColor(in: context, x: 30, y: 50)
+        #expect(p1.a > 0, "Path point should be painted")
+
+        let p2 = pixelColor(in: context, x: 70, y: 50)
+        #expect(p2.a > 0, "Path point should be painted")
+
+        // Well away from the path should be empty
+        let away = pixelColor(in: context, x: 50, y: 10)
+        #expect(away.a == 0, "Point away from path should be transparent")
+    }
+
+    @Test("path with fewer than 2 points does not render")
+    func pathSinglePoint() {
+        let context = makeContext()
+        let item = AnnotationItem(
+            type: .path([CGPoint(x: 50, y: 50)]),
+            bounds: CGRect(x: 50, y: 50, width: 0, height: 0),
+            properties: makeProperties(strokeColor: .red, strokeWidth: 2.0)
+        )
+
+        let renderer = AnnotationRenderer(context: context)
+        renderer.render([item])
+
+        let pixel = pixelColor(in: context, x: 50, y: 50)
+        #expect(pixel.a == 0, "Single point should not render")
+    }
+
+    // MARK: - Highlighter
+
+    @Test("renders highlighter with semi-transparent wide stroke")
+    func highlighter() {
+        let context = makeContext()
+        let points = [
+            CGPoint(x: 10, y: 50),
+            CGPoint(x: 50, y: 50),
+            CGPoint(x: 90, y: 50),
+        ]
+        let item = AnnotationItem(
+            type: .highlight(points),
+            bounds: CGRect(x: 10, y: 49, width: 80, height: 2),
+            properties: makeProperties(strokeColor: .yellow, strokeWidth: 3.0)
+        )
+
+        let renderer = AnnotationRenderer(context: context)
+        renderer.render([item])
+
+        // Highlight path should be painted with semi-transparent alpha
+        let mid = pixelColor(in: context, x: 50, y: 50)
+        #expect(mid.a > 0, "Highlight midpoint should be painted")
+        #expect(mid.a < 255, "Highlight should be semi-transparent")
+
+        // Well away should be empty
+        let away = pixelColor(in: context, x: 50, y: 10)
+        #expect(away.a == 0, "Point away from highlight should be transparent")
+    }
+
     // MARK: - Unsupported type is a no-op
 
     @Test("unsupported annotation type does not crash")

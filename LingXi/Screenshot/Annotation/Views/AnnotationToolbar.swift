@@ -12,7 +12,7 @@ struct AnnotationToolbar: View {
     @State private var showStrokeWidthPopover = false
 
     private static let enabledTools: Set<AnnotationTool> = [
-        .selection, .rectangle, .filledRectangle, .ellipse, .line,
+        .selection, .rectangle, .filledRectangle, .ellipse, .arrow, .line, .pencil, .highlighter,
     ]
 
     private static let presetColors: [Color] = [
