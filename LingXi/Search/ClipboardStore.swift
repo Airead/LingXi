@@ -1,7 +1,6 @@
 import AppKit
 import CryptoKit
 import OSLog
-import Vision
 
 nonisolated struct ClipboardItem: Sendable {
     let id: Int
@@ -489,7 +488,14 @@ actor ClipboardStore {
     }
 
     private func performOCR(itemId: Int, imageURL: URL) async {
-        let text = await Self.recognizeText(at: imageURL)
+        let text: String
+        do {
+            text = try await ScreenCaptureService.shared.recognizeText(at: imageURL)
+        } catch {
+            Self.logger.debug("OCR via XPC failed: \(error)")
+            return
+        }
+
         guard !Task.isCancelled, !text.isEmpty else { return }
 
         guard let index = cachedItems.firstIndex(where: { $0.id == itemId }) else { return }
@@ -500,22 +506,6 @@ actor ClipboardStore {
             "UPDATE clipboard_history SET ocr_text = ? WHERE id = ?",
             bindings: [.text(text), .integer(itemId)]
         )
-    }
-
-    @concurrent
-    private static func recognizeText(at url: URL) async -> String {
-        let handler = VNImageRequestHandler(url: url)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-        do {
-            try handler.perform([request])
-        } catch {
-            logger.debug("OCR failed: \(error)")
-            return ""
-        }
-        guard let results = request.results else { return "" }
-        return results.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
     private nonisolated static func prepareTransientPasteboard(

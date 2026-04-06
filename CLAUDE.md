@@ -21,9 +21,15 @@ xcodebuild test -scheme LingXi -destination 'platform=macOS' -parallel-testing-e
 
 **Avoid running multiple `xcodebuild` processes concurrently** — they compete for DerivedData and CodeSign, causing hangs or build failures. Always wait for the previous build/test to finish before starting a new one.
 
+**Never use real user data in tests.** Use isolated/mock resources instead of the real system state. For example, use a custom `NSPasteboard(name:)` instead of `.general`, use a temporary directory instead of `~/Desktop`, and use in-memory `UserDefaults` instead of `.standard`.
+
 ## Actor Pitfalls
 
 - `deinit` is nonisolated. Accessing actor-isolated stored properties from `deinit` will deadlock. Use `nonisolated(unsafe)` for properties that must be read/cancelled in `deinit` (e.g. `DispatchSource`, `Task`).
+
+## Logging
+
+Use `DebugLog.log()` for all logging in the main app. Do not use `print()`, `NSLog()`, or `OSLog` directly.
 
 ## Reference
 
