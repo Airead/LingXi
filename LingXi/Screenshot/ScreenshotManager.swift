@@ -11,14 +11,7 @@ final class ScreenshotManager {
     static let shared = ScreenshotManager()
 
     private let captureService = ScreenCaptureService.shared
-    private var regionWindows: [RegionSelectionWindow] = []
-    private var windowCaptureInfo: [ObjectIdentifier: CaptureInfo] = [:]
-
-    private struct CaptureInfo {
-        let image: CGImage
-        let scaleFactor: CGFloat
-        let screenFrame: CGRect
-    }
+    private let regionController = RegionSelectionController.shared
 
     private init() {}
 
@@ -37,15 +30,7 @@ final class ScreenshotManager {
         let pixelHeight: UInt32
     }
 
-    private struct CaptureResult: @unchecked Sendable {
-        let screenIndex: Int
-        let image: CGImage
-        let scaleFactor: CGFloat
-    }
-
     private func showRegionSelection() async {
-        dismissRegionSelection()
-
         let screens = NSScreen.screens
 
         let screenInfos: [ScreenInfo] = screens.enumerated().map { index, screen in
@@ -59,43 +44,34 @@ final class ScreenshotManager {
             )
         }
 
-        let captures: [CaptureResult] = await withTaskGroup(of: CaptureResult?.self) { group in
+        let captures: [ScreenCapture] = await withTaskGroup(of: ScreenCapture?.self) { group in
             for info in screenInfos {
                 group.addTask { await self.captureScreenImage(info: info) }
             }
-            var results: [CaptureResult] = []
+            var results: [ScreenCapture] = []
             for await result in group {
                 if let result { results.append(result) }
             }
             return results
         }
 
-        for capture in captures {
-            let screen = screens[capture.screenIndex]
-            let window = RegionSelectionWindow(screen: screen)
-            window.overlayView.delegate = self
-            window.overlayView.setBackgroundImage(capture.image, scaleFactor: capture.scaleFactor)
-            window.makeKeyAndOrderFront(nil)
-            regionWindows.append(window)
-            windowCaptureInfo[ObjectIdentifier(window)] = CaptureInfo(
-                image: capture.image,
-                scaleFactor: capture.scaleFactor,
-                screenFrame: screen.frame
-            )
+        guard let result = await regionController.startSelection(captures: captures, screens: screens) else {
+            return
         }
-    }
 
-    private func dismissRegionSelection() {
-        for window in regionWindows {
-            window.overlayView.clearBackgroundImage()
-            window.orderOut(nil)
+        let service = captureService
+        Task.detached {
+            if let cropped = service.cropImage(result.image, to: result.region, screenFrame: result.screenFrame, scaleFactor: result.scaleFactor),
+               let pngData = ScreenshotManager.pngData(from: cropped) {
+                await MainActor.run {
+                    service.copyToClipboard(pngData: pngData)
+                }
+            }
         }
-        regionWindows.removeAll()
-        windowCaptureInfo.removeAll()
     }
 
     @concurrent
-    private func captureScreenImage(info: ScreenInfo) async -> CaptureResult? {
+    private func captureScreenImage(info: ScreenInfo) async -> ScreenCapture? {
         do {
             let pngData = try await captureService.captureFullScreen(
                 displayID: info.displayID,
@@ -109,7 +85,7 @@ final class ScreenshotManager {
                       shouldInterpolate: false,
                       intent: .defaultIntent
                   ) else { return nil }
-            return CaptureResult(screenIndex: info.index, image: image, scaleFactor: info.scale)
+            return ScreenCapture(screenIndex: info.index, image: image, scaleFactor: info.scale)
         } catch {
             await DebugLog.log("[ScreenshotManager] Background capture failed: \(error)")
             return nil
@@ -152,30 +128,3 @@ final class ScreenshotManager {
     }
 }
 
-// MARK: - RegionSelectionOverlayDelegate
-
-extension ScreenshotManager: RegionSelectionOverlayDelegate {
-    func overlayDidCancel(_ overlay: RegionSelectionOverlayView) {
-        dismissRegionSelection()
-    }
-
-    func overlayDidSelectRegion(_ rect: CGRect, from overlay: RegionSelectionOverlayView) {
-        guard let window = overlay.window as? RegionSelectionWindow,
-              let info = windowCaptureInfo[ObjectIdentifier(window)] else {
-            dismissRegionSelection()
-            return
-        }
-
-        let service = captureService
-        dismissRegionSelection()
-
-        Task.detached {
-            if let cropped = service.cropImage(info.image, to: rect, screenFrame: info.screenFrame, scaleFactor: info.scaleFactor),
-               let pngData = ScreenshotManager.pngData(from: cropped) {
-                await MainActor.run {
-                    service.copyToClipboard(pngData: pngData)
-                }
-            }
-        }
-    }
-}
