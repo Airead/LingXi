@@ -319,6 +319,29 @@ struct SearchRouterHasPreviewProviderTests {
         router.register(prefix: "cb", id: "clipboard", provider: StubProvider(label: "clipboard", supportsPreview: true))
         #expect(router.hasPreviewProvider(for: "hello") == false)
     }
+
+    // MARK: - Unregister
+
+    @Test func unregisterRemovesProvider() async {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.register(prefix: "f", id: "file", provider: StubProvider(label: "file"))
+
+        let before = await router.search(rawQuery: "f test")
+        #expect(before.contains { $0.name == "file" })
+
+        router.unregister(id: "file")
+
+        let after = await router.search(rawQuery: "f test")
+        #expect(!after.contains { $0.name == "file" })
+        // Falls back to default
+        #expect(after.contains { $0.name == "default" })
+    }
+
+    @Test func unregisterNonexistentIdIsNoOp() {
+        let router = SearchRouter(defaultProvider: StubProvider(label: "default"))
+        router.unregister(id: "nonexistent")
+        // No crash
+    }
 }
 
 // MARK: - Test callback collector

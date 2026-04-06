@@ -3,6 +3,8 @@ import Foundation
 /// A SearchProvider backed by a Lua plugin script.
 /// Each instance owns its own LuaState; the actor serializes access.
 actor LuaSearchProvider: SearchProvider {
+    nonisolated static let idPrefix = "lua:"
+
     nonisolated let name: String
     nonisolated let pluginDir: URL
 
@@ -38,7 +40,7 @@ actor LuaSearchProvider: SearchProvider {
             try state.pcall(nargs: 1, nresults: 1)
         } catch {
             DebugLog.log("[LuaPlugin:\(name)] search error: \(error)")
-            return []
+            return [errorResult("\(error)")]
         }
 
         defer { state.pop() }
@@ -54,6 +56,18 @@ actor LuaSearchProvider: SearchProvider {
         return results
     }
 
+    private func errorResult(_ message: String) -> SearchResult {
+        SearchResult(
+            itemId: "\(Self.idPrefix)\(name):error",
+            icon: nil,
+            name: "Plugin error: \(name)",
+            subtitle: message,
+            resultType: .command,
+            url: nil,
+            score: 100
+        )
+    }
+
     private func parseOneResult(at index: Int32) -> SearchResult? {
         guard state.isTable(at: index) else { return nil }
 
@@ -65,7 +79,7 @@ actor LuaSearchProvider: SearchProvider {
         let score = state.numberField("score", at: index) ?? 50.0
 
         let url: URL? = urlString.flatMap { URL(string: $0) }
-        let itemId = "lua:\(name):\(title)"
+        let itemId = "\(Self.idPrefix)\(name):\(title)"
 
         return SearchResult(
             itemId: itemId,

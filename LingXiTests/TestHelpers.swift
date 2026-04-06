@@ -50,6 +50,11 @@ func makeTestImage(width: Int, height: Int) -> CGImage {
 }
 
 @MainActor
+func emptyRouter() -> SearchRouter {
+    SearchRouter(defaultProvider: StubSearchProvider(results: []))
+}
+
+@MainActor
 func waitUntil(timeout: Int = 1000, condition: () -> Bool) async {
     let deadline = ContinuousClock.now + .milliseconds(timeout)
     while !condition() && ContinuousClock.now < deadline {

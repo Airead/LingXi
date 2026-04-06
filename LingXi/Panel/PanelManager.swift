@@ -28,6 +28,7 @@ final class PanelManager {
     private let clipboardStore: ClipboardStore
     private let snippetStore: SnippetStore
     private let commandProvider: CommandSearchProvider
+    private let pluginManager: PluginManager
     private let snippetExpander: SnippetExpander
     private let leaderKeyManager: LeaderKeyManager
     private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
@@ -62,16 +63,11 @@ final class PanelManager {
 
         self.router = router
 
-        Task.detached {
-            let plugins = PluginManager.loadAll()
-            for plugin in plugins {
-                await router.register(
-                    prefix: plugin.manifest.prefix,
-                    id: "lua:\(plugin.manifest.name)",
-                    provider: plugin.provider
-                )
-            }
-        }
+        let pluginManager = PluginManager(router: router)
+        self.pluginManager = pluginManager
+        await pluginManager.loadAll()
+        await Self.registerPluginCommands(commandProvider, pluginManager: pluginManager)
+
         self.viewModel = await SearchViewModel(router: router, database: db)
 
         viewModel.onDeleteItem = { [weak self] itemId in
@@ -378,11 +374,55 @@ final class PanelManager {
                 }
             ),
         ]
+        await Self.registerCommands(commands, on: provider)
+    }
+
+    private static func registerPluginCommands(
+        _ provider: CommandSearchProvider,
+        pluginManager: PluginManager
+    ) async {
+        let commands: [CommandEntry] = [
+            CommandEntry(
+                name: "plugin:reload",
+                title: "Reload Plugins",
+                subtitle: "Reload all Lua plugins from disk",
+                icon: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload"),
+                action: { _ in await pluginManager.reload() }
+            ),
+            CommandEntry(
+                name: "plugin:list",
+                title: "List Plugins",
+                subtitle: "Show loaded plugins and errors",
+                icon: NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List"),
+                action: { _ in
+                    let summary = pluginManager.summary
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(summary, forType: .string)
+                    DebugLog.log("[PluginManager] Plugin list copied to clipboard:\n\(summary)")
+                }
+            ),
+            CommandEntry(
+                name: "plugin:open",
+                title: "Open Plugins Folder",
+                subtitle: "Reveal plugins folder in Finder",
+                icon: NSImage(systemSymbolName: "folder", accessibilityDescription: "Folder"),
+                action: { _ in
+                    let dir = pluginManager.directory
+                    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir.path)
+                }
+            ),
+        ]
+        await Self.registerCommands(commands, on: provider)
+    }
+
+    private static func registerCommands(_ commands: [CommandEntry], on provider: CommandSearchProvider) async {
         for cmd in commands {
             do {
                 try await provider.register(cmd)
             } catch {
-                assertionFailure("Failed to register built-in command '\(cmd.name)': \(error)")
+                assertionFailure("Failed to register command '\(cmd.name)': \(error)")
             }
         }
     }

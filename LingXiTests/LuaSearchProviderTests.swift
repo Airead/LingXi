@@ -119,7 +119,7 @@ struct LuaSearchProviderTests {
         #expect(results.isEmpty)
     }
 
-    @Test func searchFunctionError() async throws {
+    @Test func searchFunctionErrorReturnsErrorResult() async throws {
         let (provider, cleanup) = try makeTempPlugin(luaCode: """
             function search(query)
                 error("something went wrong")
@@ -128,7 +128,9 @@ struct LuaSearchProviderTests {
         defer { cleanup() }
 
         let results = await provider.search(query: "test")
-        #expect(results.isEmpty)
+        #expect(results.count == 1)
+        #expect(results[0].name.contains("error"))
+        #expect(results[0].subtitle.contains("something went wrong"))
     }
 
     @Test func missingTitleSkipsResult() async throws {

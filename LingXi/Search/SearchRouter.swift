@@ -48,6 +48,11 @@ final class SearchRouter {
         entries.append(ProviderEntry(id: id ?? prefix, provider: provider, prefix: normalized))
     }
 
+    func unregister(id: String) {
+        entries.removeAll { $0.id == id }
+        disabledIds.remove(id)
+    }
+
     private static func normalizePrefix(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
