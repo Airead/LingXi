@@ -18,7 +18,7 @@ final class AnnotationWindowController: NSWindowController {
     private let onClose: (AnnotationWindowController) -> Void
 
     init(image: NSImage, onClose: @escaping (AnnotationWindowController) -> Void) {
-        DebugLog.log("[Memory] AnnotationWindowController.init")
+        DebugLog.logMemory("AnnotationWindowController.init")
         let state = AnnotationState(sourceImage: image)
         self.annotationState = state
         self.onClose = onClose
@@ -74,7 +74,7 @@ final class AnnotationWindowController: NSWindowController {
     }
 
     deinit {
-        DebugLog.log("[Memory] AnnotationWindowController.deinit")
+        DebugLog.logMemory("AnnotationWindowController.deinit")
     }
 
     // MARK: - Export actions
@@ -129,7 +129,7 @@ final class AnnotationWindowController: NSWindowController {
 
 extension AnnotationWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        DebugLog.log("[Memory] AnnotationWindowController.windowWillClose")
+        DebugLog.logMemory("AnnotationWindowController.windowWillClose")
         onClose(self)
     }
 }

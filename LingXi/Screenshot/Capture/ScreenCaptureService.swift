@@ -4,7 +4,6 @@
 //
 
 import AppKit
-import CoreImage
 import CoreMedia
 import ImageIO
 import ScreenCaptureKit
@@ -36,7 +35,6 @@ final class ScreenCaptureService {
 
     private var connection: NSXPCConnection?
     private var idleTask: Task<Void, Never>?
-    private static let ciContext = CIContext()
 
     private init() {}
 
@@ -91,6 +89,7 @@ final class ScreenCaptureService {
         guard let cgImage = Self.extractCGImage(from: sampleBuffer) else {
             throw ScreenCaptureError.captureFailed("Failed to create CGImage from sample buffer")
         }
+        await DebugLog.logMemory("captureFullScreen done (\(cgImage.width)x\(cgImage.height))")
         return cgImage
     }
 
@@ -105,8 +104,39 @@ final class ScreenCaptureService {
 
     private nonisolated static func extractCGImage(from sampleBuffer: CMSampleBuffer) -> CGImage? {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        return ciContext.createCGImage(ciImage, from: ciImage.extent)
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
+
+        // BGRA → create CGImage via CGContext, then copy pixel data to decouple from the buffer
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        guard let context = CGContext(
+            data: baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo.rawValue
+        ), let tempImage = context.makeImage() else { return nil }
+
+        // Copy into independent backing store so the CVPixelBuffer can be freed
+        guard let copyContext = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo.rawValue
+        ) else { return nil }
+        copyContext.draw(tempImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return copyContext.makeImage()
     }
 
     /// Perform OCR on an image file via XPC service.
@@ -151,7 +181,7 @@ final class ScreenCaptureService {
 
     // MARK: - Crop
 
-    /// Crop a CGImage to the specified region.
+    /// Crop a CGImage to the specified region, copying pixel data into independent memory.
     nonisolated func cropImage(
         _ image: CGImage,
         to rect: CGRect,
@@ -165,7 +195,21 @@ final class ScreenCaptureService {
             width: ceil(rect.width * scaleFactor),
             height: ceil(rect.height * scaleFactor)
         )
-        return image.cropping(to: pixelRect)
+        // cropping(to:) shares the source backing store; copy into independent memory
+        // so the full-screen source image can be freed.
+        guard let cropped = image.cropping(to: pixelRect) else { return nil }
+        let colorSpace = cropped.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil,
+            width: cropped.width,
+            height: cropped.height,
+            bitsPerComponent: cropped.bitsPerComponent,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: cropped.bitmapInfo.rawValue
+        ) else { return nil }
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height))
+        return context.makeImage()
     }
 
     // MARK: - Clipboard

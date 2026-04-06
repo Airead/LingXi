@@ -120,6 +120,7 @@ final class RegionSelectionController {
     }
 
     private func returnWindows() {
+        DebugLog.logMemory("returnWindows before (activeWindows=\(activeWindows.count), captureInfo=\(windowCaptureInfo.count))")
         for window in activeWindows {
             window.overlayView.delegate = nil
             window.overlayView.clearBackgroundImage()
@@ -129,6 +130,7 @@ final class RegionSelectionController {
         }
         activeWindows.removeAll()
         windowCaptureInfo.removeAll()
+        DebugLog.logMemory("returnWindows after")
     }
 
     // MARK: - Private

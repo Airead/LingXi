@@ -69,12 +69,12 @@ class AnnotationState {
     // MARK: - Init
 
     init(sourceImage: NSImage) {
-        DebugLog.log("[Memory] AnnotationState.init: image=\(Int(sourceImage.size.width))x\(Int(sourceImage.size.height))")
+        DebugLog.logMemory("AnnotationState.init: image=\(Int(sourceImage.size.width))x\(Int(sourceImage.size.height))")
         self.sourceImage = sourceImage
     }
 
     deinit {
-        DebugLog.log("[Memory] AnnotationState.deinit")
+        DebugLog.logMemory("AnnotationState.deinit")
     }
 
     // MARK: - Undo / Redo

@@ -46,6 +46,8 @@ final class ScreenshotManager {
             )
         }
 
+        DebugLog.logMemory("showRegionSelection start")
+
         let content: SCShareableContent
         do {
             content = try await SCShareableContent.current
@@ -65,9 +67,14 @@ final class ScreenshotManager {
             return results
         }
 
+        DebugLog.logMemory("captures done (count=\(captures.count))")
+
         guard let result = await regionController.startSelection(captures: captures, screens: screens) else {
+            DebugLog.logMemory("region selection cancelled")
             return
         }
+
+        DebugLog.logMemory("region selection done")
 
         let service = captureService
         let cropped = await Task.detached {
@@ -75,6 +82,8 @@ final class ScreenshotManager {
         }.value
 
         guard let croppedImage = cropped else { return }
+
+        DebugLog.logMemory("crop done (\(croppedImage.width)x\(croppedImage.height))")
 
         let nsImage = NSImage(cgImage: croppedImage, size: NSSize(
             width: CGFloat(croppedImage.width) / result.scaleFactor,
@@ -129,10 +138,10 @@ final class ScreenshotManager {
     // MARK: - Annotation editor
 
     private func openAnnotationEditor(with image: NSImage) {
-        DebugLog.log("[Memory] openAnnotationEditor: image=\(Int(image.size.width))x\(Int(image.size.height)), controllers.count=\(annotationWindowControllers.count)")
+        DebugLog.logMemory("openAnnotationEditor: image=\(Int(image.size.width))x\(Int(image.size.height)), controllers=\(annotationWindowControllers.count)")
         let controller = AnnotationWindowController(image: image) { [weak self] controller in
             self?.annotationWindowControllers.removeAll { $0 === controller }
-            DebugLog.log("[Memory] onClose: controllers.count=\(self?.annotationWindowControllers.count ?? -1)")
+            DebugLog.logMemory("onClose: controllers=\(self?.annotationWindowControllers.count ?? -1)")
         }
         annotationWindowControllers.append(controller)
         controller.showWindow()
