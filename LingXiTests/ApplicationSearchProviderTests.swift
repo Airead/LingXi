@@ -27,10 +27,10 @@ struct ApplicationSearchProviderTests {
             }
         }
 
-        createApp("Safari", displayName: "Safari", bundleIdentifier: "com.apple.Safari")
-        createApp("Terminal", bundleName: "Terminal", bundleIdentifier: "com.apple.Terminal")
+        createApp("Safari", displayName: "Safari", bundleIdentifier: "com.test.safari")
+        createApp("Terminal", bundleName: "Terminal", bundleIdentifier: "com.test.terminal")
         createApp("Calculator")
-        createApp("System Settings", displayName: "System Settings", bundleIdentifier: "com.apple.systempreferences")
+        createApp("System Settings", displayName: "System Settings", bundleIdentifier: "com.test.systempreferences")
         createApp("MyUniqueFilename", displayName: "Fancy App")
         createApp(".HiddenApp")
 
@@ -40,7 +40,7 @@ struct ApplicationSearchProviderTests {
             withDestinationURL: tempDir.appendingPathComponent("LinkTarget.app")
         )
 
-        return ApplicationSearchProvider(searchPaths: [tempDir.path])
+        return ApplicationSearchProvider(searchPaths: [tempDir.path], coreServicesApps: [])
     }()
 
     // MARK: - Tests
@@ -149,12 +149,64 @@ struct ApplicationSearchProviderTests {
     }
 
     @Test func findsByBundleIdentifier() async {
-        let results = await Self.provider.search(query: "com.apple.Safari")
+        let results = await Self.provider.search(query: "com.test.safari")
         #expect(results.contains { $0.name == "Safari" })
     }
 
     @Test func findsByPartialBundleIdentifier() async {
-        let results = await Self.provider.search(query: "systempreferences")
+        let results = await Self.provider.search(query: "test.systempreferences")
         #expect(results.contains { $0.name == "System Settings" })
+    }
+
+    @Test func nonRunningAppHasPathSubtitle() async {
+        // Test apps use "com.test.*" bundle IDs which never match running apps
+        let results = await Self.provider.search(query: "Safari")
+        guard let safari = results.first(where: { $0.name == "Safari" }) else {
+            Issue.record("Expected Safari in results")
+            return
+        }
+        #expect(safari.score == FuzzyMatch.prefixScore)
+        #expect(!safari.subtitle.contains("Running"))
+    }
+}
+
+// MARK: - CoreServices tests
+
+@MainActor
+@Suite(.serialized)
+struct ApplicationSearchProviderCoreServicesTests {
+    private static let provider: ApplicationSearchProvider = {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LingXiTests-AppSearch-CS")
+        let fm = FileManager.default
+
+        try? fm.removeItem(at: tempDir)
+        try! fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        // Create a fake CoreServices app
+        let csApp = tempDir.appendingPathComponent("SpecialApp.app/Contents")
+        try! fm.createDirectory(at: csApp, withIntermediateDirectories: true)
+        let plist: [String: Any] = [
+            "CFBundleDisplayName": "Special App",
+            "CFBundleIdentifier": "com.test.special",
+        ]
+        let data = try! PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try! data.write(to: csApp.appendingPathComponent("Info.plist"))
+
+        return ApplicationSearchProvider(
+            searchPaths: [],
+            coreServicesApps: [tempDir.appendingPathComponent("SpecialApp.app").path]
+        )
+    }()
+
+    @Test func findsCoreServicesApp() async {
+        let results = await Self.provider.search(query: "Special")
+        #expect(results.contains { $0.name == "Special App" })
+    }
+
+    @Test func coreServicesAppHasBundleId() async {
+        let results = await Self.provider.search(query: "Special")
+        let app = results.first { $0.name == "Special App" }
+        #expect(app?.itemId == "com.test.special")
     }
 }

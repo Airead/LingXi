@@ -115,7 +115,7 @@ final class SearchViewModel: ObservableObject {
 
         let opened: Bool
         switch selected.resultType {
-        case .application, .file:
+        case .application, .file, .systemSettings:
             opened = workspace.open(url)
         case .bookmark:
             opened = openBookmark(url: url, bundleId: selected.openWithBundleId)

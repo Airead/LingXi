@@ -57,6 +57,11 @@ struct SearchSettingsView: View {
                     hotKeyKeyCode: $settings.snippetSearchHotKeyKeyCode,
                     hotKeyModifiers: $settings.snippetSearchHotKeyModifiers
                 )
+                simpleDataSourceRow(
+                    "System Settings Search",
+                    prefix: $settings.systemSettingsSearchPrefix,
+                    enabled: $settings.systemSettingsSearchEnabled
+                )
                 Toggle("Snippet Auto-expand", isOn: $settings.snippetAutoExpandEnabled)
                 LabeledContent("Clipboard Capacity") {
                     TextField("", value: $settings.clipboardHistoryCapacity, format: .number)
@@ -68,6 +73,25 @@ struct SearchSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func simpleDataSourceRow(
+        _ title: String,
+        prefix: Binding<String>,
+        enabled: Binding<Bool>
+    ) -> some View {
+        LabeledContent {
+            HStack(spacing: 8) {
+                TextField("", text: prefix)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+                    .multilineTextAlignment(.center)
+                Toggle("", isOn: enabled)
+                    .labelsHidden()
+            }
+        } label: {
+            Text(title)
+        }
     }
 
     private func dataSourceRow(

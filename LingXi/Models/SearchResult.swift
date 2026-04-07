@@ -12,6 +12,7 @@ nonisolated enum SearchResultType: Sendable {
     case bookmark
     case clipboard
     case snippet
+    case systemSettings
 }
 
 nonisolated enum ActionModifier: Int, Hashable, Sendable {

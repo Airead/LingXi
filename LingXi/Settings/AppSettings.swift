@@ -103,6 +103,15 @@ final class AppSettings {
             guard snippetSearchPrefix != oldValue else { return }; save(.snippetSearchPrefix, value: snippetSearchPrefix)
         }
     }
+    var systemSettingsSearchEnabled: Bool {
+        didSet { guard systemSettingsSearchEnabled != oldValue else { return }; save(.systemSettingsSearchEnabled, value: systemSettingsSearchEnabled) }
+    }
+    var systemSettingsSearchPrefix: String {
+        didSet {
+            if systemSettingsSearchPrefix.trimmingCharacters(in: .whitespaces).isEmpty { systemSettingsSearchPrefix = oldValue; return }
+            guard systemSettingsSearchPrefix != oldValue else { return }; save(.systemSettingsSearchPrefix, value: systemSettingsSearchPrefix)
+        }
+    }
     var commandSearchEnabled: Bool {
         didSet { guard commandSearchEnabled != oldValue else { return }; save(.commandSearchEnabled, value: commandSearchEnabled) }
     }
@@ -216,6 +225,8 @@ final class AppSettings {
         case snippetSearchPrefix = "io.github.airead.lingxi.snippetSearchPrefix"
         case snippetSearchHotKeyKeyCode = "io.github.airead.lingxi.snippetSearchHotKeyKeyCode"
         case snippetSearchHotKeyModifiers = "io.github.airead.lingxi.snippetSearchHotKeyModifiers"
+        case systemSettingsSearchEnabled = "io.github.airead.lingxi.systemSettingsSearchEnabled"
+        case systemSettingsSearchPrefix = "io.github.airead.lingxi.systemSettingsSearchPrefix"
         case commandSearchEnabled = "io.github.airead.lingxi.commandSearchEnabled"
         case commandSearchPrefix = "io.github.airead.lingxi.commandSearchPrefix"
         case leaderKeyEnabled = "io.github.airead.lingxi.leaderKeyEnabled"
@@ -266,6 +277,9 @@ final class AppSettings {
         snippetSearchHotKeyKeyCode = Self.load(defaults, .snippetSearchHotKeyKeyCode) ?? 0
         snippetSearchHotKeyModifiers = Self.load(defaults, .snippetSearchHotKeyModifiers) ?? 0
 
+        systemSettingsSearchEnabled = Self.load(defaults, .systemSettingsSearchEnabled) ?? true
+        systemSettingsSearchPrefix = Self.load(defaults, .systemSettingsSearchPrefix) ?? "ss"
+
         commandSearchEnabled = Self.load(defaults, .commandSearchEnabled) ?? true
         commandSearchPrefix = Self.load(defaults, .commandSearchPrefix) ?? ">"
 
@@ -300,7 +314,7 @@ final class AppSettings {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            print("Failed to update launch at login: \(error)")
+            DebugLog.log("Failed to update launch at login: \(error)")
         }
     }
 

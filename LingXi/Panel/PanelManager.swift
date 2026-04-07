@@ -58,6 +58,11 @@ final class PanelManager {
         self.leaderKeyManager = LeaderKeyManager()
         router.register(prefix: settings.snippetSearchPrefix, id: "snippet", provider: SnippetSearchProvider(store: snippetStore))
 
+        let systemSettingsProvider = SystemSettingsProvider()
+        router.register(prefix: settings.systemSettingsSearchPrefix, id: "system-settings", provider: systemSettingsProvider)
+        let systemSettingsMixed = SystemSettingsMixedProvider(source: systemSettingsProvider)
+        router.registerDefault(id: "system-settings-mixed", provider: systemSettingsMixed)
+
         let commandProvider = CommandSearchProvider()
         self.commandProvider = commandProvider
         await Self.registerBuiltinCommands(commandProvider)
@@ -155,6 +160,9 @@ final class PanelManager {
         router.updatePrefix(settings.clipboardSearchPrefix, forId: "clipboard")
         router.setEnabled(settings.snippetSearchEnabled, forId: "snippet")
         router.updatePrefix(settings.snippetSearchPrefix, forId: "snippet")
+        router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings")
+        router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings-mixed")
+        router.updatePrefix(settings.systemSettingsSearchPrefix, forId: "system-settings")
         router.setEnabled(settings.commandSearchEnabled, forId: "command")
         router.setEnabled(settings.commandSearchEnabled, forId: "command-promoted")
         router.updatePrefix(settings.commandSearchPrefix, forId: "command")
