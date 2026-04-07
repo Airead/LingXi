@@ -33,11 +33,12 @@ final class SearchViewModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var generation: Int = 0
     /// Pre-boost scores; prevents boost from compounding across incremental merges.
+    /// NOTE: Currently unused with batch search, retained for future incremental search support.
     private var originalScores: [String: Double] = [:]
+    /// NOTE: Cache is unused with batch search (reset each query), retained for future incremental search support.
     private var cachedUsageCounts: [String: Int]?
 
     private var isSettingHistoryQuery = false
-    private var lastReplacedGeneration: Int = -1
 
     init(router: SearchRouter? = nil, workspace: WorkspaceOpening = NSWorkspace.shared,
          database: DatabaseManager? = nil,
@@ -230,44 +231,18 @@ final class SearchViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
             }
 
-            await router.searchIncremental(rawQuery: currentQuery) { [weak self] _, providerResults in
-                guard let self else { return }
-                let proceed = await MainActor.run { self.generation == currentGeneration && !Task.isCancelled }
-                guard proceed else { return }
-                await self.mergeResults(providerResults, query: currentQuery, maxResults: maxResults)
-            }
+            let allResults = await router.search(rawQuery: currentQuery)
+            guard generation == currentGeneration, !Task.isCancelled else { return }
+            await applyResults(allResults, query: currentQuery, maxResults: maxResults)
         }
     }
 
-    private func mergeResults(_ incoming: [SearchResult], query: String, maxResults: Int) async {
-        let isReplacement = (generation != lastReplacedGeneration)
-        if isReplacement { lastReplacedGeneration = generation }
-
-        let selectedItemId = isReplacement ? nil
-            : (results.indices.contains(selectedIndex) ? results[selectedIndex].itemId : nil)
-
+    private func applyResults(_ incoming: [SearchResult], query: String, maxResults: Int) async {
         for result in incoming {
             originalScores[result.itemId] = max(originalScores[result.itemId, default: 0], result.score)
         }
-
-        var merged: [SearchResult]
-        if isReplacement {
-            merged = incoming
-        } else {
-            let existingIds = Set(results.map(\.itemId))
-            merged = results
-            for item in incoming where !existingIds.contains(item.itemId) {
-                merged.append(item)
-            }
-        }
-        results = await applyUsageBoost(results: merged, query: query, maxResults: maxResults)
-
-        if let selectedItemId,
-           let newIndex = results.firstIndex(where: { $0.itemId == selectedItemId }) {
-            selectedIndex = newIndex
-        } else {
-            clampSelectedIndex()
-        }
+        results = await applyUsageBoost(results: incoming, query: query, maxResults: maxResults)
+        clampSelectedIndex()
     }
 
     private func applyUsageBoost(results: [SearchResult], query: String, maxResults: Int) async -> [SearchResult] {
@@ -275,12 +250,12 @@ final class SearchViewModel: ObservableObject {
 
         if cachedUsageCounts == nil {
             let fetched = await usageTracker.scores(query: query, itemIds: itemIds)
-            // Sentinel zero prevents the incremental branch from re-querying known-unused IDs
             var counts = fetched
             for id in itemIds where counts[id] == nil {
                 counts[id] = 0
             }
             cachedUsageCounts = counts
+        // NOTE: This branch is unreachable with batch search; retained for future incremental search support.
         } else if var counts = cachedUsageCounts {
             let newIds = itemIds.filter { counts[$0] == nil }
             if !newIds.isEmpty {
