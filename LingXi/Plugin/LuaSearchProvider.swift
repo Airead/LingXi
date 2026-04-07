@@ -26,6 +26,41 @@ actor LuaSearchProvider: SearchProvider {
         parseResults(query: query)
     }
 
+    /// Execute a named Lua function with a string argument (used by plugin commands).
+    func executeFunction(name functionName: String, args: String) {
+        state.getGlobal(functionName)
+        guard state.isFunction(at: -1) else {
+            state.pop()
+            DebugLog.log("[LuaPlugin:\(name)] function '\(functionName)' not found")
+            return
+        }
+        state.push(args)
+        do {
+            try state.pcall(nargs: 1, nresults: 0)
+        } catch {
+            DebugLog.log("[LuaPlugin:\(name)] error calling '\(functionName)': \(error)")
+        }
+    }
+
+    /// Dispatch an event to this plugin by calling a Lua function with a data table.
+    func dispatchEvent(name eventName: String, data: [String: String]) {
+        state.getGlobal(eventName)
+        guard state.isFunction(at: -1) else {
+            state.pop()
+            return
+        }
+        state.createTable(nrec: Int32(data.count))
+        for (key, value) in data {
+            state.push(value)
+            state.setField(key, at: -2)
+        }
+        do {
+            try state.pcall(nargs: 1, nresults: 0)
+        } catch {
+            DebugLog.log("[LuaPlugin:\(name)] event '\(eventName)' error: \(error)")
+        }
+    }
+
     // MARK: - Private
 
     private func parseResults(query: String) -> [SearchResult] {

@@ -62,6 +62,13 @@ actor ClipboardStore {
     private nonisolated(unsafe) var timer: DispatchSourceTimer?
     private nonisolated(unsafe) var ocrTasks: [Int: Task<Void, Never>] = [:]
 
+    /// Called when a new clipboard item is added (text or image).
+    private(set) var onChange: (@Sendable (ClipboardItem) -> Void)?
+
+    func setOnChange(_ handler: (@Sendable (ClipboardItem) -> Void)?) {
+        onChange = handler
+    }
+
     private static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "io.github.airead.lingxi",
         category: "ClipboardStore"
@@ -242,6 +249,7 @@ actor ClipboardStore {
 
         cachedItems.insert(item, at: 0)
         _version += 1
+        onChange?(item)
         let needsEviction = cachedItems.count > _capacity
 
         if needsEviction {
@@ -323,6 +331,7 @@ actor ClipboardStore {
 
         cachedItems.insert(item, at: 0)
         _version += 1
+        onChange?(item)
 
         if cachedItems.count > _capacity {
             await enforceCapacity()
@@ -544,7 +553,7 @@ actor ClipboardStore {
         )
     }
 
-    private nonisolated static func prepareTransientPasteboard(
+    nonisolated static func prepareTransientPasteboard(
         types: [NSPasteboard.PasteboardType]
     ) -> NSPasteboard {
         let pb = NSPasteboard.general

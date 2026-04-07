@@ -69,8 +69,30 @@ final class PanelManager {
 
         let pluginManager = PluginManager(router: router)
         self.pluginManager = pluginManager
+        pluginManager.setCommandProvider(commandProvider)
         await pluginManager.loadAll()
         await Self.registerPluginCommands(commandProvider, pluginManager: pluginManager)
+
+        // Wire up clipboard change events for plugins
+        let onClipboardChange: @Sendable (ClipboardItem) -> Void = { [weak pluginManager] item in
+            guard let pluginManager else { return }
+            var data: [String: String] = [
+                "source_app": item.sourceApp,
+                "source_bundle_id": item.sourceBundleId,
+            ]
+            switch item.contentType {
+            case .text:
+                data["text"] = item.textContent
+                data["type"] = "text"
+            case .image:
+                data["type"] = "image"
+                data["image_path"] = item.imagePath
+            }
+            Task { @MainActor in
+                await pluginManager.dispatchEvent(name: PluginEvent.clipboardChange.rawValue, data: data)
+            }
+        }
+        await clipboardStore.setOnChange(onClipboardChange)
 
         self.viewModel = await SearchViewModel(router: router, database: db)
 
@@ -181,6 +203,13 @@ final class PanelManager {
         }
 
         previousApp = NSWorkspace.shared.frontmostApplication
+
+        Task {
+            await pluginManager.dispatchEvent(
+                name: PluginEvent.searchActivate.rawValue,
+                data: ["prefix": prefix ?? ""]
+            )
+        }
 
         let activePanel = panel ?? createPanel()
         self.panel = activePanel

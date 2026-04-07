@@ -4,30 +4,14 @@ import Testing
 
 @MainActor
 struct PluginManagerTests {
-    private func makeTempPluginsDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PluginManagerTests-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private func writePlugin(in dir: URL, name: String, lua: String) throws {
-        let pluginDir = dir.appendingPathComponent(name)
-        try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
-        try lua.write(
-            to: pluginDir.appendingPathComponent("plugin.lua"),
-            atomically: true,
-            encoding: .utf8
-        )
-    }
 
     // MARK: - loadAll
 
     @Test func loadAllWithValidPlugin() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writePlugin(in: dir, name: "hello", lua: """
+        try writeTestPlugin(in: dir, name: "hello", lua: """
             plugin = { name = "hello", prefix = "hi", description = "Hello plugin" }
             function search(query) return {} end
         """)
@@ -42,10 +26,10 @@ struct PluginManagerTests {
     }
 
     @Test func loadAllWithFailedPlugin() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writePlugin(in: dir, name: "broken", lua: "this is not valid lua!!!")
+        try writeTestPlugin(in: dir, name: "broken", lua: "this is not valid lua!!!")
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
         await manager.loadAll()
@@ -56,14 +40,14 @@ struct PluginManagerTests {
     }
 
     @Test func loadAllMixedPlugins() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writePlugin(in: dir, name: "good", lua: """
+        try writeTestPlugin(in: dir, name: "good", lua: """
             plugin = { name = "good", prefix = "g", description = "works" }
             function search(query) return {} end
         """)
-        try writePlugin(in: dir, name: "bad", lua: "syntax error!!!")
+        try writeTestPlugin(in: dir, name: "bad", lua: "syntax error!!!")
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
         await manager.loadAll()
@@ -73,7 +57,7 @@ struct PluginManagerTests {
     }
 
     @Test func loadAllEmptyDirectory() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
@@ -97,10 +81,10 @@ struct PluginManagerTests {
     // MARK: - reload
 
     @Test func reloadReplacesPlugins() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writePlugin(in: dir, name: "v1", lua: """
+        try writeTestPlugin(in: dir, name: "v1", lua: """
             plugin = { name = "v1", prefix = "v", description = "version 1" }
             function search(query) return {} end
         """)
@@ -113,7 +97,7 @@ struct PluginManagerTests {
 
         // Remove old plugin, add new one
         try FileManager.default.removeItem(at: dir.appendingPathComponent("v1"))
-        try writePlugin(in: dir, name: "v2", lua: """
+        try writeTestPlugin(in: dir, name: "v2", lua: """
             plugin = { name = "v2", prefix = "v", description = "version 2" }
             function search(query) return {} end
         """)
@@ -126,10 +110,10 @@ struct PluginManagerTests {
     }
 
     @Test func reloadClearsFailures() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writePlugin(in: dir, name: "broken", lua: "bad!!!")
+        try writeTestPlugin(in: dir, name: "broken", lua: "bad!!!")
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
         await manager.loadAll()
@@ -150,10 +134,10 @@ struct PluginManagerTests {
     }
 
     @Test func reloadUnregistersOldProviders() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writePlugin(in: dir, name: "old", lua: """
+        try writeTestPlugin(in: dir, name: "old", lua: """
             plugin = { name = "old", prefix = "o", description = "old" }
             function search(query) return { { title = "old result", subtitle = "" } } end
         """)
@@ -176,10 +160,10 @@ struct PluginManagerTests {
     // MARK: - summary
 
     @Test func summaryWithPlugins() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writePlugin(in: dir, name: "demo", lua: """
+        try writeTestPlugin(in: dir, name: "demo", lua: """
             plugin = { name = "demo", prefix = "d", description = "A demo plugin" }
             function search(query) return {} end
         """)
@@ -193,7 +177,7 @@ struct PluginManagerTests {
     }
 
     @Test func summaryEmpty() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
@@ -205,7 +189,7 @@ struct PluginManagerTests {
     // MARK: - Skips non-directory entries
 
     @Test func skipsRegularFiles() async throws {
-        let dir = try makeTempPluginsDir()
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try "not a plugin".write(

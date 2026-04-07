@@ -65,6 +65,16 @@ func assertTestImageDirectory(_ dir: URL) {
     )
 }
 
+func writeTestPlugin(in dir: URL, name: String, lua: String) throws {
+    let pluginDir = dir.appendingPathComponent(name)
+    try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+    try lua.write(
+        to: pluginDir.appendingPathComponent("plugin.lua"),
+        atomically: true,
+        encoding: .utf8
+    )
+}
+
 @MainActor
 func emptyRouter() -> SearchRouter {
     SearchRouter(defaultProvider: StubSearchProvider(results: []))
