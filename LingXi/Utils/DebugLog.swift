@@ -6,7 +6,7 @@
 import Darwin.Mach
 import Foundation
 
-enum DebugLog {
+nonisolated enum DebugLog {
     /// Log current process physical memory (RSS) with a tag for tracking memory changes.
     static func logMemory(_ tag: String) {
         var info = mach_task_basic_info()

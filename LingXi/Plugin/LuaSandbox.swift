@@ -1,7 +1,7 @@
 import CLua
 
 /// Applies a sandbox to a LuaState by removing dangerous functions.
-enum LuaSandbox {
+nonisolated enum LuaSandbox {
     /// Apply sandbox restrictions. Call after `openLibs()`.
     static func apply(to state: LuaState) {
         for name in removedGlobals {

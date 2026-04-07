@@ -103,7 +103,7 @@ final class ScreenshotManager {
             )
             return ScreenCapture(screenIndex: info.index, image: image, scaleFactor: info.scale)
         } catch {
-            await DebugLog.log("[ScreenshotManager] Background capture failed: \(error)")
+            DebugLog.log("[ScreenshotManager] Background capture failed: \(error)")
             return nil
         }
     }

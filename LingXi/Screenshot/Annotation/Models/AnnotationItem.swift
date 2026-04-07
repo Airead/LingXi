@@ -5,7 +5,7 @@
 
 import SwiftUI
 
-enum BlurType: Equatable, Hashable {
+nonisolated enum BlurType: Equatable, Hashable, Sendable {
     case pixelate
     case gaussian
 

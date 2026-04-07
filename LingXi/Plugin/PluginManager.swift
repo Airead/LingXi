@@ -59,7 +59,7 @@ final class PluginManager {
     /// Load all plugins and register them with the router.
     func loadAll() async {
         let dir = directory
-        let results = await Task.detached { Self.scanDirectory(dir) }.value
+        let results = await Task.detached { await Self.scanDirectory(dir) }.value
         await applyResults(results)
     }
 
@@ -158,7 +158,7 @@ final class PluginManager {
         registeredCommandNames.removeAll()
     }
 
-    nonisolated private static func scanDirectory(_ directory: URL) -> [LoadResult] {
+    nonisolated private static func scanDirectory(_ directory: URL) async -> [LoadResult] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: directory,
@@ -175,7 +175,7 @@ final class PluginManager {
 
             let scriptPath = entry.appendingPathComponent("plugin.lua").path
             do {
-                let plugin = try loadPlugin(scriptPath: scriptPath, pluginDir: entry)
+                let plugin = try await loadPlugin(scriptPath: scriptPath, pluginDir: entry)
                 results.append(.loaded(plugin))
             } catch {
                 results.append(.failed(dirName: entry.lastPathComponent, error: "\(error)"))
@@ -185,7 +185,7 @@ final class PluginManager {
         return results
     }
 
-    nonisolated private static func loadPlugin(scriptPath: String, pluginDir: URL) throws -> LoadedPlugin {
+    nonisolated private static func loadPlugin(scriptPath: String, pluginDir: URL) async throws -> LoadedPlugin {
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
@@ -194,7 +194,7 @@ final class PluginManager {
 
         let manifest = readManifest(from: state, dirName: pluginDir.lastPathComponent)
 
-        let provider = LuaSearchProvider(
+        let provider = await LuaSearchProvider(
             name: manifest.name,
             pluginDir: pluginDir,
             state: state,

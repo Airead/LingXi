@@ -4,6 +4,8 @@
 ** See Copyright Notice in lua.h
 */
 
+#pragma clang diagnostic ignored "-Wconditional-uninitialized"
+
 #define lobject_c
 #define LUA_CORE
 

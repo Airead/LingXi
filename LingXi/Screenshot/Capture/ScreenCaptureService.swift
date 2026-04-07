@@ -89,7 +89,7 @@ final class ScreenCaptureService {
         guard let cgImage = Self.extractCGImage(from: sampleBuffer) else {
             throw ScreenCaptureError.captureFailed("Failed to create CGImage from sample buffer")
         }
-        await DebugLog.logMemory("captureFullScreen done (\(cgImage.width)x\(cgImage.height))")
+        DebugLog.logMemory("captureFullScreen done (\(cgImage.width)x\(cgImage.height))")
         return cgImage
     }
 
