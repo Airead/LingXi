@@ -251,6 +251,10 @@ nonisolated enum LuaAPI {
     /// Retrieve the plugin ID from the `lingxi._pluginId` field.
     private static func pluginId(from L: OpaquePointer) -> String {
         lua_getglobal(L, "lingxi")
+        guard lua_type(L, -1) == lua_swift_type_table() else {
+            lua_swift_pop(L, 1)
+            return ""
+        }
         lua_getfield(L, -1, "_pluginId")
         let pid: String
         if let cstr = lua_swift_tostring(L, -1) {
@@ -270,7 +274,7 @@ nonisolated enum LuaAPI {
             return 1
         }
         let pid = pluginId(from: L)
-        let value = StoreManager.shared.syncGet(pluginId: pid, key: key)
+        let value = StoreManager.shared.get(pluginId: pid, key: key)
         if let value {
             pushSwiftValue(L, value: value)
         } else {
@@ -288,7 +292,7 @@ nonisolated enum LuaAPI {
         }
         let pid = pluginId(from: L)
         let value = luaValueToSwift(L, index: 2)
-        let ok = StoreManager.shared.syncSet(pluginId: pid, key: key, value: value)
+        let ok = StoreManager.shared.set(pluginId: pid, key: key, value: value)
         lua_pushboolean(L, ok ? 1 : 0)
         return 1
     }
@@ -301,7 +305,7 @@ nonisolated enum LuaAPI {
             return 1
         }
         let pid = pluginId(from: L)
-        let ok = StoreManager.shared.syncDelete(pluginId: pid, key: key)
+        let ok = StoreManager.shared.delete(pluginId: pid, key: key)
         lua_pushboolean(L, ok ? 1 : 0)
         return 1
     }
@@ -377,11 +381,24 @@ nonisolated enum LuaAPI {
         case let s as String:
             lua_pushstring(L, s)
         case let b as Bool:
+            // Note: Swift Bool bridges to NSNumber, so this case must come before NSNumber
+            // and we rely on Swift's dynamic type dispatch to match Bool before NSNumber.
             lua_pushboolean(L, b ? 1 : 0)
         case let d as Double:
             lua_pushnumber(L, d)
         case let i as Int:
             lua_pushinteger(L, lua_Integer(i))
+        case let num as NSNumber:
+            // JSONSerialization deserializes booleans as NSNumber with CFNumberType .charType.
+            let cfNumber = num as CFNumber
+            let numberType = CFNumberGetType(cfNumber)
+            if numberType == .charType {
+                lua_pushboolean(L, num.boolValue ? 1 : 0)
+            } else if num.doubleValue == Double(num.int64Value) {
+                lua_pushinteger(L, lua_Integer(num.int64Value))
+            } else {
+                lua_pushnumber(L, num.doubleValue)
+            }
         case let arr as [Any]:
             lua_createtable(L, Int32(arr.count), 0)
             for (idx, elem) in arr.enumerated() {
