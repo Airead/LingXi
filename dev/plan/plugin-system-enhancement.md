@@ -25,25 +25,31 @@
 2. **定义数据结构**
    - 创建 `LingXi/Plugin/PluginManifest.swift`：
      ```swift
-     struct PluginManifest: Sendable {
-         let id: String
-         let name: String
-         let version: String
-         let author: String
-         let description: String
-         let minLingXiVersion: String
-         let search: SearchConfig?
-         let permissions: PermissionConfig
-         let commands: [ManifestCommand]
-     }
-     
-     struct PermissionConfig: Sendable {
-         let network: Bool
-         let clipboard: Bool
-         let filesystem: [String]      // 路径白名单
-         let shell: [String]           // 命令白名单，空数组=禁用
-         let notify: Bool
-     }
+      struct PluginManifest: Sendable {
+          let id: String
+          let name: String
+          let version: String
+          let author: String
+          let description: String
+          let minLingXiVersion: String
+          let search: SearchConfig?
+          let permissions: PermissionConfig
+          let commands: [ManifestCommand]
+      }
+
+      struct SearchConfig: Sendable {
+          let prefix: String          // 搜索前缀，默认使用 plugin.id
+          let debounce: Int           // 去抖毫秒数，默认 100
+          let timeout: Int            // 超时毫秒数，默认 5000
+      }
+
+      struct PermissionConfig: Sendable {
+          let network: Bool
+          let clipboard: Bool
+          let filesystem: [String]      // 路径白名单
+          let shell: [String]           // 命令白名单，空数组=禁用
+          let notify: Bool
+      }
      ```
 
 3. **创建 plugin.toml 解析器**
@@ -176,6 +182,14 @@
 
 1. **创建测试插件**，`plugin.toml`：
    ```toml
+   [plugin]
+   id = "test.file"
+   name = "Test File"
+   version = "1.0.0"
+
+   [search]
+   prefix = "tf"
+
    [permissions]
    filesystem = ["~/.config/LingXi/plugins/test-file/"]
    ```
@@ -229,6 +243,14 @@
 
 1. **创建测试插件**，`plugin.toml`：
    ```toml
+   [plugin]
+   id = "test.shell"
+   name = "Test Shell"
+   version = "1.0.0"
+
+   [search]
+   prefix = "sh"
+
    [permissions]
    shell = ["echo", "date", "ls"]
    ```
