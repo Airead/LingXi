@@ -1,14 +1,14 @@
 import Foundation
 
-/// Parses plugin manifests from TOML files or Lua global tables.
+/// Parses plugin manifests from TOML files.
 nonisolated enum ManifestParser {
 
-    /// Attempt to read `plugin.toml` from the plugin directory.
-    /// Returns `nil` if the file does not exist.
-    static func parseTOMLManifest(from pluginDir: URL) throws -> PluginManifest? {
+    /// Read `plugin.toml` from the plugin directory.
+    /// Throws if the file does not exist or is invalid.
+    static func parseTOMLManifest(from pluginDir: URL) throws -> PluginManifest {
         let tomlPath = pluginDir.appendingPathComponent("plugin.toml")
         guard FileManager.default.fileExists(atPath: tomlPath.path) else {
-            return nil
+            throw TOMLParser.Error.syntaxError(line: 0, message: "plugin.toml not found in \(pluginDir.lastPathComponent)")
         }
         let text = try String(contentsOf: tomlPath, encoding: .utf8)
         return try parseTOML(text)
@@ -70,37 +70,6 @@ nonisolated enum ManifestParser {
         )
     }
 
-    /// Parse manifest from Lua global `plugin` table (backward compatibility).
-    static func parseLuaManifest(from state: LuaState, dirName: String) -> PluginManifest {
-        state.getGlobal("plugin")
-        defer { state.pop() }
-
-        guard state.isTable(at: -1) else {
-            return PluginManifest(
-                name: dirName,
-                prefix: dirName,
-                permissions: .backwardCompatible
-            )
-        }
-
-        let name = state.stringField("name", at: -1) ?? dirName
-        let prefix = state.stringField("prefix", at: -1) ?? dirName
-        let description = state.stringField("description", at: -1) ?? ""
-        let debounce = state.numberField("debounce", at: -1).map { Int($0) } ?? 100
-        let timeout = state.numberField("timeout", at: -1).map { Int($0) } ?? 5000
-        let commands = readCommands(from: state, pluginTableIndex: -1)
-
-        return PluginManifest(
-            name: name,
-            prefix: prefix,
-            description: description,
-            debounce: debounce,
-            timeout: timeout,
-            permissions: .backwardCompatible,
-            commands: commands
-        )
-    }
-
     // MARK: - Private
 
     private static func parseCommands(from doc: TOMLParser.Document) -> [PluginCommand] {
@@ -114,30 +83,6 @@ nonisolated enum ManifestParser {
                 continue
             }
             let subtitle = table["subtitle"]?.stringValue ?? ""
-            commands.append(PluginCommand(
-                name: name,
-                title: title,
-                subtitle: subtitle,
-                actionFunctionName: action
-            ))
-        }
-        return commands
-    }
-
-    private static func readCommands(from state: LuaState, pluginTableIndex: Int32) -> [PluginCommand] {
-        state.getField("commands", at: pluginTableIndex)
-        defer { state.pop() }
-
-        guard state.isTable(at: -1) else { return [] }
-
-        var commands: [PluginCommand] = []
-        state.iterateArray(at: -1) {
-            guard state.isTable(at: -1) else { return }
-            let name = state.stringField("name", at: -1) ?? ""
-            let title = state.stringField("title", at: -1) ?? ""
-            let action = state.stringField("action", at: -1) ?? ""
-            guard !name.isEmpty, !title.isEmpty, !action.isEmpty else { return }
-            let subtitle = state.stringField("subtitle", at: -1) ?? ""
             commands.append(PluginCommand(
                 name: name,
                 title: title,

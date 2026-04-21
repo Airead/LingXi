@@ -12,7 +12,6 @@ struct PluginManagerTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "hello", lua: """
-            plugin = { name = "hello", prefix = "hi", description = "Hello plugin" }
             function search(query) return {} end
         """)
 
@@ -21,7 +20,7 @@ struct PluginManagerTests {
 
         #expect(manager.plugins.count == 1)
         #expect(manager.plugins[0].manifest.name == "hello")
-        #expect(manager.plugins[0].manifest.prefix == "hi")
+        #expect(manager.plugins[0].manifest.id == "test.hello")
         #expect(manager.failures.isEmpty)
     }
 
@@ -44,7 +43,6 @@ struct PluginManagerTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "good", lua: """
-            plugin = { name = "good", prefix = "g", description = "works" }
             function search(query) return {} end
         """)
         try writeTestPlugin(in: dir, name: "bad", lua: "syntax error!!!")
@@ -85,7 +83,6 @@ struct PluginManagerTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "v1", lua: """
-            plugin = { name = "v1", prefix = "v", description = "version 1" }
             function search(query) return {} end
         """)
 
@@ -98,7 +95,6 @@ struct PluginManagerTests {
         // Remove old plugin, add new one
         try FileManager.default.removeItem(at: dir.appendingPathComponent("v1"))
         try writeTestPlugin(in: dir, name: "v2", lua: """
-            plugin = { name = "v2", prefix = "v", description = "version 2" }
             function search(query) return {} end
         """)
 
@@ -138,7 +134,6 @@ struct PluginManagerTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "old", lua: """
-            plugin = { name = "old", prefix = "o", description = "old" }
             function search(query) return { { title = "old result", subtitle = "" } } end
         """)
 
@@ -146,14 +141,14 @@ struct PluginManagerTests {
         let manager = PluginManager(router: router, directory: dir)
         await manager.loadAll()
 
-        let results1 = await router.search(rawQuery: "o test")
+        let results1 = await router.search(rawQuery: "test.old test")
         #expect(results1.contains { $0.name == "old result" })
 
         // Remove plugin and reload
         try FileManager.default.removeItem(at: dir.appendingPathComponent("old"))
         await manager.reload()
 
-        let results2 = await router.search(rawQuery: "o test")
+        let results2 = await router.search(rawQuery: "test.old test")
         #expect(!results2.contains { $0.name == "old result" })
     }
 
@@ -164,7 +159,6 @@ struct PluginManagerTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "demo", lua: """
-            plugin = { name = "demo", prefix = "d", description = "A demo plugin" }
             function search(query) return {} end
         """)
 
@@ -173,7 +167,6 @@ struct PluginManagerTests {
 
         let summary = manager.summary
         #expect(summary.contains("demo"))
-        #expect(summary.contains("[d]"))
     }
 
     @Test func summaryEmpty() async throws {
@@ -278,32 +271,26 @@ struct PluginManagerTests {
         #expect(results[0].name == "HTTP disabled")
     }
 
-    @Test func backwardCompatibleWithoutTOML() async throws {
+    @Test func missingTOMLFailsToLoad() async throws {
         let dir = try makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writeTestPlugin(in: dir, name: "legacy", lua: """
-            plugin = { name = "Legacy", prefix = "l", description = "Old style" }
-            function search(query)
-                local hasHttp = (lingxi.http ~= nil)
-                return {{
-                    title = "Has HTTP",
-                    subtitle = tostring(hasHttp)
-                }}
-            end
-        """)
+        // Create a plugin directory with only plugin.lua (no plugin.toml)
+        let pluginDir = dir.appendingPathComponent("no-toml")
+        try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+        try """
+            function search(query) return {} end
+        """.write(
+            to: pluginDir.appendingPathComponent("plugin.lua"),
+            atomically: true,
+            encoding: .utf8
+        )
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
         await manager.loadAll()
 
-        #expect(manager.plugins.count == 1)
-        #expect(manager.plugins[0].manifest.name == "Legacy")
-        #expect(manager.plugins[0].manifest.prefix == "l")
-        // Backward compatible plugins get full permissions
-        #expect(manager.plugins[0].manifest.permissions.network == true)
-
-        let results = await manager.plugins[0].provider.search(query: "test")
-        #expect(results.count == 1)
-        #expect(results[0].name == "Has HTTP")
+        #expect(manager.plugins.isEmpty)
+        #expect(manager.failures.count == 1)
+        #expect(manager.failures[0].dirName == "no-toml")
     }
 }

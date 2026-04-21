@@ -168,27 +168,17 @@ final class PluginManager: PluginService {
     }
 
     nonisolated private static func loadPlugin(scriptPath: String, pluginDir: URL) async throws -> LoadedPlugin {
-        // 1. Try reading TOML manifest first
-        var manifest: PluginManifest? = try ManifestParser.parseTOMLManifest(from: pluginDir)
+        // 1. Read plugin.toml manifest (required)
+        let manifest = try ManifestParser.parseTOMLManifest(from: pluginDir)
 
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
 
         // 2. Register Lua APIs based on permissions
-        let permissions = manifest?.permissions ?? .backwardCompatible
-        LuaAPI.registerAll(state: state, permissions: permissions)
+        LuaAPI.registerAll(state: state, permissions: manifest.permissions)
 
         try state.doFile(scriptPath)
-
-        // 3. Fall back to Lua global table for backward compatibility
-        if manifest == nil {
-            manifest = ManifestParser.parseLuaManifest(from: state, dirName: pluginDir.lastPathComponent)
-        }
-
-        guard let manifest else {
-            throw LuaError.runtimeError("Failed to read plugin manifest from \(pluginDir.lastPathComponent)")
-        }
 
         let provider = await LuaSearchProvider(
             name: manifest.name,

@@ -4,7 +4,7 @@ import Testing
 @testable import LingXi
 
 struct LuaAPITests {
-    private func makeState(permissions: PermissionConfig = .backwardCompatible) -> LuaState {
+    private func makeState(permissions: PermissionConfig = .default) -> LuaState {
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
@@ -22,39 +22,39 @@ struct LuaAPITests {
     }
 
     @Test func httpSubtableExists() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("assert(type(lingxi.http) == 'table')")
     }
 
     @Test func clipboardSubtableExists() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("assert(type(lingxi.clipboard) == 'table')")
     }
 
     @Test func httpGetIsFunction() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("assert(type(lingxi.http.get) == 'function')")
     }
 
     @Test func httpPostIsFunction() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("assert(type(lingxi.http.post) == 'function')")
     }
 
     @Test func clipboardReadIsFunction() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("assert(type(lingxi.clipboard.read) == 'function')")
     }
 
     @Test func clipboardWriteIsFunction() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("assert(type(lingxi.clipboard.write) == 'function')")
     }
 
     // MARK: - lingxi.http.get
 
     @Test func httpGetInvalidURL() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         #expect(throws: LuaError.self) {
             try state.doString("""
                 lingxi.http.get("not a valid url %%%")
@@ -63,7 +63,7 @@ struct LuaAPITests {
     }
 
     @Test func httpGetMissingArgument() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         #expect(throws: LuaError.self) {
             try state.doString("lingxi.http.get()")
         }
@@ -72,7 +72,7 @@ struct LuaAPITests {
     // MARK: - lingxi.http.post
 
     @Test func httpPostInvalidURL() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         #expect(throws: LuaError.self) {
             try state.doString("""
                 lingxi.http.post("not a valid url %%%", "body")
@@ -81,7 +81,7 @@ struct LuaAPITests {
     }
 
     @Test func httpPostMissingArgument() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         #expect(throws: LuaError.self) {
             try state.doString("lingxi.http.post()")
         }
@@ -95,7 +95,7 @@ struct LuaAPITests {
 
         // Use the real pasteboard for this test since the C callback uses NSPasteboard.general.
         // Instead, we test the Lua-level write/read cycle.
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("""
             lingxi.clipboard.write("lua-test-value-42")
             local text = lingxi.clipboard.read()
@@ -107,7 +107,7 @@ struct LuaAPITests {
     }
 
     @Test func clipboardWriteReturnsTrueOnSuccess() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("""
             local ok = lingxi.clipboard.write("test")
             assert(ok == true)
@@ -116,7 +116,7 @@ struct LuaAPITests {
     }
 
     @Test func clipboardWriteReturnsFalseOnNil() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         try state.doString("""
             local ok = lingxi.clipboard.write(nil)
             assert(ok == false)
@@ -124,7 +124,7 @@ struct LuaAPITests {
     }
 
     @Test func clipboardReadReturnsNilWhenEmpty() throws {
-        let state = makeState()
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
         // Clear the pasteboard first
         let general = NSPasteboard.general
         general.clearContents()

@@ -114,54 +114,16 @@ struct ManifestParserTests {
         )
 
         let manifest = try ManifestParser.parseTOMLManifest(from: dir)
-        #expect(manifest?.id == "dir.test")
-        #expect(manifest?.name == "Dir Test")
+        #expect(manifest.id == "dir.test")
+        #expect(manifest.name == "Dir Test")
     }
 
     @Test func parseTOMLManifestMissingFile() throws {
         let dir = makeTestTempDir(label: "ManifestParserTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let manifest = try ManifestParser.parseTOMLManifest(from: dir)
-        #expect(manifest == nil)
-    }
-
-    @Test func parseLuaManifestWithTable() throws {
-        let state = LuaState()
-        state.openLibs()
-        try state.doString("""
-            plugin = {
-                name = "Lua Plugin",
-                prefix = "lp",
-                description = "From Lua",
-                debounce = 200,
-                timeout = 10000,
-                commands = {
-                    { name = "cmd1", title = "Cmd 1", action = "doCmd1" }
-                }
-            }
-        """)
-
-        let manifest = ManifestParser.parseLuaManifest(from: state, dirName: "fallback")
-
-        #expect(manifest.name == "Lua Plugin")
-        #expect(manifest.prefix == "lp")
-        #expect(manifest.description == "From Lua")
-        #expect(manifest.debounce == 200)
-        #expect(manifest.timeout == 10000)
-        #expect(manifest.permissions.network == true) // backward compatible
-        #expect(manifest.commands.count == 1)
-        #expect(manifest.commands[0].name == "cmd1")
-    }
-
-    @Test func parseLuaManifestWithoutTable() throws {
-        let state = LuaState()
-        state.openLibs()
-
-        let manifest = ManifestParser.parseLuaManifest(from: state, dirName: "fallback")
-
-        #expect(manifest.name == "fallback")
-        #expect(manifest.prefix == "fallback")
-        #expect(manifest.permissions.network == true) // backward compatible
+        #expect(throws: TOMLParser.Error.self) {
+            try ManifestParser.parseTOMLManifest(from: dir)
+        }
     }
 }

@@ -65,20 +65,17 @@ func assertTestImageDirectory(_ dir: URL) {
     )
 }
 
-func writeTestPlugin(in dir: URL, name: String, lua: String) throws {
+func writeTestPlugin(in dir: URL, name: String, toml: String = "", lua: String) throws {
     let pluginDir = dir.appendingPathComponent(name)
     try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
-    try lua.write(
-        to: pluginDir.appendingPathComponent("plugin.lua"),
-        atomically: true,
-        encoding: .utf8
-    )
-}
 
-func writeTestPlugin(in dir: URL, name: String, toml: String, lua: String) throws {
-    let pluginDir = dir.appendingPathComponent(name)
-    try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
-    try toml.write(
+    let manifest = toml.isEmpty ? """
+        [plugin]
+        id = "test.\(name)"
+        name = "\(name)"
+    """ : toml
+
+    try manifest.write(
         to: pluginDir.appendingPathComponent("plugin.toml"),
         atomically: true,
         encoding: .utf8

@@ -16,17 +16,7 @@ nonisolated struct PermissionConfig: Sendable {
     let shell: [String]
     let notify: Bool
 
-    /// Default permissions for plugins without a manifest (backward compatibility).
-    /// Grants full access to maintain compatibility with legacy Lua-only plugins.
-    nonisolated static let backwardCompatible = PermissionConfig(
-        network: true,
-        clipboard: true,
-        filesystem: [],
-        shell: [],
-        notify: true
-    )
-
-    /// Restrictive default for new plugins.
+    /// Restrictive default for plugins.
     nonisolated static let `default` = PermissionConfig(
         network: false,
         clipboard: false,
