@@ -25,16 +25,14 @@ final class PanelManager {
     private var panel: FloatingPanel?
     private let router: SearchRouter
     private let viewModel: SearchViewModel
-    private let snippetStore: SnippetStore
     private let commandProvider: CommandSearchProvider
     private let pluginManager: PluginManager
-    private let snippetExpander: SnippetExpander
     private let leaderKeyManager: LeaderKeyManager
-    private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
     var previousApp: NSRunningApplication?
     private let clipboardModule: ClipboardModule
+    private let snippetModule: SnippetModule
 
     init(settings: AppSettings) async {
         let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
@@ -48,10 +46,10 @@ final class PanelManager {
         router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
         router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
         let snippetStore = SnippetStore()
-        self.snippetStore = snippetStore
-        self.snippetExpander = SnippetExpander(store: snippetStore)
+        let snippetModule = SnippetModule(store: snippetStore)
+        self.snippetModule = snippetModule
         self.leaderKeyManager = LeaderKeyManager()
-        router.register(prefix: settings.snippetSearchPrefix, id: "snippet", provider: SnippetSearchProvider(store: snippetStore))
+        snippetModule.register(router: router, settings: settings)
 
         let systemSettingsProvider = SystemSettingsProvider()
         router.register(prefix: settings.systemSettingsSearchPrefix, id: "system-settings", provider: systemSettingsProvider)
@@ -80,19 +78,7 @@ final class PanelManager {
         self.viewModel = await SearchViewModel(router: router, database: db)
 
         clipboardModule.bindEvents(to: viewModel, context: self)
-
-        viewModel.onSnippetPaste = { [weak self] itemId in
-            guard let self else { return }
-            guard let snippetId = SnippetSearchProvider.extractId(from: itemId) else { return }
-            let target = self.previousApp
-            Task {
-                guard let snippet = await self.snippetStore.findById(snippetId) else { return }
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                pb.setString(snippet.resolvedContent(), forType: .string)
-                self.pasteAndActivate(target: target)
-            }
-        }
+        snippetModule.bindEvents(to: viewModel, context: self)
 
         viewModel.onCommandExecute = { [weak self] result in
             guard let self else { return }
@@ -106,10 +92,8 @@ final class PanelManager {
         self.panel = createPanel()
 
         clipboardModule.start()
+        snippetModule.start()
 
-        if settings.snippetAutoExpandEnabled {
-            snippetExpander.start()
-        }
         if settings.leaderKeyEnabled {
             leaderKeyManager.start()
         }
@@ -121,11 +105,9 @@ final class PanelManager {
         router.setEnabled(settings.fileSearchEnabled, forId: "file")
         router.setEnabled(settings.folderSearchEnabled, forId: "folder")
         router.setEnabled(settings.bookmarkSearchEnabled, forId: "bookmark")
-        router.setEnabled(settings.snippetSearchEnabled, forId: "snippet")
         router.updatePrefix(settings.fileSearchPrefix, forId: "file")
         router.updatePrefix(settings.folderSearchPrefix, forId: "folder")
         router.updatePrefix(settings.bookmarkSearchPrefix, forId: "bookmark")
-        router.updatePrefix(settings.snippetSearchPrefix, forId: "snippet")
         router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings")
         router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings-mixed")
         router.updatePrefix(settings.systemSettingsSearchPrefix, forId: "system-settings")
@@ -134,6 +116,7 @@ final class PanelManager {
         router.updatePrefix(settings.commandSearchPrefix, forId: "command")
 
         clipboardModule.applySettings(settings, router: router)
+        snippetModule.applySettings(settings, router: router)
     }
 
     func saveInputSource() {
@@ -153,7 +136,7 @@ final class PanelManager {
     }
 
     func showWithPrefix(_ prefix: String?) {
-        snippetExpander.suppress()
+        snippetModule.suppress()
         leaderKeyManager.suppress()
         let prefixQuery = prefix.map { $0 + " " }
 
@@ -196,7 +179,7 @@ final class PanelManager {
         inputSourceManager.restore()
         let app = previousApp
         previousApp = nil
-        snippetExpander.resume()
+        snippetModule.resume()
         leaderKeyManager.resume()
         if returnFocus {
             app?.activate()
@@ -204,11 +187,7 @@ final class PanelManager {
     }
 
     func setAutoExpandEnabled(_ enabled: Bool) {
-        if enabled {
-            snippetExpander.start()
-        } else {
-            snippetExpander.stop()
-        }
+        snippetModule.setAutoExpandEnabled(enabled)
     }
 
     func setLeaderKeyEnabled(_ enabled: Bool) {
@@ -236,10 +215,10 @@ final class PanelManager {
         }
         newPanel.onCommandN = { [weak self] in
             guard let self else { return }
-            guard self.router.hasActiveProvider(id: "snippet", for: self.viewModel.query) else { return }
+            guard self.snippetModule.isActive(in: self.router, for: self.viewModel.query) else { return }
             self.hide()
-            self.snippetEditorPanel.show {
-                Task { await self.snippetExpander.refreshSnippets() }
+            self.snippetModule.showEditor {
+                Task { await self.snippetModule.refreshSnippets() }
             }
         }
         newPanel.onArrowUp = { [weak viewModel] in
