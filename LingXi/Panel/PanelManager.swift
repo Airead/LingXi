@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import Carbon.HIToolbox
 import Combine
 import SwiftUI
 
@@ -25,123 +24,37 @@ final class PanelManager {
     private var panel: FloatingPanel?
     private let router: SearchRouter
     private let viewModel: SearchViewModel
-    private let clipboardStore: ClipboardStore
-    private let snippetStore: SnippetStore
-    private let commandProvider: CommandSearchProvider
-    private let pluginManager: PluginManager
-    private let snippetExpander: SnippetExpander
+    private let pluginService: PluginService
     private let leaderKeyManager: LeaderKeyManager
-    private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
-    private var previousApp: NSRunningApplication?
+    var previousApp: NSRunningApplication?
+    private let snippetModule: SnippetModule
+    private let modules: [SearchProviderModule]
 
-    init(settings: AppSettings) async {
-        let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
-        let clipboardStore = ClipboardStore(
-            database: db,
-            capacity: settings.clipboardHistoryCapacity,
-            imageDirectory: ClipboardStore.defaultImageDirectory
-        )
-        self.clipboardStore = clipboardStore
-        let copyHandler: @MainActor @Sendable (Int) -> Void = { itemId in
-            Task { await clipboardStore.writeToClipboard(itemId: itemId) }
-        }
-        let router = SearchRouter(defaultProvider: ApplicationSearchProvider(), maxResults: settings.maxSearchResults)
-        router.register(prefix: settings.folderSearchPrefix, id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
-        router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
-        router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
-        router.register(prefix: settings.clipboardSearchPrefix, id: "clipboard", provider: ClipboardHistoryProvider(store: clipboardStore, copyHandler: copyHandler))
-        let snippetStore = SnippetStore()
-        self.snippetStore = snippetStore
-        self.snippetExpander = SnippetExpander(store: snippetStore)
-        self.leaderKeyManager = LeaderKeyManager()
-        router.register(prefix: settings.snippetSearchPrefix, id: "snippet", provider: SnippetSearchProvider(store: snippetStore))
-
-        let systemSettingsProvider = SystemSettingsProvider()
-        router.register(prefix: settings.systemSettingsSearchPrefix, id: "system-settings", provider: systemSettingsProvider)
-        let systemSettingsMixed = SystemSettingsMixedProvider(source: systemSettingsProvider)
-        router.registerDefault(id: "system-settings-mixed", provider: systemSettingsMixed)
-
-        let commandProvider = CommandSearchProvider()
-        self.commandProvider = commandProvider
-        await Self.registerBuiltinCommands(commandProvider)
-        router.register(prefix: settings.commandSearchPrefix, id: "command", provider: commandProvider)
-        let promotedProvider = PromotedCommandSearchProvider(commandProvider: commandProvider)
-        router.registerDefault(id: "command-promoted", provider: promotedProvider)
-
+    init(
+        settings: AppSettings,
+        router: SearchRouter,
+        viewModel: SearchViewModel,
+        pluginService: PluginService,
+        snippetModule: SnippetModule,
+        leaderKeyManager: LeaderKeyManager,
+        modules: [SearchProviderModule]
+    ) {
         self.router = router
-
-        let pluginManager = PluginManager(router: router)
-        self.pluginManager = pluginManager
-        pluginManager.setCommandProvider(commandProvider)
-        await pluginManager.loadAll()
-        await Self.registerPluginCommands(commandProvider, pluginManager: pluginManager)
-
-        // Wire up clipboard change events for plugins
-        let onClipboardChange: @Sendable (ClipboardItem) -> Void = { [weak pluginManager] item in
-            guard let pluginManager else { return }
-            var data: [String: String] = [
-                "source_app": item.sourceApp,
-                "source_bundle_id": item.sourceBundleId,
-            ]
-            switch item.contentType {
-            case .text:
-                data["text"] = item.textContent
-                data["type"] = "text"
-            case .image:
-                data["type"] = "image"
-                data["image_path"] = item.imagePath
-            }
-            Task { @MainActor in
-                await pluginManager.dispatchEvent(name: PluginEvent.clipboardChange.rawValue, data: data)
-            }
-        }
-        await clipboardStore.setOnChange(onClipboardChange)
-
-        self.viewModel = await SearchViewModel(router: router, database: db)
-
-        viewModel.onDeleteItem = { [weak self] itemId in
-            guard let self, let id = self.clipboardId(from: itemId) else { return }
-            Task { await self.clipboardStore.delete(itemId: id) }
-        }
-
-        viewModel.onClipboardPaste = { [weak self] itemId in
-            guard let self, let id = self.clipboardId(from: itemId) else { return }
-            let target = self.previousApp
-            Task {
-                await self.clipboardStore.writeToClipboard(itemId: id)
-                self.pasteAndActivate(target: target)
-            }
-        }
-
-        viewModel.onSnippetPaste = { [weak self] itemId in
-            guard let self else { return }
-            guard let snippetId = SnippetSearchProvider.extractId(from: itemId) else { return }
-            let target = self.previousApp
-            Task {
-                guard let snippet = await self.snippetStore.findById(snippetId) else { return }
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                pb.setString(snippet.resolvedContent(), forType: .string)
-                self.pasteAndActivate(target: target)
-            }
-        }
-
-        viewModel.onCommandExecute = { [weak self] result in
-            guard let self else { return }
-            Task {
-                guard let entry = await self.commandProvider.entry(for: result.itemId) else { return }
-                await entry.action(result.actionContext)
-            }
-        }
+        self.viewModel = viewModel
+        self.pluginService = pluginService
+        self.snippetModule = snippetModule
+        self.leaderKeyManager = leaderKeyManager
+        self.modules = modules
 
         applySettings(settings)
         self.panel = createPanel()
 
-        if settings.snippetAutoExpandEnabled {
-            snippetExpander.start()
+        for module in modules {
+            module.start()
         }
+
         if settings.leaderKeyEnabled {
             leaderKeyManager.start()
         }
@@ -149,33 +62,8 @@ final class PanelManager {
 
     func applySettings(_ settings: AppSettings) {
         router.setMaxResults(settings.maxSearchResults)
-        router.setEnabled(settings.applicationSearchEnabled, forId: "default")
-        router.setEnabled(settings.fileSearchEnabled, forId: "file")
-        router.setEnabled(settings.folderSearchEnabled, forId: "folder")
-        router.setEnabled(settings.bookmarkSearchEnabled, forId: "bookmark")
-        router.setEnabled(settings.clipboardHistoryEnabled, forId: "clipboard")
-        router.updatePrefix(settings.fileSearchPrefix, forId: "file")
-        router.updatePrefix(settings.folderSearchPrefix, forId: "folder")
-        router.updatePrefix(settings.bookmarkSearchPrefix, forId: "bookmark")
-        router.updatePrefix(settings.clipboardSearchPrefix, forId: "clipboard")
-        router.setEnabled(settings.snippetSearchEnabled, forId: "snippet")
-        router.updatePrefix(settings.snippetSearchPrefix, forId: "snippet")
-        router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings")
-        router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings-mixed")
-        router.updatePrefix(settings.systemSettingsSearchPrefix, forId: "system-settings")
-        router.setEnabled(settings.commandSearchEnabled, forId: "command")
-        router.setEnabled(settings.commandSearchEnabled, forId: "command-promoted")
-        router.updatePrefix(settings.commandSearchPrefix, forId: "command")
-
-        let enabled = settings.clipboardHistoryEnabled
-        let capacity = settings.clipboardHistoryCapacity
-        Task {
-            if enabled {
-                await clipboardStore.startMonitoring()
-            } else {
-                await clipboardStore.stopMonitoring()
-            }
-            await clipboardStore.setCapacity(capacity)
+        for module in modules {
+            module.applySettings(settings, router: router)
         }
     }
 
@@ -185,7 +73,7 @@ final class PanelManager {
 
     func toggle() {
         if isVisible {
-            hide()
+            hide(returnFocus: true)
         } else {
             show()
         }
@@ -196,7 +84,7 @@ final class PanelManager {
     }
 
     func showWithPrefix(_ prefix: String?) {
-        snippetExpander.suppress()
+        snippetModule.suppress()
         leaderKeyManager.suppress()
         let prefixQuery = prefix.map { $0 + " " }
 
@@ -213,7 +101,7 @@ final class PanelManager {
         previousApp = NSWorkspace.shared.frontmostApplication
 
         Task {
-            await pluginManager.dispatchEvent(
+            await pluginService.dispatchEvent(
                 name: PluginEvent.searchActivate.rawValue,
                 data: ["prefix": prefix ?? ""]
             )
@@ -233,21 +121,21 @@ final class PanelManager {
         activePanel.makeKeyAndOrderFront(nil)
     }
 
-    func hide() {
+    func hide(returnFocus: Bool = false) {
         guard isVisible else { return }
         panel?.orderOut(nil)
         inputSourceManager.restore()
+        let app = previousApp
         previousApp = nil
-        snippetExpander.resume()
+        snippetModule.resume()
         leaderKeyManager.resume()
+        if returnFocus {
+            app?.activate()
+        }
     }
 
     func setAutoExpandEnabled(_ enabled: Bool) {
-        if enabled {
-            snippetExpander.start()
-        } else {
-            snippetExpander.stop()
-        }
+        snippetModule.setAutoExpandEnabled(enabled)
     }
 
     func setLeaderKeyEnabled(_ enabled: Bool) {
@@ -265,20 +153,20 @@ final class PanelManager {
     private func createPanel() -> FloatingPanel {
         let newPanel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: PanelLayout.defaultWidth, height: PanelLayout.searchBarHeight))
         newPanel.contentView = NSHostingView(rootView: PanelContentView(viewModel: viewModel, onDismiss: { [weak self] in
-            self?.hide()
+            self?.hide(returnFocus: true)
         }))
         newPanel.onDismiss = { [weak self] in
-            self?.hide()
+            self?.hide(returnFocus: true)
         }
         newPanel.onCommandComma = {
             AppDelegate.showSettings()
         }
         newPanel.onCommandN = { [weak self] in
             guard let self else { return }
-            guard self.router.hasActiveProvider(id: "snippet", for: self.viewModel.query) else { return }
+            guard self.snippetModule.isActive(in: self.router, for: self.viewModel.query) else { return }
             self.hide()
-            self.snippetEditorPanel.show {
-                Task { await self.snippetExpander.refreshSnippets() }
+            self.snippetModule.showEditor {
+                Task { await self.snippetModule.refreshSnippets() }
             }
         }
         newPanel.onArrowUp = { [weak viewModel] in
@@ -344,130 +232,6 @@ final class PanelManager {
         panel.setFrame(newFrame, display: true, animate: false)
     }
 
-    private func clipboardId(from itemId: String) -> Int? {
-        ClipboardHistoryProvider.extractId(from: itemId)
-    }
-
-    private func pasteAndActivate(target: NSRunningApplication?) {
-        target?.activate()
-        Task {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            KeyboardUtils.simulatePaste()
-        }
-    }
-
-    private static func registerBuiltinCommands(_ provider: CommandSearchProvider) async {
-        let commands: [CommandEntry] = [
-            CommandEntry(
-                name: "settings", title: "Open Settings", subtitle: "Open the settings window",
-                icon: NSImage(systemSymbolName: "gear", accessibilityDescription: "Settings"),
-                action: { _ in SettingsWindowManager.shared.show() },
-                promoted: true
-            ),
-            CommandEntry(
-                name: "help", title: "Show Help", subtitle: "Open settings for available prefixes",
-                icon: NSImage(systemSymbolName: "questionmark.circle", accessibilityDescription: "Help"),
-                action: { _ in SettingsWindowManager.shared.show() }
-            ),
-            CommandEntry(
-                name: "screenshot", title: "Capture Region", subtitle: "Take a screenshot of a selected region",
-                icon: NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Screenshot"),
-                action: { _ in await ScreenshotManager.shared.captureRegion() }
-            ),
-            CommandEntry(
-                name: "screenshot-fullscreen", title: "Capture Full Screen", subtitle: "Take a screenshot of the full screen",
-                icon: NSImage(systemSymbolName: "camera", accessibilityDescription: "Full Screen"),
-                action: { _ in await ScreenshotManager.shared.captureFullScreen() }
-            ),
-            CommandEntry(
-                name: "reveal-clipboard-images", title: "Reveal Clipboard Images", subtitle: "Open clipboard images folder in Finder",
-                icon: NSImage(systemSymbolName: "photo.on.rectangle", accessibilityDescription: "Clipboard Images"),
-                action: { _ in NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: ClipboardStore.defaultImageDirectory.path) }
-            ),
-            CommandEntry(
-                name: "reveal-snippets", title: "Reveal Snippets Folder", subtitle: "Open snippets folder in Finder",
-                icon: NSImage(systemSymbolName: "folder", accessibilityDescription: "Snippets"),
-                action: { _ in NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: SnippetStore.defaultDirectory.path) }
-            ),
-            CommandEntry(
-                name: "quit", title: "Quit Application", subtitle: "Quit a running application by name",
-                icon: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: "Quit"),
-                action: { args in
-                    let target = args.trimmingCharacters(in: .whitespaces)
-                    guard !target.isEmpty else { return }
-                    for app in NSWorkspace.shared.runningApplications
-                    where app.localizedName?.localizedCaseInsensitiveCompare(target) == .orderedSame {
-                        app.terminate()
-                    }
-                }
-            ),
-            CommandEntry(
-                name: "quit-all", title: "Quit All Applications", subtitle: "Quit all running applications except Finder and self",
-                icon: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Quit All"),
-                action: { _ in
-                    let selfBundleId = Bundle.main.bundleIdentifier
-                    for app in NSWorkspace.shared.runningApplications {
-                        guard app.activationPolicy == .regular else { continue }
-                        if app.bundleIdentifier == "com.apple.finder" { continue }
-                        if let selfId = selfBundleId, app.bundleIdentifier == selfId { continue }
-                        app.terminate()
-                    }
-                }
-            ),
-        ]
-        await Self.registerCommands(commands, on: provider)
-    }
-
-    private static func registerPluginCommands(
-        _ provider: CommandSearchProvider,
-        pluginManager: PluginManager
-    ) async {
-        let commands: [CommandEntry] = [
-            CommandEntry(
-                name: "plugin:reload",
-                title: "Reload Plugins",
-                subtitle: "Reload all Lua plugins from disk",
-                icon: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload"),
-                action: { _ in await pluginManager.reload() }
-            ),
-            CommandEntry(
-                name: "plugin:list",
-                title: "List Plugins",
-                subtitle: "Show loaded plugins and errors",
-                icon: NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List"),
-                action: { _ in
-                    let summary = pluginManager.summary
-                    let pb = NSPasteboard.general
-                    pb.clearContents()
-                    pb.setString(summary, forType: .string)
-                    DebugLog.log("[PluginManager] Plugin list copied to clipboard:\n\(summary)")
-                }
-            ),
-            CommandEntry(
-                name: "plugin:open",
-                title: "Open Plugins Folder",
-                subtitle: "Reveal plugins folder in Finder",
-                icon: NSImage(systemSymbolName: "folder", accessibilityDescription: "Folder"),
-                action: { _ in
-                    let dir = pluginManager.directory
-                    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir.path)
-                }
-            ),
-        ]
-        await Self.registerCommands(commands, on: provider)
-    }
-
-    private static func registerCommands(_ commands: [CommandEntry], on provider: CommandSearchProvider) async {
-        for cmd in commands {
-            do {
-                try await provider.register(cmd)
-            } catch {
-                assertionFailure("Failed to register command '\(cmd.name)': \(error)")
-            }
-        }
-    }
-
     private func positionPanel(_ panel: FloatingPanel) {
         guard let screen = NSScreen.main else { return }
         let screenFrame = screen.visibleFrame
@@ -476,6 +240,20 @@ final class PanelManager {
         let x = screenFrame.midX - width / 2
         let y = screenFrame.midY + screenFrame.height / 4 - height / 2
         panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false, animate: false)
+    }
+}
+
+extension PanelManager: PanelContext {
+    func pasteAndActivate(target: NSRunningApplication?) {
+        target?.activate()
+        Task {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            KeyboardUtils.simulatePaste()
+        }
+    }
+
+    func hidePanel() {
+        hide()
     }
 }
 

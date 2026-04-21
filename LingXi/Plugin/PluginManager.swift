@@ -33,7 +33,7 @@ struct LoadedPlugin: Sendable {
 
 /// Discovers and loads Lua plugins from the plugins directory.
 @MainActor
-final class PluginManager {
+final class PluginManager: PluginService {
     private enum LoadResult: Sendable {
         case loaded(LoadedPlugin)
         case failed(dirName: String, error: String)

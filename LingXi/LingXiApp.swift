@@ -19,6 +19,7 @@ struct LingXiApp: App {
     @MainActor
     private final class PanelHolder {
         var panelManager: PanelManager?
+        var pluginManager: PluginManager?
     }
 
     var body: some Scene {
@@ -117,8 +118,11 @@ struct LingXiApp: App {
         })
 
         Task { @MainActor in
-            let pm = await PanelManager(settings: s)
+            let result = await AppAssembly.assemble(settings: s)
+            let pm = result.panelManager
             holder.panelManager = pm
+            holder.pluginManager = result.pluginManager
+
             observeForever({
                 _ = s.maxSearchResults
                 _ = s.applicationSearchEnabled
