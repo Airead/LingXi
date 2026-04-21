@@ -5,14 +5,18 @@ import Foundation
 /// Registers `lingxi.*` APIs into a Lua state based on plugin permissions.
 nonisolated enum LuaAPI {
     /// Call after `openLibs()` and `LuaSandbox.apply()`.
-    /// Only registers APIs that the plugin has permission to use.
+    /// APIs without permission are registered as stubs that return nil/false and log a warning.
     static func registerAll(state: LuaState, permissions: PermissionConfig) {
         state.createTable()
         if permissions.network {
             registerHTTP(state: state)
+        } else {
+            registerDisabledHTTP(state: state)
         }
         if permissions.clipboard {
             registerClipboard(state: state)
+        } else {
+            registerDisabledClipboard(state: state)
         }
         state.setGlobal("lingxi")
     }
@@ -28,6 +32,15 @@ nonisolated enum LuaAPI {
         state.setField("http", at: -2)
     }
 
+    private static func registerDisabledHTTP(state: LuaState) {
+        state.createTable(nrec: 2)
+        state.pushFunction(disabledHTTPGet)
+        state.setField("get", at: -2)
+        state.pushFunction(disabledHTTPPost)
+        state.setField("post", at: -2)
+        state.setField("http", at: -2)
+    }
+
     // MARK: - lingxi.clipboard
 
     private static func registerClipboard(state: LuaState) {
@@ -35,6 +48,15 @@ nonisolated enum LuaAPI {
         state.pushFunction(clipboardRead)
         state.setField("read", at: -2)
         state.pushFunction(clipboardWrite)
+        state.setField("write", at: -2)
+        state.setField("clipboard", at: -2)
+    }
+
+    private static func registerDisabledClipboard(state: LuaState) {
+        state.createTable(nrec: 2)
+        state.pushFunction(disabledClipboardRead)
+        state.setField("read", at: -2)
+        state.pushFunction(disabledClipboardWrite)
         state.setField("write", at: -2)
         state.setField("clipboard", at: -2)
     }
@@ -175,6 +197,36 @@ nonisolated enum LuaAPI {
         let pb = ClipboardStore.prepareTransientPasteboard(types: [.string])
         pb.setString(text, forType: .string)
         lua_pushboolean(L, 1)
+        return 1
+    }
+
+    // MARK: - Disabled Stubs
+
+    private static let disabledHTTPGet: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.http.get denied: network permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledHTTPPost: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.http.post denied: network permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledClipboardRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.clipboard.read denied: clipboard permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledClipboardWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.clipboard.write denied: clipboard permission not granted")
+        lua_pushboolean(L, 0)
         return 1
     }
 }

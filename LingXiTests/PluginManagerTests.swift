@@ -251,13 +251,11 @@ struct PluginManagerTests {
             clipboard = true
         """, lua: """
             function search(query)
-                local ok, err = pcall(function()
-                    return lingxi.http.get("https://example.com")
-                end)
-                local hasHttp = (lingxi.http ~= nil)
+                local result = lingxi.http.get("https://example.com")
+                local isNil = (result == nil)
                 return {{
-                    title = "HTTP disabled",
-                    subtitle = tostring(not hasHttp)
+                    title = "HTTP returns nil",
+                    subtitle = tostring(isNil)
                 }}
             end
         """)
@@ -268,7 +266,8 @@ struct PluginManagerTests {
         #expect(manager.plugins.count == 1)
         let results = await manager.plugins[0].provider.search(query: "test")
         #expect(results.count == 1)
-        #expect(results[0].name == "HTTP disabled")
+        #expect(results[0].name == "HTTP returns nil")
+        #expect(results[0].subtitle == "true")
     }
 
     @Test func missingTOMLFailsToLoad() async throws {

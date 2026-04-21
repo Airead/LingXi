@@ -136,24 +136,30 @@ struct LuaAPITests {
 
     // MARK: - Permission-based API gating
 
-    @Test func httpDisabledWhenNetworkFalse() throws {
+    @Test func httpDisabledReturnsNil() throws {
         let perms = PermissionConfig(network: false, clipboard: true, filesystem: [], shell: [], notify: false)
         let state = makeState(permissions: perms)
-        try state.doString("assert(lingxi.http == nil)")
+        try state.doString("""
+            local result = lingxi.http.get("https://example.com")
+            assert(result == nil, "expected nil, got " .. tostring(result))
+        """)
     }
 
-    @Test func clipboardDisabledWhenClipboardFalse() throws {
+    @Test func clipboardDisabledReadReturnsNil() throws {
         let perms = PermissionConfig(network: true, clipboard: false, filesystem: [], shell: [], notify: false)
         let state = makeState(permissions: perms)
-        try state.doString("assert(lingxi.clipboard == nil)")
+        try state.doString("""
+            local text = lingxi.clipboard.read()
+            assert(text == nil, "expected nil, got " .. tostring(text))
+        """)
     }
 
-    @Test func allApisDisabled() throws {
-        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false)
+    @Test func clipboardDisabledWriteReturnsFalse() throws {
+        let perms = PermissionConfig(network: true, clipboard: false, filesystem: [], shell: [], notify: false)
         let state = makeState(permissions: perms)
         try state.doString("""
-            assert(lingxi.http == nil)
-            assert(lingxi.clipboard == nil)
+            local ok = lingxi.clipboard.write("test")
+            assert(ok == false, "expected false, got " .. tostring(ok))
         """)
     }
 
