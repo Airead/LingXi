@@ -11,20 +11,40 @@ struct PluginCommandTests {
         let dir = try makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writeTestPlugin(in: dir, name: "cmd-test", lua: """
-            plugin = {
-                name = "cmd-test",
-                prefix = "ct",
-                description = "Test commands",
-                commands = {
-                    { name = "cmd-test:greet", title = "Greet", subtitle = "Say hello", action = "greet" },
-                    { name = "cmd-test:farewell", title = "Farewell", action = "farewell" }
+        try writeTestPlugin(
+            in: dir,
+            name: "cmd-test",
+            toml: """
+                [plugin]
+                id = "ct"
+                name = "cmd-test"
+                description = "Test commands"
+
+                [[commands]]
+                name = "cmd-test:greet"
+                title = "Greet"
+                subtitle = "Say hello"
+                action = "greet"
+
+                [[commands]]
+                name = "cmd-test:farewell"
+                title = "Farewell"
+                action = "farewell"
+            """,
+            lua: """
+                plugin = {
+                    name = "cmd-test",
+                    prefix = "ct",
+                    description = "Test commands",
+                    commands = {
+                        { name = "cmd-test:greet", title = "Greet", subtitle = "Say hello", action = "greet" },
+                        { name = "cmd-test:farewell", title = "Farewell", action = "farewell" }
+                    }
                 }
-            }
-            function search(query) return {} end
-            function greet(args) end
-            function farewell(args) end
-        """)
+                function search(query) return {} end
+                function greet(args) end
+                function farewell(args) end
+            """)
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
         await manager.loadAll()
@@ -44,20 +64,48 @@ struct PluginCommandTests {
         let dir = try makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writeTestPlugin(in: dir, name: "bad-cmds", lua: """
-            plugin = {
-                name = "bad-cmds",
-                prefix = "bc",
-                commands = {
-                    { name = "", title = "No Name", action = "noop" },
-                    { name = "valid", title = "", action = "noop" },
-                    { name = "valid2", title = "Valid", action = "" },
-                    { name = "ok-cmd", title = "OK", action = "do_thing" }
+        try writeTestPlugin(
+            in: dir,
+            name: "bad-cmds",
+            toml: """
+                [plugin]
+                id = "bc"
+                name = "bad-cmds"
+
+                [[commands]]
+                name = ""
+                title = "No Name"
+                action = "noop"
+
+                [[commands]]
+                name = "valid"
+                title = ""
+                action = "noop"
+
+                [[commands]]
+                name = "valid2"
+                title = "Valid"
+                action = ""
+
+                [[commands]]
+                name = "ok-cmd"
+                title = "OK"
+                action = "do_thing"
+            """,
+            lua: """
+                plugin = {
+                    name = "bad-cmds",
+                    prefix = "bc",
+                    commands = {
+                        { name = "", title = "No Name", action = "noop" },
+                        { name = "valid", title = "", action = "noop" },
+                        { name = "valid2", title = "Valid", action = "" },
+                        { name = "ok-cmd", title = "OK", action = "do_thing" }
+                    }
                 }
-            }
-            function search(query) return {} end
-            function do_thing(args) end
-        """)
+                function search(query) return {} end
+                function do_thing(args) end
+            """)
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
         await manager.loadAll()
@@ -89,17 +137,31 @@ struct PluginCommandTests {
         let dir = try makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writeTestPlugin(in: dir, name: "reg-test", lua: """
-            plugin = {
-                name = "reg-test",
-                prefix = "rt",
-                commands = {
-                    { name = "reg-test:hello", title = "Hello World", subtitle = "A greeting", action = "hello" }
+        try writeTestPlugin(
+            in: dir,
+            name: "reg-test",
+            toml: """
+                [plugin]
+                id = "rt"
+                name = "reg-test"
+
+                [[commands]]
+                name = "reg-test:hello"
+                title = "Hello World"
+                subtitle = "A greeting"
+                action = "hello"
+            """,
+            lua: """
+                plugin = {
+                    name = "reg-test",
+                    prefix = "rt",
+                    commands = {
+                        { name = "reg-test:hello", title = "Hello World", subtitle = "A greeting", action = "hello" }
+                    }
                 }
-            }
-            function search(query) return {} end
-            function hello(args) end
-        """)
+                function search(query) return {} end
+                function hello(args) end
+            """)
 
         let router = emptyRouter()
         let commandProvider = CommandSearchProvider()
@@ -116,17 +178,30 @@ struct PluginCommandTests {
         let dir = try makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writeTestPlugin(in: dir, name: "reload-cmd", lua: """
-            plugin = {
-                name = "reload-cmd",
-                prefix = "rc",
-                commands = {
-                    { name = "reload-cmd:test", title = "Reload Test", action = "test_fn" }
+        try writeTestPlugin(
+            in: dir,
+            name: "reload-cmd",
+            toml: """
+                [plugin]
+                id = "rc"
+                name = "reload-cmd"
+
+                [[commands]]
+                name = "reload-cmd:test"
+                title = "Reload Test"
+                action = "test_fn"
+            """,
+            lua: """
+                plugin = {
+                    name = "reload-cmd",
+                    prefix = "rc",
+                    commands = {
+                        { name = "reload-cmd:test", title = "Reload Test", action = "test_fn" }
+                    }
                 }
-            }
-            function search(query) return {} end
-            function test_fn(args) end
-        """)
+                function search(query) return {} end
+                function test_fn(args) end
+            """)
 
         let router = emptyRouter()
         let commandProvider = CommandSearchProvider()
@@ -153,20 +228,33 @@ struct PluginCommandTests {
         let dir = try makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        try writeTestPlugin(in: dir, name: "exec-test", lua: """
-            plugin = {
-                name = "exec-test",
-                prefix = "et",
-                commands = {
-                    { name = "exec-test:store", title = "Store Args", action = "store_args" }
+        try writeTestPlugin(
+            in: dir,
+            name: "exec-test",
+            toml: """
+                [plugin]
+                id = "et"
+                name = "exec-test"
+
+                [[commands]]
+                name = "exec-test:store"
+                title = "Store Args"
+                action = "store_args"
+            """,
+            lua: """
+                plugin = {
+                    name = "exec-test",
+                    prefix = "et",
+                    commands = {
+                        { name = "exec-test:store", title = "Store Args", action = "store_args" }
+                    }
                 }
-            }
-            stored_args = ""
-            function search(query) return {} end
-            function store_args(args)
-                stored_args = args
-            end
-        """)
+                stored_args = ""
+                function search(query) return {} end
+                function store_args(args)
+                    stored_args = args
+                end
+            """)
 
         let router = emptyRouter()
         let commandProvider = CommandSearchProvider()
