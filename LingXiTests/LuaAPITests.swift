@@ -473,4 +473,65 @@ struct LuaAPITests {
             assert(content == nil, "expected nil, got " .. tostring(content))
         """)
     }
+
+    // MARK: - lingxi.shell
+
+    @Test func shellSubtableExists() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        try state.doString("assert(type(lingxi.shell) == 'table')")
+    }
+
+    @Test func shellExecIsFunction() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        try state.doString("assert(type(lingxi.shell.exec) == 'function')")
+    }
+
+    @Test func shellExecEcho() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        try state.doString("""
+            local result = lingxi.shell.exec("echo hello")
+            assert(type(result) == "table", "expected table, got " .. type(result))
+            assert(result.exitCode == 0, "expected exitCode 0, got " .. tostring(result.exitCode))
+            assert(result.stdout == "hello\\n", "expected 'hello\\\\n', got '" .. tostring(result.stdout) .. "'")
+        """)
+    }
+
+    @Test func shellExecDeniedCommand() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        try state.doString("""
+            local result = lingxi.shell.exec("rm -rf /")
+            assert(type(result) == "table", "expected table, got " .. type(result))
+            assert(result.exitCode == -1, "expected exitCode -1, got " .. tostring(result.exitCode))
+            assert(result.stderr:find("not in shell whitelist") ~= nil, "expected whitelist error, got " .. tostring(result.stderr))
+        """)
+    }
+
+    @Test func shellExecDisabled() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false))
+        try state.doString("""
+            local result = lingxi.shell.exec("echo hello")
+            assert(type(result) == "table", "expected table, got " .. type(result))
+            assert(result.exitCode == -1, "expected exitCode -1, got " .. tostring(result.exitCode))
+            assert(result.stderr:find("shell permission not granted") ~= nil, "expected permission error, got " .. tostring(result.stderr))
+        """)
+    }
+
+    @Test func shellExecAbsolutePath() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        try state.doString("""
+            local result = lingxi.shell.exec("/bin/echo hello")
+            assert(type(result) == "table", "expected table, got " .. type(result))
+            assert(result.exitCode == 0, "expected exitCode 0, got " .. tostring(result.exitCode))
+            assert(result.stdout == "hello\\n", "expected 'hello\\\\n', got '" .. tostring(result.stdout) .. "'")
+        """)
+    }
+
+    @Test func shellExecMissingArgument() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        try state.doString("""
+            local result = lingxi.shell.exec()
+            assert(type(result) == "table", "expected table, got " .. type(result))
+            assert(result.exitCode == -1, "expected exitCode -1, got " .. tostring(result.exitCode))
+        """)
+    }
 }

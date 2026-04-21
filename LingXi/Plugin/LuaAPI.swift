@@ -7,6 +7,9 @@ nonisolated enum LuaAPI {
     /// Maps plugin ID to its filesystem permission paths for C callbacks.
     private static var filePermissions: [String: [String]] = [:]
 
+    /// Maps plugin ID to its shell command whitelist for C callbacks.
+    private static var shellPermissions: [String: [String]] = [:]
+
     /// Call after `openLibs()` and `LuaSandbox.apply()`.
     /// APIs without permission are registered as stubs that return nil/false and log a warning.
     static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "") {
@@ -26,6 +29,12 @@ nonisolated enum LuaAPI {
         } else {
             filePermissions[pluginId] = permissions.filesystem
             registerFile(state: state)
+        }
+        if permissions.shell.isEmpty {
+            registerDisabledShell(state: state)
+        } else {
+            shellPermissions[pluginId] = permissions.shell
+            registerShell(state: state)
         }
         registerStore(state: state, pluginId: pluginId)
         state.setGlobal("lingxi")
@@ -69,6 +78,28 @@ nonisolated enum LuaAPI {
         state.pushFunction(disabledClipboardWrite)
         state.setField("write", at: -2)
         state.setField("clipboard", at: -2)
+    }
+
+    // MARK: - lingxi.shell
+
+    private static func registerShell(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(shellExec)
+        state.setField("exec", at: -2)
+        state.setField("shell", at: -2)
+    }
+
+    private static func registerDisabledShell(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(disabledShellExec)
+        state.setField("exec", at: -2)
+        state.setField("shell", at: -2)
+    }
+
+    /// Retrieve the shell permission commands for the current plugin.
+    private static func shellCommands(from L: OpaquePointer) -> [String] {
+        let pid = pluginId(from: L)
+        return shellPermissions[pid] ?? []
     }
 
     // MARK: - lingxi.file
@@ -409,6 +440,19 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    private static let disabledShellExec: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.shell.exec denied: shell permission not granted")
+        lua_createtable(L, 0, 3)
+        lua_pushinteger(L, -1)
+        lua_setfield(L, -2, "exitCode")
+        lua_pushstring(L, "")
+        lua_setfield(L, -2, "stdout")
+        lua_pushstring(L, "shell permission not granted")
+        lua_setfield(L, -2, "stderr")
+        return 1
+    }
+
     // MARK: - lingxi.store
 
     private static func registerStore(state: LuaState, pluginId: String) {
@@ -595,5 +639,160 @@ nonisolated enum LuaAPI {
         default:
             lua_pushstring(L, String(describing: value))
         }
+    }
+
+    // MARK: - Shell C Functions
+
+    private static let shellTimeout: TimeInterval = 30
+
+    /// Parse a command string into an array of arguments, supporting single and double quotes.
+    private static func parseCommand(_ command: String) -> [String]? {
+        var tokens: [String] = []
+        var current = ""
+        var inSingleQuote = false
+        var inDoubleQuote = false
+
+        for char in command {
+            if char == "'" && !inDoubleQuote {
+                inSingleQuote.toggle()
+            } else if char == "\"" && !inSingleQuote {
+                inDoubleQuote.toggle()
+            } else if char.isWhitespace && !inSingleQuote && !inDoubleQuote {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(char)
+            }
+        }
+
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+
+        if inSingleQuote || inDoubleQuote {
+            return nil
+        }
+
+        return tokens.isEmpty ? nil : tokens
+    }
+
+    /// `lingxi.shell.exec(cmd) -> {exitCode: number, stdout: string, stderr: string}`
+    private static let shellExec: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let cmdStr = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_createtable(L, 0, 3)
+            lua_pushinteger(L, -1)
+            lua_setfield(L, -2, "exitCode")
+            lua_pushstring(L, "")
+            lua_setfield(L, -2, "stdout")
+            lua_pushstring(L, "missing command argument")
+            lua_setfield(L, -2, "stderr")
+            return 1
+        }
+
+        guard let args = parseCommand(cmdStr), !args.isEmpty else {
+            lua_createtable(L, 0, 3)
+            lua_pushinteger(L, -1)
+            lua_setfield(L, -2, "exitCode")
+            lua_pushstring(L, "")
+            lua_setfield(L, -2, "stdout")
+            lua_pushstring(L, "invalid command string")
+            lua_setfield(L, -2, "stderr")
+            return 1
+        }
+
+        let command = args[0]
+        let allowedCommands = shellCommands(from: L)
+
+        let isAllowed = allowedCommands.contains { allowed in
+            if allowed == command { return true }
+            if command.hasPrefix("/") {
+                return allowed == (command as NSString).lastPathComponent
+            }
+            return false
+        }
+
+        if !isAllowed {
+            DebugLog.log("[LuaAPI] lingxi.shell.exec denied: command '\(command)' not in whitelist")
+            lua_createtable(L, 0, 3)
+            lua_pushinteger(L, -1)
+            lua_setfield(L, -2, "exitCode")
+            lua_pushstring(L, "")
+            lua_setfield(L, -2, "stdout")
+            lua_pushstring(L, "Command '\(command)' not in shell whitelist")
+            lua_setfield(L, -2, "stderr")
+            return 1
+        }
+
+        let process = Process()
+        if command.hasPrefix("/") {
+            process.executableURL = URL(fileURLWithPath: command)
+            process.arguments = Array(args.dropFirst())
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = args
+        }
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var exitCode: Int32 = -1
+        var stdoutData = Data()
+        var stderrData = Data()
+        var runError: Error?
+
+        process.terminationHandler = { _ in
+            semaphore.signal()
+        }
+
+        do {
+            try process.run()
+        } catch {
+            runError = error
+            semaphore.signal()
+        }
+
+        let timeoutWorkItem = DispatchWorkItem {
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + shellTimeout, execute: timeoutWorkItem)
+
+        semaphore.wait()
+        timeoutWorkItem.cancel()
+
+        if let error = runError {
+            lua_createtable(L, 0, 3)
+            lua_pushinteger(L, -1)
+            lua_setfield(L, -2, "exitCode")
+            lua_pushstring(L, "")
+            lua_setfield(L, -2, "stdout")
+            lua_pushstring(L, "Failed to run command: \(error.localizedDescription)")
+            lua_setfield(L, -2, "stderr")
+            return 1
+        }
+
+        if process.isRunning {
+            process.terminate()
+        }
+
+        exitCode = process.terminationStatus
+        stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+        lua_createtable(L, 0, 3)
+        lua_pushinteger(L, lua_Integer(exitCode))
+        lua_setfield(L, -2, "exitCode")
+        lua_pushstring(L, String(data: stdoutData, encoding: .utf8) ?? "")
+        lua_setfield(L, -2, "stdout")
+        lua_pushstring(L, String(data: stderrData, encoding: .utf8) ?? "")
+        lua_setfield(L, -2, "stderr")
+        return 1
     }
 }
