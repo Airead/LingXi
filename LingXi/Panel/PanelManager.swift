@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import Carbon.HIToolbox
 import Combine
 import SwiftUI
 
@@ -25,7 +24,7 @@ final class PanelManager {
     private var panel: FloatingPanel?
     private let router: SearchRouter
     private let viewModel: SearchViewModel
-    private let pluginManager: PluginManager
+    private let pluginService: PluginService
     private let leaderKeyManager: LeaderKeyManager
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
@@ -33,54 +32,26 @@ final class PanelManager {
     private let snippetModule: SnippetModule
     private let modules: [SearchProviderModule]
 
-    init(settings: AppSettings, modules: [SearchProviderModule]) async {
-        let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
-        let clipboardStore = ClipboardStore(
-            database: db,
-            capacity: settings.clipboardHistoryCapacity,
-            imageDirectory: ClipboardStore.defaultImageDirectory
-        )
-
-        guard let appModule = modules.first(where: { $0 is ApplicationModule }) as? ApplicationModule else {
-            fatalError("ApplicationModule is required")
-        }
-        let router = SearchRouter(defaultProvider: appModule.defaultProvider, maxResults: settings.maxSearchResults)
+    init(
+        settings: AppSettings,
+        router: SearchRouter,
+        viewModel: SearchViewModel,
+        pluginService: PluginService,
+        snippetModule: SnippetModule,
+        leaderKeyManager: LeaderKeyManager,
+        modules: [SearchProviderModule]
+    ) {
         self.router = router
-
-        let snippetStore = SnippetStore()
-        let snippetModule = SnippetModule(store: snippetStore)
+        self.viewModel = viewModel
+        self.pluginService = pluginService
         self.snippetModule = snippetModule
-        self.leaderKeyManager = LeaderKeyManager()
-
-        let pluginManager = PluginManager(router: router)
-        self.pluginManager = pluginManager
-
-        let commandModule = CommandModule(pluginManager: pluginManager)
-        let clipboardModule = ClipboardModule(store: clipboardStore, pluginManager: pluginManager)
-
-        self.modules = modules + [clipboardModule, snippetModule, commandModule]
-
-        for module in self.modules {
-            module.register(router: router, settings: settings)
-        }
-
-        await pluginManager.loadAll()
-        for module in self.modules {
-            if let aware = module as? PluginAwareModule {
-                await aware.afterPluginsLoaded()
-            }
-        }
-
-        self.viewModel = await SearchViewModel(router: router, database: db)
-
-        for module in self.modules {
-            module.bindEvents(to: viewModel, context: self)
-        }
+        self.leaderKeyManager = leaderKeyManager
+        self.modules = modules
 
         applySettings(settings)
         self.panel = createPanel()
 
-        for module in self.modules {
+        for module in modules {
             module.start()
         }
 
@@ -130,7 +101,7 @@ final class PanelManager {
         previousApp = NSWorkspace.shared.frontmostApplication
 
         Task {
-            await pluginManager.dispatchEvent(
+            await pluginService.dispatchEvent(
                 name: PluginEvent.searchActivate.rawValue,
                 data: ["prefix": prefix ?? ""]
             )

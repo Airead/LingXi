@@ -117,14 +117,68 @@ struct LingXiApp: App {
         })
 
         Task { @MainActor in
+            let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
+
+            let appModule = ApplicationModule()
+            let fileSearchModule = FileSearchModule()
+            let bookmarkModule = BookmarkModule()
+            let systemSettingsModule = SystemSettingsModule()
+
+            let router = SearchRouter(defaultProvider: appModule.defaultProvider, maxResults: s.maxSearchResults)
+
+            let clipboardStore = ClipboardStore(
+                database: db,
+                capacity: s.clipboardHistoryCapacity,
+                imageDirectory: ClipboardStore.defaultImageDirectory
+            )
+
+            let snippetStore = SnippetStore()
+            let snippetModule = SnippetModule(store: snippetStore)
+            let leaderKeyManager = LeaderKeyManager()
+
+            let pluginManager = PluginManager(router: router)
+
+            let clipboardModule = ClipboardModule(store: clipboardStore, pluginManager: pluginManager)
+            let commandModule = CommandModule(pluginManager: pluginManager)
+
             let modules: [SearchProviderModule] = [
-                ApplicationModule(),
-                FileSearchModule(),
-                BookmarkModule(),
-                SystemSettingsModule(),
+                appModule,
+                fileSearchModule,
+                bookmarkModule,
+                systemSettingsModule,
+                clipboardModule,
+                snippetModule,
+                commandModule,
             ]
-            let pm = await PanelManager(settings: s, modules: modules)
+
+            for module in modules {
+                module.register(router: router, settings: s)
+            }
+
+            await pluginManager.loadAll()
+            for module in modules {
+                if let aware = module as? PluginAwareModule {
+                    await aware.afterPluginsLoaded()
+                }
+            }
+
+            let viewModel = await SearchViewModel(router: router, database: db)
+
+            let pm = PanelManager(
+                settings: s,
+                router: router,
+                viewModel: viewModel,
+                pluginService: pluginManager,
+                snippetModule: snippetModule,
+                leaderKeyManager: leaderKeyManager,
+                modules: modules
+            )
             holder.panelManager = pm
+
+            for module in modules {
+                module.bindEvents(to: viewModel, context: pm)
+            }
+
             observeForever({
                 _ = s.maxSearchResults
                 _ = s.applicationSearchEnabled
