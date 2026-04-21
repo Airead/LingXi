@@ -30,60 +30,59 @@ final class PanelManager {
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
     var previousApp: NSRunningApplication?
-    private let clipboardModule: ClipboardModule
     private let snippetModule: SnippetModule
-    private let commandModule: CommandModule
+    private let modules: [SearchProviderModule]
 
-    init(settings: AppSettings) async {
+    init(settings: AppSettings, modules: [SearchProviderModule]) async {
         let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
         let clipboardStore = ClipboardStore(
             database: db,
             capacity: settings.clipboardHistoryCapacity,
             imageDirectory: ClipboardStore.defaultImageDirectory
         )
-        let router = SearchRouter(defaultProvider: ApplicationSearchProvider(), maxResults: settings.maxSearchResults)
-        router.register(prefix: settings.folderSearchPrefix, id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
-        router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
-        router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
+
+        guard let appModule = modules.first(where: { $0 is ApplicationModule }) as? ApplicationModule else {
+            fatalError("ApplicationModule is required")
+        }
+        let router = SearchRouter(defaultProvider: appModule.defaultProvider, maxResults: settings.maxSearchResults)
+        self.router = router
+
         let snippetStore = SnippetStore()
         let snippetModule = SnippetModule(store: snippetStore)
         self.snippetModule = snippetModule
         self.leaderKeyManager = LeaderKeyManager()
-        snippetModule.register(router: router, settings: settings)
-
-        let systemSettingsProvider = SystemSettingsProvider()
-        router.register(prefix: settings.systemSettingsSearchPrefix, id: "system-settings", provider: systemSettingsProvider)
-        let systemSettingsMixed = SystemSettingsMixedProvider(source: systemSettingsProvider)
-        router.registerDefault(id: "system-settings-mixed", provider: systemSettingsMixed)
-
-        self.router = router
 
         let pluginManager = PluginManager(router: router)
         self.pluginManager = pluginManager
 
         let commandModule = CommandModule(pluginManager: pluginManager)
-        self.commandModule = commandModule
-        commandModule.register(router: router, settings: settings)
+        let clipboardModule = ClipboardModule(store: clipboardStore, pluginManager: pluginManager)
+
+        self.modules = modules + [clipboardModule, snippetModule, commandModule]
+
+        for module in self.modules {
+            module.register(router: router, settings: settings)
+        }
 
         await pluginManager.loadAll()
-        await commandModule.afterPluginsLoaded()
-
-        let clipboardModule = ClipboardModule(store: clipboardStore, pluginManager: pluginManager)
-        self.clipboardModule = clipboardModule
-        clipboardModule.register(router: router, settings: settings)
+        for module in self.modules {
+            if let aware = module as? PluginAwareModule {
+                await aware.afterPluginsLoaded()
+            }
+        }
 
         self.viewModel = await SearchViewModel(router: router, database: db)
 
-        clipboardModule.bindEvents(to: viewModel, context: self)
-        snippetModule.bindEvents(to: viewModel, context: self)
-        commandModule.bindEvents(to: viewModel, context: self)
+        for module in self.modules {
+            module.bindEvents(to: viewModel, context: self)
+        }
 
         applySettings(settings)
         self.panel = createPanel()
 
-        clipboardModule.start()
-        snippetModule.start()
-        commandModule.start()
+        for module in self.modules {
+            module.start()
+        }
 
         if settings.leaderKeyEnabled {
             leaderKeyManager.start()
@@ -92,20 +91,9 @@ final class PanelManager {
 
     func applySettings(_ settings: AppSettings) {
         router.setMaxResults(settings.maxSearchResults)
-        router.setEnabled(settings.applicationSearchEnabled, forId: "default")
-        router.setEnabled(settings.fileSearchEnabled, forId: "file")
-        router.setEnabled(settings.folderSearchEnabled, forId: "folder")
-        router.setEnabled(settings.bookmarkSearchEnabled, forId: "bookmark")
-        router.updatePrefix(settings.fileSearchPrefix, forId: "file")
-        router.updatePrefix(settings.folderSearchPrefix, forId: "folder")
-        router.updatePrefix(settings.bookmarkSearchPrefix, forId: "bookmark")
-        router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings")
-        router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings-mixed")
-        router.updatePrefix(settings.systemSettingsSearchPrefix, forId: "system-settings")
-
-        clipboardModule.applySettings(settings, router: router)
-        snippetModule.applySettings(settings, router: router)
-        commandModule.applySettings(settings, router: router)
+        for module in modules {
+            module.applySettings(settings, router: router)
+        }
     }
 
     func saveInputSource() {

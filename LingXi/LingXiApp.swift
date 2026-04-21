@@ -117,7 +117,13 @@ struct LingXiApp: App {
         })
 
         Task { @MainActor in
-            let pm = await PanelManager(settings: s)
+            let modules: [SearchProviderModule] = [
+                ApplicationModule(),
+                FileSearchModule(),
+                BookmarkModule(),
+                SystemSettingsModule(),
+            ]
+            let pm = await PanelManager(settings: s, modules: modules)
             holder.panelManager = pm
             observeForever({
                 _ = s.maxSearchResults
