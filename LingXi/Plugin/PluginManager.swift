@@ -176,7 +176,7 @@ final class PluginManager: PluginService {
         LuaSandbox.apply(to: state)
 
         // 2. Register Lua APIs based on permissions
-        LuaAPI.registerAll(state: state, permissions: manifest.permissions)
+        LuaAPI.registerAll(state: state, permissions: manifest.permissions, pluginId: manifest.id)
 
         try state.doFile(scriptPath)
 

@@ -4,11 +4,11 @@ import Testing
 @testable import LingXi
 
 struct LuaAPITests {
-    private func makeState(permissions: PermissionConfig = .default) -> LuaState {
+    private func makeState(permissions: PermissionConfig = .default, pluginId: String = "test.plugin") -> LuaState {
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
-        LuaAPI.registerAll(state: state, permissions: permissions)
+        LuaAPI.registerAll(state: state, permissions: permissions, pluginId: pluginId)
         return state
     }
 
@@ -169,5 +169,166 @@ struct LuaAPITests {
         state.getGlobal("lingxi")
         #expect(state.isTable(at: -1))
         state.pop()
+    }
+
+    // MARK: - lingxi.store
+
+    @Test func storeSubtableExists() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.store) == 'table')")
+    }
+
+    @Test func storeGetIsFunction() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.store.get) == 'function')")
+    }
+
+    @Test func storeSetIsFunction() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.store.set) == 'function')")
+    }
+
+    @Test func storeDeleteIsFunction() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.store.delete) == 'function')")
+    }
+
+    @Test func storeSetAndGetString() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state = makeState(pluginId: "test.store.string")
+        try state.doString("""
+            lingxi.store.set("name", "hello")
+            local value = lingxi.store.get("name")
+            assert(value == "hello", "expected hello, got " .. tostring(value))
+        """)
+    }
+
+    @Test func storeSetAndGetNumber() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state = makeState(pluginId: "test.store.number")
+        try state.doString("""
+            lingxi.store.set("count", 42)
+            local value = lingxi.store.get("count")
+            assert(value == 42, "expected 42, got " .. tostring(value))
+        """)
+    }
+
+    @Test func storeSetAndGetBoolean() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state = makeState(pluginId: "test.store.bool")
+        try state.doString("""
+            lingxi.store.set("enabled", true)
+            local value = lingxi.store.get("enabled")
+            assert(value == true, "expected true, got " .. tostring(value))
+        """)
+    }
+
+    @Test func storeSetAndGetTable() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state = makeState(pluginId: "test.store.table")
+        try state.doString("""
+            lingxi.store.set("data", {name = "test", value = 123})
+            local data = lingxi.store.get("data")
+            assert(type(data) == "table", "expected table, got " .. type(data))
+            assert(data.name == "test", "expected test, got " .. tostring(data.name))
+            assert(data.value == 123, "expected 123, got " .. tostring(data.value))
+        """)
+    }
+
+    @Test func storeDeleteRemovesKey() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state = makeState(pluginId: "test.store.delete")
+        try state.doString("""
+            lingxi.store.set("temp", "value")
+            local ok = lingxi.store.delete("temp")
+            assert(ok == true, "expected true, got " .. tostring(ok))
+            local value = lingxi.store.get("temp")
+            assert(value == nil, "expected nil, got " .. tostring(value))
+        """)
+    }
+
+    @Test func storeGetMissingReturnsNil() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state = makeState(pluginId: "test.store.missing")
+        try state.doString("""
+            local value = lingxi.store.get("nonexistent")
+            assert(value == nil, "expected nil, got " .. tostring(value))
+        """)
+    }
+
+    @Test func storePersistsAcrossStates() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state1 = makeState(pluginId: "test.store.persist")
+        try state1.doString("lingxi.store.set(\"counter\", 5)")
+
+        let state2 = makeState(pluginId: "test.store.persist")
+        try state2.doString("""
+            local value = lingxi.store.get("counter")
+            assert(value == 5, "expected 5, got " .. tostring(value))
+        """)
+    }
+
+    @Test func storeIsIsolatedByPluginId() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let stateA = makeState(pluginId: "plugin.a")
+        try stateA.doString("lingxi.store.set(\"key\", \"value-a\")")
+
+        let stateB = makeState(pluginId: "plugin.b")
+        try stateB.doString("""
+            local value = lingxi.store.get("key")
+            assert(value == nil, "expected nil (isolated), got " .. tostring(value))
+        """)
+    }
+
+    @Test func storeSetReturnsTrue() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state = makeState(pluginId: "test.store.set.ok")
+        try state.doString("""
+            local ok = lingxi.store.set("key", "value")
+            assert(ok == true, "expected true, got " .. tostring(ok))
+        """)
+    }
+
+    @Test func storeSetAndGetArray() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = StoreManager(baseDirectory: tempDir)
+
+        let state = makeState(pluginId: "test.store.array")
+        try state.doString("""
+            lingxi.store.set("list", {"one", "two", "three"})
+            local list = lingxi.store.get("list")
+            assert(type(list) == "table", "expected table, got " .. type(list))
+            assert(list[1] == "one", "expected one, got " .. tostring(list[1]))
+            assert(list[2] == "two", "expected two, got " .. tostring(list[2]))
+            assert(list[3] == "three", "expected three, got " .. tostring(list[3]))
+        """)
     }
 }
