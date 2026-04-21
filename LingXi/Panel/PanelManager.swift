@@ -28,7 +28,7 @@ final class PanelManager {
     private let clipboardStore: ClipboardStore
     private let snippetStore: SnippetStore
     private let commandProvider: CommandSearchProvider
-    private let pluginManager: PluginManager
+    private let pluginManager: PluginService
     private let snippetExpander: SnippetExpander
     private let leaderKeyManager: LeaderKeyManager
     private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
