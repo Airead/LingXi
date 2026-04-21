@@ -8,7 +8,7 @@ final class AppAssembly {
     }
 
     static func assemble(settings: AppSettings) async -> Result {
-        let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
+        let database = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
 
         let appModule = ApplicationModule()
         let fileSearchModule = FileSearchModule()
@@ -18,7 +18,7 @@ final class AppAssembly {
         let router = SearchRouter(defaultProvider: appModule.defaultProvider, maxResults: settings.maxSearchResults)
 
         let clipboardStore = ClipboardStore(
-            database: db,
+            database: database,
             capacity: settings.clipboardHistoryCapacity,
             imageDirectory: ClipboardStore.defaultImageDirectory
         )
@@ -39,7 +39,7 @@ final class AppAssembly {
             systemSettingsModule,
             clipboardModule,
             snippetModule,
-            commandModule,
+            commandModule
         ]
 
         for module in modules {
@@ -53,7 +53,7 @@ final class AppAssembly {
             }
         }
 
-        let viewModel = await SearchViewModel(router: router, database: db)
+        let viewModel = await SearchViewModel(router: router, database: database)
 
         let panelManager = PanelManager(
             settings: settings,
