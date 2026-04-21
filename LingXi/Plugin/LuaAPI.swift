@@ -4,6 +4,9 @@ import Foundation
 
 /// Registers `lingxi.*` APIs into a Lua state based on plugin permissions.
 nonisolated enum LuaAPI {
+    /// Maps plugin ID to its filesystem permission paths for C callbacks.
+    private static var filePermissions: [String: [String]] = [:]
+
     /// Call after `openLibs()` and `LuaSandbox.apply()`.
     /// APIs without permission are registered as stubs that return nil/false and log a warning.
     static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "") {
@@ -17,6 +20,12 @@ nonisolated enum LuaAPI {
             registerClipboard(state: state)
         } else {
             registerDisabledClipboard(state: state)
+        }
+        if permissions.filesystem.isEmpty {
+            registerDisabledFile(state: state)
+        } else {
+            filePermissions[pluginId] = permissions.filesystem
+            registerFile(state: state)
         }
         registerStore(state: state, pluginId: pluginId)
         state.setGlobal("lingxi")
@@ -60,6 +69,175 @@ nonisolated enum LuaAPI {
         state.pushFunction(disabledClipboardWrite)
         state.setField("write", at: -2)
         state.setField("clipboard", at: -2)
+    }
+
+    // MARK: - lingxi.file
+
+    private static func registerFile(state: LuaState) {
+        state.createTable(nrec: 4)
+        state.pushFunction(fileRead)
+        state.setField("read", at: -2)
+        state.pushFunction(fileWrite)
+        state.setField("write", at: -2)
+        state.pushFunction(fileList)
+        state.setField("list", at: -2)
+        state.pushFunction(fileExists)
+        state.setField("exists", at: -2)
+        state.setField("file", at: -2)
+    }
+
+    private static func registerDisabledFile(state: LuaState) {
+        state.createTable(nrec: 4)
+        state.pushFunction(disabledFileRead)
+        state.setField("read", at: -2)
+        state.pushFunction(disabledFileWrite)
+        state.setField("write", at: -2)
+        state.pushFunction(disabledFileList)
+        state.setField("list", at: -2)
+        state.pushFunction(disabledFileExists)
+        state.setField("exists", at: -2)
+        state.setField("file", at: -2)
+    }
+
+    /// Retrieve the filesystem permission paths for the current plugin.
+    private static func filePaths(from L: OpaquePointer) -> [String] {
+        let pid = pluginId(from: L)
+        return filePermissions[pid] ?? []
+    }
+
+    // MARK: - File C Functions
+
+    /// `lingxi.file.read(path) -> string | nil`
+    private static let fileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        do {
+            let content = try String(contentsOfFile: canonicalPath, encoding: .utf8)
+            lua_pushstring(L, content)
+        } catch {
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.write(path, content) -> boolean`
+    private static let fileWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let path = lua_swift_tostring(L, 1).map({ String(cString: $0) }),
+              let content = lua_swift_tostring(L, 2).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            try content.write(toFile: canonicalPath, atomically: true, encoding: .utf8)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.list(dir) -> {name: string, isDir: boolean}[] | nil`
+    private static let fileList: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: canonicalPath) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        lua_createtable(L, Int32(entries.count), 0)
+        for (index, entry) in entries.enumerated() {
+            let entryPath = canonicalPath + "/" + entry
+            let isDir = fm.fileExists(atPath: entryPath, isDirectory: nil)
+                ? (try? fm.attributesOfItem(atPath: entryPath)[.type] as? FileAttributeType == .typeDirectory) ?? false
+                : false
+
+            lua_createtable(L, 0, 2)
+            lua_pushstring(L, entry)
+            lua_setfield(L, -2, "name")
+            lua_pushboolean(L, isDir ? 1 : 0)
+            lua_setfield(L, -2, "isDir")
+            lua_rawseti(L, -2, lua_Integer(index + 1))
+        }
+        return 1
+    }
+
+    /// `lingxi.file.exists(path) -> boolean`
+    private static let fileExists: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        let exists = FileManager.default.fileExists(atPath: canonicalPath)
+        lua_pushboolean(L, exists ? 1 : 0)
+        return 1
+    }
+
+    // MARK: - Disabled File Stubs
+
+    private static let disabledFileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.read denied: filesystem permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledFileWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.write denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileList: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.list denied: filesystem permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledFileExists: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.exists denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
     }
 
     // MARK: - HTTP C Functions

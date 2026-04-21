@@ -331,4 +331,146 @@ struct LuaAPITests {
             assert(list[3] == "three", "expected three, got " .. tostring(list[3]))
         """)
     }
+
+    // MARK: - lingxi.file
+
+    @Test func fileSubtableExists() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        try state.doString("assert(type(lingxi.file) == 'table')")
+    }
+
+    @Test func fileReadIsFunction() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        try state.doString("assert(type(lingxi.file.read) == 'function')")
+    }
+
+    @Test func fileWriteIsFunction() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        try state.doString("assert(type(lingxi.file.write) == 'function')")
+    }
+
+    @Test func fileListIsFunction() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        try state.doString("assert(type(lingxi.file.list) == 'function')")
+    }
+
+    @Test func fileExistsIsFunction() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        try state.doString("assert(type(lingxi.file.exists) == 'function')")
+    }
+
+    @Test func fileWriteAndRead() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            pluginId: "test.file.write-read"
+        )
+        let filePath = tempDir.appendingPathComponent("test.txt").path
+        try state.doString("""
+            local ok = lingxi.file.write("\(filePath)", "hello world")
+            assert(ok == true, "expected true, got " .. tostring(ok))
+            local content = lingxi.file.read("\(filePath)")
+            assert(content == "hello world", "expected hello world, got " .. tostring(content))
+        """)
+    }
+
+    @Test func fileExistsReturnsTrueForExistingFile() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let filePath = tempDir.appendingPathComponent("exists.txt").path
+        try "test".write(toFile: filePath, atomically: true, encoding: .utf8)
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            pluginId: "test.file.exists"
+        )
+        try state.doString("""
+            local exists = lingxi.file.exists("\(filePath)")
+            assert(exists == true, "expected true, got " .. tostring(exists))
+        """)
+    }
+
+    @Test func fileExistsReturnsFalseForMissingFile() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            pluginId: "test.file.exists-missing"
+        )
+        try state.doString("""
+            local exists = lingxi.file.exists("\(tempDir.path)/missing.txt")
+            assert(exists == false, "expected false, got " .. tostring(exists))
+        """)
+    }
+
+    @Test func fileListReturnsDirectoryContents() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        try FileManager.default.createDirectory(at: tempDir.appendingPathComponent("subdir"), withIntermediateDirectories: true)
+        try "file1".write(toFile: tempDir.appendingPathComponent("file1.txt").path, atomically: true, encoding: .utf8)
+        try "file2".write(toFile: tempDir.appendingPathComponent("file2.txt").path, atomically: true, encoding: .utf8)
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            pluginId: "test.file.list"
+        )
+        try state.doString("""
+            local entries = lingxi.file.list("\(tempDir.path)")
+            assert(type(entries) == "table", "expected table, got " .. type(entries))
+            assert(#entries == 3, "expected 3 entries, got " .. tostring(#entries))
+        """)
+    }
+
+    @Test func fileDeniedOutsideWhitelist() throws {
+        let allowedDir = makeTestTempDir()
+        let deniedDir = makeTestTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: allowedDir)
+            try? FileManager.default.removeItem(at: deniedDir)
+        }
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [allowedDir.path], shell: [], notify: false),
+            pluginId: "test.file.denied"
+        )
+        try state.doString("""
+            local ok = lingxi.file.write("\(deniedDir.path)/hacked.txt", "bad")
+            assert(ok == false, "expected false, got " .. tostring(ok))
+            local content = lingxi.file.read("\(deniedDir.path)/hacked.txt")
+            assert(content == nil, "expected nil, got " .. tostring(content))
+        """)
+    }
+
+    @Test func fileDisabledReturnsNilOrFalse() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false))
+        try state.doString("""
+            local content = lingxi.file.read("/tmp/test.txt")
+            assert(content == nil, "expected nil, got " .. tostring(content))
+            local ok = lingxi.file.write("/tmp/test.txt", "test")
+            assert(ok == false, "expected false, got " .. tostring(ok))
+            local exists = lingxi.file.exists("/tmp/test.txt")
+            assert(exists == false, "expected false, got " .. tostring(exists))
+            local list = lingxi.file.list("/tmp")
+            assert(list == nil, "expected nil, got " .. tostring(list))
+        """)
+    }
+
+    @Test func fileReadReturnsNilForMissingFile() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            pluginId: "test.file.read-missing"
+        )
+        try state.doString("""
+            local content = lingxi.file.read("\(tempDir.path)/nonexistent.txt")
+            assert(content == nil, "expected nil, got " .. tostring(content))
+        """)
+    }
 }
