@@ -142,7 +142,7 @@ final class PanelManager {
 
     func toggle() {
         if isVisible {
-            hide()
+            hide(returnFocus: true)
         } else {
             show()
         }
@@ -190,13 +190,17 @@ final class PanelManager {
         activePanel.makeKeyAndOrderFront(nil)
     }
 
-    func hide() {
+    func hide(returnFocus: Bool = false) {
         guard isVisible else { return }
         panel?.orderOut(nil)
         inputSourceManager.restore()
+        let app = previousApp
         previousApp = nil
         snippetExpander.resume()
         leaderKeyManager.resume()
+        if returnFocus {
+            app?.activate()
+        }
     }
 
     func setAutoExpandEnabled(_ enabled: Bool) {
@@ -222,10 +226,10 @@ final class PanelManager {
     private func createPanel() -> FloatingPanel {
         let newPanel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: PanelLayout.defaultWidth, height: PanelLayout.searchBarHeight))
         newPanel.contentView = NSHostingView(rootView: PanelContentView(viewModel: viewModel, onDismiss: { [weak self] in
-            self?.hide()
+            self?.hide(returnFocus: true)
         }))
         newPanel.onDismiss = { [weak self] in
-            self?.hide()
+            self?.hide(returnFocus: true)
         }
         newPanel.onCommandComma = {
             AppDelegate.showSettings()
