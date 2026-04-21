@@ -204,4 +204,106 @@ struct PluginManagerTests {
         #expect(manager.plugins.isEmpty)
         #expect(manager.failures.isEmpty)
     }
+
+    // MARK: - TOML manifest support
+
+    @Test func loadAllWithTOMLManifest() async throws {
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try writeTestPlugin(in: dir, name: "toml-plugin", toml: """
+            [plugin]
+            id = "toml.plugin"
+            name = "TOML Plugin"
+            version = "1.0.0"
+            description = "Loaded from TOML"
+
+            [search]
+            prefix = "tp"
+            debounce = 200
+            timeout = 6000
+
+            [permissions]
+            network = false
+            clipboard = true
+        """, lua: """
+            function search(query) return {} end
+        """)
+
+        let manager = PluginManager(router: emptyRouter(), directory: dir)
+        await manager.loadAll()
+
+        #expect(manager.plugins.count == 1)
+        #expect(manager.plugins[0].manifest.id == "toml.plugin")
+        #expect(manager.plugins[0].manifest.name == "TOML Plugin")
+        #expect(manager.plugins[0].manifest.prefix == "tp")
+        #expect(manager.plugins[0].manifest.debounce == 200)
+        #expect(manager.plugins[0].manifest.timeout == 6000)
+        #expect(manager.plugins[0].manifest.permissions.network == false)
+        #expect(manager.plugins[0].manifest.permissions.clipboard == true)
+        #expect(manager.failures.isEmpty)
+    }
+
+    @Test func tomlManifestDisablesHttpAPI() async throws {
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try writeTestPlugin(in: dir, name: "no-net", toml: """
+            [plugin]
+            id = "no.net"
+            name = "No Network"
+
+            [permissions]
+            network = false
+            clipboard = true
+        """, lua: """
+            function search(query)
+                local ok, err = pcall(function()
+                    return lingxi.http.get("https://example.com")
+                end)
+                local hasHttp = (lingxi.http ~= nil)
+                return {{
+                    title = "HTTP disabled",
+                    subtitle = tostring(not hasHttp)
+                }}
+            end
+        """)
+
+        let manager = PluginManager(router: emptyRouter(), directory: dir)
+        await manager.loadAll()
+
+        #expect(manager.plugins.count == 1)
+        let results = await manager.plugins[0].provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].name == "HTTP disabled")
+    }
+
+    @Test func backwardCompatibleWithoutTOML() async throws {
+        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try writeTestPlugin(in: dir, name: "legacy", lua: """
+            plugin = { name = "Legacy", prefix = "l", description = "Old style" }
+            function search(query)
+                local hasHttp = (lingxi.http ~= nil)
+                return {{
+                    title = "Has HTTP",
+                    subtitle = tostring(hasHttp)
+                }}
+            end
+        """)
+
+        let manager = PluginManager(router: emptyRouter(), directory: dir)
+        await manager.loadAll()
+
+        #expect(manager.plugins.count == 1)
+        #expect(manager.plugins[0].manifest.name == "Legacy")
+        #expect(manager.plugins[0].manifest.prefix == "l")
+        // Backward compatible plugins get full permissions
+        #expect(manager.plugins[0].manifest.permissions.network == true)
+
+        let results = await manager.plugins[0].provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].name == "Has HTTP")
+    }
 }

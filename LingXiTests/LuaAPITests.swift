@@ -4,11 +4,11 @@ import Testing
 @testable import LingXi
 
 struct LuaAPITests {
-    private func makeState() -> LuaState {
+    private func makeState(permissions: PermissionConfig = .backwardCompatible) -> LuaState {
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
-        LuaAPI.registerAll(state: state)
+        LuaAPI.registerAll(state: state, permissions: permissions)
         return state
     }
 
@@ -132,5 +132,36 @@ struct LuaAPITests {
             local text = lingxi.clipboard.read()
             assert(text == nil, "expected nil, got " .. tostring(text))
         """)
+    }
+
+    // MARK: - Permission-based API gating
+
+    @Test func httpDisabledWhenNetworkFalse() throws {
+        let perms = PermissionConfig(network: false, clipboard: true, filesystem: [], shell: [], notify: false)
+        let state = makeState(permissions: perms)
+        try state.doString("assert(lingxi.http == nil)")
+    }
+
+    @Test func clipboardDisabledWhenClipboardFalse() throws {
+        let perms = PermissionConfig(network: true, clipboard: false, filesystem: [], shell: [], notify: false)
+        let state = makeState(permissions: perms)
+        try state.doString("assert(lingxi.clipboard == nil)")
+    }
+
+    @Test func allApisDisabled() throws {
+        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false)
+        let state = makeState(permissions: perms)
+        try state.doString("""
+            assert(lingxi.http == nil)
+            assert(lingxi.clipboard == nil)
+        """)
+    }
+
+    @Test func lingxiTableStillCreatedWhenNoPermissions() throws {
+        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false)
+        let state = makeState(permissions: perms)
+        state.getGlobal("lingxi")
+        #expect(state.isTable(at: -1))
+        state.pop()
     }
 }

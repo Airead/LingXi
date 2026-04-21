@@ -6,24 +6,6 @@ nonisolated enum PluginEvent: String {
     case searchActivate = "on_search_activate"
 }
 
-/// A command declared by a Lua plugin in `plugin.commands`.
-struct PluginCommand: Sendable {
-    let name: String
-    let title: String
-    let subtitle: String
-    let actionFunctionName: String
-}
-
-/// Metadata parsed from a Lua plugin's `plugin` global table.
-struct PluginManifest: Sendable {
-    let name: String
-    let prefix: String
-    let description: String
-    let debounce: Int
-    let timeout: Int
-    let commands: [PluginCommand]
-}
-
 /// A successfully loaded plugin.
 struct LoadedPlugin: Sendable {
     let manifest: PluginManifest
@@ -186,13 +168,27 @@ final class PluginManager: PluginService {
     }
 
     nonisolated private static func loadPlugin(scriptPath: String, pluginDir: URL) async throws -> LoadedPlugin {
+        // 1. Try reading TOML manifest first
+        var manifest: PluginManifest? = try ManifestParser.parseTOMLManifest(from: pluginDir)
+
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
-        LuaAPI.registerAll(state: state)
+
+        // 2. Register Lua APIs based on permissions
+        let permissions = manifest?.permissions ?? .backwardCompatible
+        LuaAPI.registerAll(state: state, permissions: permissions)
+
         try state.doFile(scriptPath)
 
-        let manifest = readManifest(from: state, dirName: pluginDir.lastPathComponent)
+        // 3. Fall back to Lua global table for backward compatibility
+        if manifest == nil {
+            manifest = ManifestParser.parseLuaManifest(from: state, dirName: pluginDir.lastPathComponent)
+        }
+
+        guard let manifest else {
+            throw LuaError.runtimeError("Failed to read plugin manifest from \(pluginDir.lastPathComponent)")
+        }
 
         let provider = await LuaSearchProvider(
             name: manifest.name,
@@ -203,61 +199,5 @@ final class PluginManager: PluginService {
         )
 
         return LoadedPlugin(manifest: manifest, provider: provider)
-    }
-
-    nonisolated private static func readManifest(from state: LuaState, dirName: String) -> PluginManifest {
-        state.getGlobal("plugin")
-        defer { state.pop() }
-
-        guard state.isTable(at: -1) else {
-            return PluginManifest(
-                name: dirName,
-                prefix: dirName,
-                description: "",
-                debounce: 100,
-                timeout: 5000,
-                commands: []
-            )
-        }
-
-        let name = state.stringField("name", at: -1) ?? dirName
-        let prefix = state.stringField("prefix", at: -1) ?? dirName
-        let description = state.stringField("description", at: -1) ?? ""
-        let debounce = state.numberField("debounce", at: -1).map { Int($0) } ?? 100
-        let timeout = state.numberField("timeout", at: -1).map { Int($0) } ?? 5000
-        let commands = readCommands(from: state, pluginTableIndex: -1)
-
-        return PluginManifest(
-            name: name,
-            prefix: prefix,
-            description: description,
-            debounce: debounce,
-            timeout: timeout,
-            commands: commands
-        )
-    }
-
-    nonisolated private static func readCommands(from state: LuaState, pluginTableIndex: Int32) -> [PluginCommand] {
-        state.getField("commands", at: pluginTableIndex)
-        defer { state.pop() }
-
-        guard state.isTable(at: -1) else { return [] }
-
-        var commands: [PluginCommand] = []
-        state.iterateArray(at: -1) {
-            guard state.isTable(at: -1) else { return }
-            let name = state.stringField("name", at: -1) ?? ""
-            let title = state.stringField("title", at: -1) ?? ""
-            let action = state.stringField("action", at: -1) ?? ""
-            guard !name.isEmpty, !title.isEmpty, !action.isEmpty else { return }
-            let subtitle = state.stringField("subtitle", at: -1) ?? ""
-            commands.append(PluginCommand(
-                name: name,
-                title: title,
-                subtitle: subtitle,
-                actionFunctionName: action
-            ))
-        }
-        return commands
     }
 }

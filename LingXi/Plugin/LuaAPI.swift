@@ -2,13 +2,18 @@ import AppKit
 import CLua
 import Foundation
 
-/// Registers `lingxi.http` and `lingxi.clipboard` APIs into a Lua state.
+/// Registers `lingxi.*` APIs into a Lua state based on plugin permissions.
 nonisolated enum LuaAPI {
     /// Call after `openLibs()` and `LuaSandbox.apply()`.
-    static func registerAll(state: LuaState) {
+    /// Only registers APIs that the plugin has permission to use.
+    static func registerAll(state: LuaState, permissions: PermissionConfig) {
         state.createTable()
-        registerHTTP(state: state)
-        registerClipboard(state: state)
+        if permissions.network {
+            registerHTTP(state: state)
+        }
+        if permissions.clipboard {
+            registerClipboard(state: state)
+        }
         state.setGlobal("lingxi")
     }
 
