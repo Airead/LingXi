@@ -1,13 +1,11 @@
 import Foundation
 
-/// Per-plugin key-value store backed by JSON files.
-/// Uses NSLock for thread safety so it can be called synchronously from Lua C callbacks.
+/// Actor-isolated per-plugin key-value store backed by JSON files.
 /// Each plugin gets its own file at `~/.config/LingXi/plugin-data/<plugin-id>.json`.
-final class StoreManager: Sendable {
+actor StoreManager {
     static let shared = StoreManager()
 
     private let baseDirectory: URL
-    private let lock = NSLock()
 
     init(baseDirectory: URL? = nil) {
         if let baseDirectory {
@@ -21,23 +19,17 @@ final class StoreManager: Sendable {
     // MARK: - Public API
 
     func get(pluginId: String, key: String) -> Any? {
-        lock.lock()
-        defer { lock.unlock() }
         let data = loadData(pluginId: pluginId)
         return data[key]
     }
 
     func set(pluginId: String, key: String, value: Any) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
         var data = loadData(pluginId: pluginId)
         data[key] = value
         return saveData(pluginId: pluginId, data: data)
     }
 
     func delete(pluginId: String, key: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
         var data = loadData(pluginId: pluginId)
         data.removeValue(forKey: key)
         return saveData(pluginId: pluginId, data: data)
@@ -69,5 +61,45 @@ final class StoreManager: Sendable {
             DebugLog.log("[StoreManager] Failed to save data for plugin \(pluginId): \(error)")
             return false
         }
+    }
+}
+
+// MARK: - Synchronous wrappers for Lua C callbacks
+
+extension StoreManager {
+    /// Synchronous wrapper for `get`. Blocks until the actor method completes.
+    nonisolated func syncGet(pluginId: String, key: String) -> Any? {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Any?
+        Task {
+            result = await get(pluginId: pluginId, key: key)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+    }
+
+    /// Synchronous wrapper for `set`. Blocks until the actor method completes.
+    nonisolated func syncSet(pluginId: String, key: String, value: Any) -> Bool {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result = false
+        Task {
+            result = await set(pluginId: pluginId, key: key, value: value)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+    }
+
+    /// Synchronous wrapper for `delete`. Blocks until the actor method completes.
+    nonisolated func syncDelete(pluginId: String, key: String) -> Bool {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result = false
+        Task {
+            result = await delete(pluginId: pluginId, key: key)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
     }
 }

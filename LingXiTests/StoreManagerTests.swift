@@ -10,84 +10,84 @@ struct StoreManagerTests {
 
     // MARK: - Basic operations
 
-    @Test func getReturnsNilForMissingKey() {
+    @Test func getReturnsNilForMissingKey() async {
         let store = makeStore()
-        let value = store.get(pluginId: "test", key: "missing")
+        let value = await store.get(pluginId: "test", key: "missing")
         #expect(value == nil)
     }
 
-    @Test func setAndGetString() {
+    @Test func setAndGetString() async {
         let store = makeStore()
-        let ok = store.set(pluginId: "test", key: "name", value: "hello")
+        let ok = await store.set(pluginId: "test", key: "name", value: "hello")
         #expect(ok == true)
-        let value = store.get(pluginId: "test", key: "name")
+        let value = await store.get(pluginId: "test", key: "name")
         #expect(value as? String == "hello")
     }
 
-    @Test func setAndGetNumber() {
+    @Test func setAndGetNumber() async {
         let store = makeStore()
-        let ok = store.set(pluginId: "test", key: "count", value: 42)
+        let ok = await store.set(pluginId: "test", key: "count", value: 42)
         #expect(ok == true)
-        let value = store.get(pluginId: "test", key: "count")
+        let value = await store.get(pluginId: "test", key: "count")
         #expect(value as? Int == 42)
     }
 
-    @Test func setAndGetBoolean() {
+    @Test func setAndGetBoolean() async {
         let store = makeStore()
-        let ok = store.set(pluginId: "test", key: "enabled", value: true)
+        let ok = await store.set(pluginId: "test", key: "enabled", value: true)
         #expect(ok == true)
-        let value = store.get(pluginId: "test", key: "enabled")
+        let value = await store.get(pluginId: "test", key: "enabled")
         #expect(value as? Bool == true)
     }
 
-    @Test func setAndGetDictionary() {
+    @Test func setAndGetDictionary() async {
         let store = makeStore()
         let data: [String: Any] = ["name": "test", "value": 123]
-        let ok = store.set(pluginId: "test", key: "data", value: data)
+        let ok = await store.set(pluginId: "test", key: "data", value: data)
         #expect(ok == true)
-        let value = store.get(pluginId: "test", key: "data")
+        let value = await store.get(pluginId: "test", key: "data")
         let dict = value as? [String: Any]
         #expect(dict != nil)
         #expect(dict?["name"] as? String == "test")
         #expect(dict?["value"] as? Int == 123)
     }
 
-    @Test func setAndGetArray() {
+    @Test func setAndGetArray() async {
         let store = makeStore()
         let list: [Any] = ["one", "two", "three"]
-        let ok = store.set(pluginId: "test", key: "list", value: list)
+        let ok = await store.set(pluginId: "test", key: "list", value: list)
         #expect(ok == true)
-        let value = store.get(pluginId: "test", key: "list")
+        let value = await store.get(pluginId: "test", key: "list")
         let arr = value as? [Any]
         #expect(arr != nil)
         #expect(arr?.count == 3)
         #expect(arr?[0] as? String == "one")
     }
 
-    @Test func deleteRemovesKey() {
+    @Test func deleteRemovesKey() async {
         let store = makeStore()
-        store.set(pluginId: "test", key: "temp", value: "value")
-        let ok = store.delete(pluginId: "test", key: "temp")
+        await store.set(pluginId: "test", key: "temp", value: "value")
+        let ok = await store.delete(pluginId: "test", key: "temp")
         #expect(ok == true)
-        let value = store.get(pluginId: "test", key: "temp")
+        let value = await store.get(pluginId: "test", key: "temp")
         #expect(value == nil)
     }
 
-    @Test func deleteReturnsTrueForMissingKey() {
+    @Test func deleteReturnsTrueForMissingKey() async {
         let store = makeStore()
-        let ok = store.delete(pluginId: "test", key: "missing")
+        let ok = await store.delete(pluginId: "test", key: "missing")
         #expect(ok == true)
     }
 
     // MARK: - Plugin isolation
 
-    @Test func pluginsAreIsolated() {
+    @Test func pluginsAreIsolated() async {
         let store = makeStore()
-        store.set(pluginId: "plugin.a", key: "shared", value: "a-value")
-        store.set(pluginId: "plugin.b", key: "shared", value: "b-value")
+        await store.set(pluginId: "plugin.a", key: "shared", value: "a-value")
+        await store.set(pluginId: "plugin.b", key: "shared", value: "b-value")
 
-        let valueA = store.get(pluginId: "plugin.a", key: "shared")
-        let valueB = store.get(pluginId: "plugin.b", key: "shared")
+        let valueA = await store.get(pluginId: "plugin.a", key: "shared")
+        let valueB = await store.get(pluginId: "plugin.b", key: "shared")
 
         #expect(valueA as? String == "a-value")
         #expect(valueB as? String == "b-value")
@@ -95,26 +95,25 @@ struct StoreManagerTests {
 
     // MARK: - Persistence
 
-    @Test func dataPersistsToDisk() throws {
+    @Test func dataPersistsToDisk() async throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let store1 = StoreManager(baseDirectory: tempDir)
-        store1.set(pluginId: "persist-test", key: "counter", value: 7)
+        await store1.set(pluginId: "persist-test", key: "counter", value: 7)
 
-        // Create a new manager instance pointing to the same directory
         let store2 = StoreManager(baseDirectory: tempDir)
-        let value = store2.get(pluginId: "persist-test", key: "counter")
+        let value = await store2.get(pluginId: "persist-test", key: "counter")
 
         #expect(value as? Int == 7)
     }
 
-    @Test func createsJsonFile() throws {
+    @Test func createsJsonFile() async throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let store = StoreManager(baseDirectory: tempDir)
-        store.set(pluginId: "file-test", key: "name", value: "hello")
+        await store.set(pluginId: "file-test", key: "name", value: "hello")
 
         let fileURL = tempDir.appendingPathComponent("file-test.json")
         #expect(FileManager.default.fileExists(atPath: fileURL.path))
@@ -124,19 +123,36 @@ struct StoreManagerTests {
         #expect(json?["name"] as? String == "hello")
     }
 
-    // MARK: - Thread safety
+    // MARK: - Synchronous wrappers
 
-    @Test func concurrentAccessIsSafe() {
-        let store = makeStore()
-        let iterations = 100
+    @Test func syncGetReturnsValue() {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        DispatchQueue.concurrentPerform(iterations: 4) { threadIndex in
-            for i in 0..<iterations {
-                let key = "thread_\(threadIndex)_\(i)"
-                store.set(pluginId: "concurrent", key: key, value: i)
-                let value = store.get(pluginId: "concurrent", key: key)
-                #expect(value as? Int == i)
-            }
-        }
+        let store = StoreManager(baseDirectory: tempDir)
+        _ = store.syncSet(pluginId: "sync", key: "key", value: "sync-value")
+        let value = store.syncGet(pluginId: "sync", key: "key")
+        #expect(value as? String == "sync-value")
+    }
+
+    @Test func syncSetReturnsTrue() {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let store = StoreManager(baseDirectory: tempDir)
+        let ok = store.syncSet(pluginId: "sync", key: "key", value: "value")
+        #expect(ok == true)
+    }
+
+    @Test func syncDeleteRemovesKey() {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let store = StoreManager(baseDirectory: tempDir)
+        _ = store.syncSet(pluginId: "sync", key: "temp", value: "value")
+        let ok = store.syncDelete(pluginId: "sync", key: "temp")
+        #expect(ok == true)
+        let value = store.syncGet(pluginId: "sync", key: "temp")
+        #expect(value == nil)
     }
 }

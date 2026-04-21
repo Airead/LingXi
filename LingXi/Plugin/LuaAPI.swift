@@ -274,7 +274,7 @@ nonisolated enum LuaAPI {
             return 1
         }
         let pid = pluginId(from: L)
-        let value = StoreManager.shared.get(pluginId: pid, key: key)
+        let value = StoreManager.shared.syncGet(pluginId: pid, key: key)
         if let value {
             pushSwiftValue(L, value: value)
         } else {
@@ -292,7 +292,7 @@ nonisolated enum LuaAPI {
         }
         let pid = pluginId(from: L)
         let value = luaValueToSwift(L, index: 2)
-        let ok = StoreManager.shared.set(pluginId: pid, key: key, value: value)
+        let ok = StoreManager.shared.syncSet(pluginId: pid, key: key, value: value)
         lua_pushboolean(L, ok ? 1 : 0)
         return 1
     }
@@ -305,7 +305,7 @@ nonisolated enum LuaAPI {
             return 1
         }
         let pid = pluginId(from: L)
-        let ok = StoreManager.shared.delete(pluginId: pid, key: key)
+        let ok = StoreManager.shared.syncDelete(pluginId: pid, key: key)
         lua_pushboolean(L, ok ? 1 : 0)
         return 1
     }
