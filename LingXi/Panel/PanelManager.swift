@@ -25,16 +25,16 @@ final class PanelManager {
     private var panel: FloatingPanel?
     private let router: SearchRouter
     private let viewModel: SearchViewModel
-    private let clipboardStore: ClipboardStore
     private let snippetStore: SnippetStore
     private let commandProvider: CommandSearchProvider
-    private let pluginManager: PluginService
+    private let pluginManager: PluginManager
     private let snippetExpander: SnippetExpander
     private let leaderKeyManager: LeaderKeyManager
     private lazy var snippetEditorPanel = SnippetEditorPanel(store: snippetStore)
     private let inputSourceManager = InputSourceManager()
     private var sizeObserver: AnyCancellable?
-    private var previousApp: NSRunningApplication?
+    var previousApp: NSRunningApplication?
+    private let clipboardModule: ClipboardModule
 
     init(settings: AppSettings) async {
         let db = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
@@ -43,15 +43,10 @@ final class PanelManager {
             capacity: settings.clipboardHistoryCapacity,
             imageDirectory: ClipboardStore.defaultImageDirectory
         )
-        self.clipboardStore = clipboardStore
-        let copyHandler: @MainActor @Sendable (Int) -> Void = { itemId in
-            Task { await clipboardStore.writeToClipboard(itemId: itemId) }
-        }
         let router = SearchRouter(defaultProvider: ApplicationSearchProvider(), maxResults: settings.maxSearchResults)
         router.register(prefix: settings.folderSearchPrefix, id: "folder", provider: FileSearchProvider(contentType: .foldersOnly))
         router.register(prefix: settings.fileSearchPrefix, id: "file", provider: FileSearchProvider(contentType: .excludeFolders))
         router.register(prefix: settings.bookmarkSearchPrefix, id: "bookmark", provider: BookmarkSearchProvider())
-        router.register(prefix: settings.clipboardSearchPrefix, id: "clipboard", provider: ClipboardHistoryProvider(store: clipboardStore, copyHandler: copyHandler))
         let snippetStore = SnippetStore()
         self.snippetStore = snippetStore
         self.snippetExpander = SnippetExpander(store: snippetStore)
@@ -78,42 +73,13 @@ final class PanelManager {
         await pluginManager.loadAll()
         await Self.registerPluginCommands(commandProvider, pluginManager: pluginManager)
 
-        // Wire up clipboard change events for plugins
-        let onClipboardChange: @Sendable (ClipboardItem) -> Void = { [weak pluginManager] item in
-            guard let pluginManager else { return }
-            var data: [String: String] = [
-                "source_app": item.sourceApp,
-                "source_bundle_id": item.sourceBundleId,
-            ]
-            switch item.contentType {
-            case .text:
-                data["text"] = item.textContent
-                data["type"] = "text"
-            case .image:
-                data["type"] = "image"
-                data["image_path"] = item.imagePath
-            }
-            Task { @MainActor in
-                await pluginManager.dispatchEvent(name: PluginEvent.clipboardChange.rawValue, data: data)
-            }
-        }
-        await clipboardStore.setOnChange(onClipboardChange)
+        let clipboardModule = ClipboardModule(store: clipboardStore, pluginManager: pluginManager)
+        self.clipboardModule = clipboardModule
+        clipboardModule.register(router: router, settings: settings)
 
         self.viewModel = await SearchViewModel(router: router, database: db)
 
-        viewModel.onDeleteItem = { [weak self] itemId in
-            guard let self, let id = self.clipboardId(from: itemId) else { return }
-            Task { await self.clipboardStore.delete(itemId: id) }
-        }
-
-        viewModel.onClipboardPaste = { [weak self] itemId in
-            guard let self, let id = self.clipboardId(from: itemId) else { return }
-            let target = self.previousApp
-            Task {
-                await self.clipboardStore.writeToClipboard(itemId: id)
-                self.pasteAndActivate(target: target)
-            }
-        }
+        clipboardModule.bindEvents(to: viewModel, context: self)
 
         viewModel.onSnippetPaste = { [weak self] itemId in
             guard let self else { return }
@@ -139,6 +105,8 @@ final class PanelManager {
         applySettings(settings)
         self.panel = createPanel()
 
+        clipboardModule.start()
+
         if settings.snippetAutoExpandEnabled {
             snippetExpander.start()
         }
@@ -153,12 +121,10 @@ final class PanelManager {
         router.setEnabled(settings.fileSearchEnabled, forId: "file")
         router.setEnabled(settings.folderSearchEnabled, forId: "folder")
         router.setEnabled(settings.bookmarkSearchEnabled, forId: "bookmark")
-        router.setEnabled(settings.clipboardHistoryEnabled, forId: "clipboard")
+        router.setEnabled(settings.snippetSearchEnabled, forId: "snippet")
         router.updatePrefix(settings.fileSearchPrefix, forId: "file")
         router.updatePrefix(settings.folderSearchPrefix, forId: "folder")
         router.updatePrefix(settings.bookmarkSearchPrefix, forId: "bookmark")
-        router.updatePrefix(settings.clipboardSearchPrefix, forId: "clipboard")
-        router.setEnabled(settings.snippetSearchEnabled, forId: "snippet")
         router.updatePrefix(settings.snippetSearchPrefix, forId: "snippet")
         router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings")
         router.setEnabled(settings.systemSettingsSearchEnabled, forId: "system-settings-mixed")
@@ -167,16 +133,7 @@ final class PanelManager {
         router.setEnabled(settings.commandSearchEnabled, forId: "command-promoted")
         router.updatePrefix(settings.commandSearchPrefix, forId: "command")
 
-        let enabled = settings.clipboardHistoryEnabled
-        let capacity = settings.clipboardHistoryCapacity
-        Task {
-            if enabled {
-                await clipboardStore.startMonitoring()
-            } else {
-                await clipboardStore.stopMonitoring()
-            }
-            await clipboardStore.setCapacity(capacity)
-        }
+        clipboardModule.applySettings(settings, router: router)
     }
 
     func saveInputSource() {
@@ -344,18 +301,6 @@ final class PanelManager {
         panel.setFrame(newFrame, display: true, animate: false)
     }
 
-    private func clipboardId(from itemId: String) -> Int? {
-        ClipboardHistoryProvider.extractId(from: itemId)
-    }
-
-    private func pasteAndActivate(target: NSRunningApplication?) {
-        target?.activate()
-        Task {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            KeyboardUtils.simulatePaste()
-        }
-    }
-
     private static func registerBuiltinCommands(_ provider: CommandSearchProvider) async {
         let commands: [CommandEntry] = [
             CommandEntry(
@@ -476,6 +421,20 @@ final class PanelManager {
         let x = screenFrame.midX - width / 2
         let y = screenFrame.midY + screenFrame.height / 4 - height / 2
         panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false, animate: false)
+    }
+}
+
+extension PanelManager: PanelContext {
+    func pasteAndActivate(target: NSRunningApplication?) {
+        target?.activate()
+        Task {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            KeyboardUtils.simulatePaste()
+        }
+    }
+
+    func hidePanel() {
+        hide()
     }
 }
 

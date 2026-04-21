@@ -4,6 +4,6 @@ import AppKit
 @MainActor
 protocol PanelContext: AnyObject {
     var previousApp: NSRunningApplication? { get }
-    func pasteAndActivate()
+    func pasteAndActivate(target: NSRunningApplication?)
     func hidePanel()
 }
