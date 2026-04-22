@@ -1,7 +1,7 @@
 [plugin]
 id = "io.github.airead.lingxi.test-paste-icon"
 name = "Paste & Icon Test"
-description = "Test plugin for verifying lingxi.paste() API and icon field support"
+description = "Test plugin for verifying lingxi.paste(), icon, modifier actions, preview, fuzzy.search, and json.parse APIs"
 version = "1.0.0"
 author = "LingXi Team"
 url = "https://github.com/Airead/LingXi"
