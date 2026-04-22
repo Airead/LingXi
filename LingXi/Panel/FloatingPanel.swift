@@ -39,8 +39,37 @@ final class FloatingPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    private func findFirstTextField(in view: NSView?) -> NSTextField? {
+        guard let view = view else { return nil }
+        if let textField = view as? NSTextField {
+            return textField
+        }
+        for subview in view.subviews {
+            if let textField = findFirstTextField(in: subview) {
+                return textField
+            }
+        }
+        return nil
+    }
+
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown {
+            // Manually route standard editing shortcuts to the text field's
+            // field editor so they work even inside a SwiftUI NSHostingView.
+            if event.modifierFlags.contains(.command),
+               let chars = event.charactersIgnoringModifiers?.lowercased() {
+                if let textField = findFirstTextField(in: contentView),
+                   let editor = textField.currentEditor() {
+                    switch chars {
+                    case "a": editor.selectAll(self); return
+                    case "c": editor.copy(self); return
+                    case "v": editor.paste(self); return
+                    case "x": editor.cut(self); return
+                    default: break
+                    }
+                }
+            }
+
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," {
                 onCommandComma?()
                 return
