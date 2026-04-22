@@ -10,6 +10,9 @@ nonisolated enum LuaAPI {
     /// Maps plugin ID to its shell command whitelist for C callbacks.
     private static var shellPermissions: [String: [String]] = [:]
 
+    /// Injectable pasteboard for testing clipboard APIs without touching the system pasteboard.
+    internal static var testingPasteboard: NSPasteboard? = nil
+
     /// Call after `openLibs()` and `LuaSandbox.apply()`.
     /// APIs without permission are registered as stubs that return nil/false and log a warning.
     static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "") {
@@ -400,7 +403,8 @@ nonisolated enum LuaAPI {
     /// `lingxi.clipboard.read() -> string or nil`
     private static let clipboardRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        let text = NSPasteboard.general.string(forType: .string)
+        let pb = testingPasteboard ?? NSPasteboard.general
+        let text = pb.string(forType: .string)
         if let text {
             lua_pushstring(L, text)
         } else {
@@ -417,7 +421,7 @@ nonisolated enum LuaAPI {
             lua_pushboolean(L, 0)
             return 1
         }
-        let pb = ClipboardStore.prepareTransientPasteboard(types: [.string])
+        let pb = ClipboardStore.prepareTransientPasteboard(types: [.string], pasteboard: testingPasteboard)
         pb.setString(text, forType: .string)
         lua_pushboolean(L, 1)
         return 1

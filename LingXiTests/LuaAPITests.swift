@@ -91,28 +91,33 @@ struct LuaAPITests {
 
     @Test @MainActor func clipboardWriteAndRead() throws {
         let pb = NSPasteboard(name: .init("LuaAPITests-\(UUID().uuidString)"))
-        defer { pb.releaseGlobally() }
+        defer {
+            pb.releaseGlobally()
+            LuaAPI.testingPasteboard = nil
+        }
+        LuaAPI.testingPasteboard = pb
 
-        // Use the real pasteboard for this test since the C callback uses NSPasteboard.general.
-        // Instead, we test the Lua-level write/read cycle.
         let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("""
             lingxi.clipboard.write("lua-test-value-42")
             local text = lingxi.clipboard.read()
             assert(text == "lua-test-value-42", "expected lua-test-value-42, got " .. tostring(text))
         """)
-        // Cleanup: restore pasteboard
-        let general = NSPasteboard.general
-        general.clearContents()
     }
 
     @Test func clipboardWriteReturnsTrueOnSuccess() throws {
+        let pb = NSPasteboard(name: .init("LuaAPITests-write-\(UUID().uuidString)"))
+        defer {
+            pb.releaseGlobally()
+            LuaAPI.testingPasteboard = nil
+        }
+        LuaAPI.testingPasteboard = pb
+
         let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("""
             local ok = lingxi.clipboard.write("test")
             assert(ok == true)
         """)
-        NSPasteboard.general.clearContents()
     }
 
     @Test func clipboardWriteReturnsFalseOnNil() throws {
@@ -124,10 +129,14 @@ struct LuaAPITests {
     }
 
     @Test func clipboardReadReturnsNilWhenEmpty() throws {
+        let pb = NSPasteboard(name: .init("LuaAPITests-read-\(UUID().uuidString)"))
+        defer {
+            pb.releaseGlobally()
+            LuaAPI.testingPasteboard = nil
+        }
+        LuaAPI.testingPasteboard = pb
+
         let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
-        // Clear the pasteboard first
-        let general = NSPasteboard.general
-        general.clearContents()
         try state.doString("""
             local text = lingxi.clipboard.read()
             assert(text == nil, "expected nil, got " .. tostring(text))
@@ -575,10 +584,15 @@ struct LuaAPITests {
     }
 
     @Test func notifySendReturnsBoolean() throws {
+        defer { NotificationManager.testingNotifyHandler = nil }
+        NotificationManager.testingNotifyHandler = { title, message in
+            return title == "Test Title" && message == "Test Message"
+        }
         let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true, store: true))
         try state.doString("""
             local ok = lingxi.notify.send("Test Title", "Test Message")
             assert(type(ok) == "boolean", "expected boolean, got " .. type(ok))
+            assert(ok == true, "expected true, got " .. tostring(ok))
         """)
     }
 
@@ -596,10 +610,15 @@ struct LuaAPITests {
     }
 
     @Test func notifySendWithOnlyTitle() throws {
+        defer { NotificationManager.testingNotifyHandler = nil }
+        NotificationManager.testingNotifyHandler = { title, message in
+            return title == "Test Title" && message.isEmpty
+        }
         let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true, store: true))
         try state.doString("""
             local ok = lingxi.notify.send("Test Title")
             assert(type(ok) == "boolean", "expected boolean, got " .. type(ok))
+            assert(ok == true, "expected true, got " .. tostring(ok))
         """)
     }
 

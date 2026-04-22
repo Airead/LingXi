@@ -5,6 +5,9 @@ import UserNotifications
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     nonisolated static let shared = NotificationManager()
 
+    /// Injectable handler for testing notify API without sending real system notifications.
+    internal static var testingNotifyHandler: ((String, String) -> Bool)? = nil
+
     private nonisolated(unsafe) var hasRequestedAuthorization = false
 
     private override init() {
@@ -42,6 +45,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     /// - Returns: `true` if the notification was scheduled successfully.
     @discardableResult
     nonisolated func notify(title: String, message: String) -> Bool {
+        if let handler = Self.testingNotifyHandler {
+            return handler(title, message)
+        }
+
         requestAuthorizationIfNeeded()
 
         let center = UNUserNotificationCenter.current()

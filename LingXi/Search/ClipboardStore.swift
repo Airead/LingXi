@@ -163,21 +163,21 @@ actor ClipboardStore {
     }
 
     @discardableResult
-    func writeToClipboard(itemId: Int) -> Bool {
+    func writeToClipboard(itemId: Int, pasteboard: NSPasteboard? = nil) -> Bool {
         guard let item = cachedItems.first(where: { $0.id == itemId }) else {
             return false
         }
 
         switch item.contentType {
         case .text:
-            let pb = Self.prepareTransientPasteboard(types: [.string])
+            let pb = Self.prepareTransientPasteboard(types: [.string], pasteboard: pasteboard)
             pb.setString(item.textContent, forType: .string)
             skipUntilChangeCount = pb.changeCount
             return true
         case .image:
             let fileURL = imageDirectory.appendingPathComponent(item.imagePath)
             guard let pngData = try? Data(contentsOf: fileURL) else { return false }
-            let pb = Self.prepareTransientPasteboard(types: [.png])
+            let pb = Self.prepareTransientPasteboard(types: [.png], pasteboard: pasteboard)
             pb.setData(pngData, forType: .png)
             skipUntilChangeCount = pb.changeCount
             return true
@@ -554,9 +554,10 @@ actor ClipboardStore {
     }
 
     nonisolated static func prepareTransientPasteboard(
-        types: [NSPasteboard.PasteboardType]
+        types: [NSPasteboard.PasteboardType],
+        pasteboard: NSPasteboard? = nil
     ) -> NSPasteboard {
-        let pb = NSPasteboard.general
+        let pb = pasteboard ?? NSPasteboard.general
         pb.clearContents()
         pb.declareTypes(types + [concealedType, transientType], owner: nil)
         pb.setString("", forType: concealedType)
