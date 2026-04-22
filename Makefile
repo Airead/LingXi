@@ -1,4 +1,4 @@
-.PHONY: test test-unit build build-release clean install
+.PHONY: test test-unit test-capture-service build build-release clean install
 
 SCHEME = LingXi
 PROJECT = LingXi.xcodeproj
@@ -16,6 +16,14 @@ test-unit:
 		-destination '$(DESTINATION)' \
 		-parallel-testing-enabled NO \
 		-only-testing LingXiTests
+
+test-capture-service:
+	xcodebuild test \
+		-project $(PROJECT) \
+		-scheme $(SCHEME) \
+		-destination '$(DESTINATION)' \
+		-parallel-testing-enabled NO \
+		-only-testing LingXiTests/ScreenCaptureServiceTests
 
 build:
 	xcodebuild build \
@@ -42,4 +50,7 @@ install: build-release
 clean:
 	xcodebuild clean \
 		-project $(PROJECT) \
-		-scheme $(SCHEME)
+		-scheme LingXi
+	xcodebuild clean \
+		-project $(PROJECT) \
+		-scheme LingXiCaptureService
