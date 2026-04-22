@@ -1,0 +1,44 @@
+[plugin]
+id = "io.github.airead.lingxi.api-showcase"
+name = "API Showcase"
+description = "Demonstrates every LingXi plugin API and capability. A reference implementation for plugin developers."
+version = "1.0.0"
+author = "LingXi Team"
+url = "https://github.com/Airead/LingXi"
+min_lingxi_version = "1.0.0"
+
+files = [
+    "plugin.lua",
+    "README.md",
+]
+
+[search]
+prefix = "api"
+debounce = 50
+timeout = 10000
+
+[permissions]
+network = true
+clipboard = true
+filesystem = ["/tmp/lingxi-api-showcase"]
+shell = ["date", "sw_vers"]
+notify = true
+store = true
+
+[[commands]]
+name = "api:stats"
+title = "Show API Stats"
+subtitle = "Display plugin runtime statistics"
+action = "cmd_stats"
+
+[[commands]]
+name = "api:clear"
+title = "Clear Plugin Data"
+subtitle = "Reset all stored plugin data"
+action = "cmd_clear"
+
+[[commands]]
+name = "api:notify"
+title = "Send Test Notification"
+subtitle = "Trigger a system notification"
+action = "cmd_notify"

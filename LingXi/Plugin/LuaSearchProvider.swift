@@ -43,11 +43,22 @@ actor LuaSearchProvider: SearchProvider {
     }
 
     /// Dispatch an event to this plugin by calling a Lua function with a data table.
+    /// First tries the specific handler (e.g. `on_clipboard_change`),
+    /// then falls back to the generic `on_event(eventName, data)` handler.
     func dispatchEvent(name eventName: String, data: [String: String]) {
-        state.getGlobal(eventName)
+        let specificHandler = "on_" + eventName.replacingOccurrences(of: ".", with: "_")
+        let handledSpecific = callLuaFunction(name: specificHandler, data: data)
+        let handledGeneric = callLuaFunction(name: "on_event", eventName: eventName, data: data)
+        if !handledSpecific && !handledGeneric {
+            // No handler registered — silently ignore
+        }
+    }
+
+    private func callLuaFunction(name functionName: String, data: [String: String]) -> Bool {
+        state.getGlobal(functionName)
         guard state.isFunction(at: -1) else {
             state.pop()
-            return
+            return false
         }
         state.createTable(nrec: Int32(data.count))
         for (key, value) in data {
@@ -56,8 +67,31 @@ actor LuaSearchProvider: SearchProvider {
         }
         do {
             try state.pcall(nargs: 1, nresults: 0)
+            return true
         } catch {
-            DebugLog.log("[LuaPlugin:\(name)] event '\(eventName)' error: \(error)")
+            DebugLog.log("[LuaPlugin:\(name)] event '\(functionName)' error: \(error)")
+            return true
+        }
+    }
+
+    private func callLuaFunction(name functionName: String, eventName: String, data: [String: String]) -> Bool {
+        state.getGlobal(functionName)
+        guard state.isFunction(at: -1) else {
+            state.pop()
+            return false
+        }
+        state.push(eventName)
+        state.createTable(nrec: Int32(data.count))
+        for (key, value) in data {
+            state.push(value)
+            state.setField(key, at: -2)
+        }
+        do {
+            try state.pcall(nargs: 2, nresults: 0)
+            return true
+        } catch {
+            DebugLog.log("[LuaPlugin:\(name)] event '\(functionName)' error: \(error)")
+            return true
         }
     }
 
@@ -112,11 +146,12 @@ actor LuaSearchProvider: SearchProvider {
         let subtitle = state.stringField("subtitle", at: index) ?? ""
         let urlString = state.stringField("url", at: index)
         let score = state.numberField("score", at: index) ?? 50.0
+        let actionFunctionName = state.stringField("action", at: index)
 
         let url: URL? = urlString.flatMap { URL(string: $0) }
         let itemId = "\(Self.idPrefix)\(name):\(title)"
 
-        return SearchResult(
+        var result = SearchResult(
             itemId: itemId,
             icon: nil,
             name: title,
@@ -125,5 +160,32 @@ actor LuaSearchProvider: SearchProvider {
             url: url,
             score: score
         )
+
+        if let actionFunctionName = actionFunctionName {
+            let functionName = actionFunctionName
+            result.action = { [weak self] _ in
+                guard let self else { return false }
+                Task {
+                    await self.executeActionFunction(name: functionName)
+                }
+                return true
+            }
+        }
+
+        return result
+    }
+
+    private func executeActionFunction(name functionName: String) {
+        state.getGlobal(functionName)
+        guard state.isFunction(at: -1) else {
+            state.pop()
+            DebugLog.log("[LuaPlugin:\(name)] action function '\(functionName)' not found")
+            return
+        }
+        do {
+            try state.pcall(nargs: 0, nresults: 0)
+        } catch {
+            DebugLog.log("[LuaPlugin:\(name)] error calling action function '\(functionName)': \(error)")
+        }
     }
 }

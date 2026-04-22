@@ -8,11 +8,10 @@ struct PluginManagerTests {
     // MARK: - loadAll
 
     @Test func loadAllWithValidPlugin() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "hello", lua: """
-            plugin = { name = "hello", prefix = "hi", description = "Hello plugin" }
             function search(query) return {} end
         """)
 
@@ -21,12 +20,12 @@ struct PluginManagerTests {
 
         #expect(manager.plugins.count == 1)
         #expect(manager.plugins[0].manifest.name == "hello")
-        #expect(manager.plugins[0].manifest.prefix == "hi")
+        #expect(manager.plugins[0].manifest.id == "test.hello")
         #expect(manager.failures.isEmpty)
     }
 
     @Test func loadAllWithFailedPlugin() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "broken", lua: "this is not valid lua!!!")
@@ -40,11 +39,10 @@ struct PluginManagerTests {
     }
 
     @Test func loadAllMixedPlugins() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "good", lua: """
-            plugin = { name = "good", prefix = "g", description = "works" }
             function search(query) return {} end
         """)
         try writeTestPlugin(in: dir, name: "bad", lua: "syntax error!!!")
@@ -57,7 +55,7 @@ struct PluginManagerTests {
     }
 
     @Test func loadAllEmptyDirectory() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
@@ -81,11 +79,10 @@ struct PluginManagerTests {
     // MARK: - reload
 
     @Test func reloadReplacesPlugins() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "v1", lua: """
-            plugin = { name = "v1", prefix = "v", description = "version 1" }
             function search(query) return {} end
         """)
 
@@ -98,7 +95,6 @@ struct PluginManagerTests {
         // Remove old plugin, add new one
         try FileManager.default.removeItem(at: dir.appendingPathComponent("v1"))
         try writeTestPlugin(in: dir, name: "v2", lua: """
-            plugin = { name = "v2", prefix = "v", description = "version 2" }
             function search(query) return {} end
         """)
 
@@ -110,7 +106,7 @@ struct PluginManagerTests {
     }
 
     @Test func reloadClearsFailures() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "broken", lua: "bad!!!")
@@ -134,11 +130,10 @@ struct PluginManagerTests {
     }
 
     @Test func reloadUnregistersOldProviders() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "old", lua: """
-            plugin = { name = "old", prefix = "o", description = "old" }
             function search(query) return { { title = "old result", subtitle = "" } } end
         """)
 
@@ -146,25 +141,24 @@ struct PluginManagerTests {
         let manager = PluginManager(router: router, directory: dir)
         await manager.loadAll()
 
-        let results1 = await router.search(rawQuery: "o test")
+        let results1 = await router.search(rawQuery: "test.old test")
         #expect(results1.contains { $0.name == "old result" })
 
         // Remove plugin and reload
         try FileManager.default.removeItem(at: dir.appendingPathComponent("old"))
         await manager.reload()
 
-        let results2 = await router.search(rawQuery: "o test")
+        let results2 = await router.search(rawQuery: "test.old test")
         #expect(!results2.contains { $0.name == "old result" })
     }
 
     // MARK: - summary
 
     @Test func summaryWithPlugins() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "demo", lua: """
-            plugin = { name = "demo", prefix = "d", description = "A demo plugin" }
             function search(query) return {} end
         """)
 
@@ -173,11 +167,10 @@ struct PluginManagerTests {
 
         let summary = manager.summary
         #expect(summary.contains("demo"))
-        #expect(summary.contains("[d]"))
     }
 
     @Test func summaryEmpty() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
@@ -189,7 +182,7 @@ struct PluginManagerTests {
     // MARK: - Skips non-directory entries
 
     @Test func skipsRegularFiles() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try "not a plugin".write(
@@ -203,5 +196,100 @@ struct PluginManagerTests {
 
         #expect(manager.plugins.isEmpty)
         #expect(manager.failures.isEmpty)
+    }
+
+    // MARK: - TOML manifest support
+
+    @Test func loadAllWithTOMLManifest() async throws {
+        let dir = makeTestTempDir(label: "PluginManagerTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try writeTestPlugin(in: dir, name: "toml-plugin", toml: """
+            [plugin]
+            id = "toml.plugin"
+            name = "TOML Plugin"
+            version = "1.0.0"
+            description = "Loaded from TOML"
+
+            [search]
+            prefix = "tp"
+            debounce = 200
+            timeout = 6000
+
+            [permissions]
+            network = false
+            clipboard = true
+        """, lua: """
+            function search(query) return {} end
+        """)
+
+        let manager = PluginManager(router: emptyRouter(), directory: dir)
+        await manager.loadAll()
+
+        #expect(manager.plugins.count == 1)
+        #expect(manager.plugins[0].manifest.id == "toml.plugin")
+        #expect(manager.plugins[0].manifest.name == "TOML Plugin")
+        #expect(manager.plugins[0].manifest.prefix == "tp")
+        #expect(manager.plugins[0].manifest.debounce == 200)
+        #expect(manager.plugins[0].manifest.timeout == 6000)
+        #expect(manager.plugins[0].manifest.permissions.network == false)
+        #expect(manager.plugins[0].manifest.permissions.clipboard == true)
+        #expect(manager.failures.isEmpty)
+    }
+
+    @Test func tomlManifestDisablesHttpAPI() async throws {
+        let dir = makeTestTempDir(label: "PluginManagerTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try writeTestPlugin(in: dir, name: "no-net", toml: """
+            [plugin]
+            id = "no.net"
+            name = "No Network"
+
+            [permissions]
+            network = false
+            clipboard = true
+        """, lua: """
+            function search(query)
+                local result = lingxi.http.get("https://example.com")
+                local isNil = (result == nil)
+                return {{
+                    title = "HTTP returns nil",
+                    subtitle = tostring(isNil)
+                }}
+            end
+        """)
+
+        let manager = PluginManager(router: emptyRouter(), directory: dir)
+        await manager.loadAll()
+
+        #expect(manager.plugins.count == 1)
+        let results = await manager.plugins[0].provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].name == "HTTP returns nil")
+        #expect(results[0].subtitle == "true")
+    }
+
+    @Test func missingTOMLFailsToLoad() async throws {
+        let dir = makeTestTempDir(label: "PluginManagerTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Create a plugin directory with only plugin.lua (no plugin.toml)
+        let pluginDir = dir.appendingPathComponent("no-toml")
+        try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+        try """
+            function search(query) return {} end
+        """.write(
+            to: pluginDir.appendingPathComponent("plugin.lua"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let manager = PluginManager(router: emptyRouter(), directory: dir)
+        await manager.loadAll()
+
+        #expect(manager.plugins.isEmpty)
+        #expect(manager.failures.count == 1)
+        #expect(manager.failures[0].dirName == "no-toml")
     }
 }

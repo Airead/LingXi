@@ -13,6 +13,7 @@ final class ScreenshotManager {
     private let captureService = ScreenCaptureService.shared
     private let regionController = RegionSelectionController.shared
     private var annotationWindowControllers: [AnnotationWindowController] = []
+    var pluginService: PluginService?
 
     private init() {}
 
@@ -85,6 +86,9 @@ final class ScreenshotManager {
 
         DebugLog.logMemory("crop done (\(croppedImage.width)x\(croppedImage.height))")
 
+        let tempPath = saveToTempFile(cgImage: croppedImage)
+        await dispatchScreenshotEvent(type: "region", path: tempPath)
+
         let nsImage = NSImage(cgImage: croppedImage, size: NSSize(
             width: CGFloat(croppedImage.width) / result.scaleFactor,
             height: CGFloat(croppedImage.height) / result.scaleFactor
@@ -129,9 +133,33 @@ final class ScreenshotManager {
         do {
             let content = try await SCShareableContent.current
             let cgImage = try await captureService.captureFullScreen(displayID: displayID, content: content)
+            let tempPath = saveToTempFile(cgImage: cgImage)
+            await dispatchScreenshotEvent(type: "fullscreen", path: tempPath)
             captureService.copyToClipboard(cgImage: cgImage)
         } catch {
             DebugLog.log("[ScreenshotManager] Capture failed: \(error)")
+        }
+    }
+
+    // MARK: - Event dispatch
+
+    private func dispatchScreenshotEvent(type: String, path: String?) async {
+        guard let pluginService else { return }
+        var data: [String: String] = ["type": type]
+        if let path { data["path"] = path }
+        await pluginService.dispatchEvent(name: PluginEvent.screenshotCaptured.rawValue, data: data)
+    }
+
+    private func saveToTempFile(cgImage: CGImage) -> String? {
+        let tempDir = FileManager.default.temporaryDirectory
+        let url = tempDir.appendingPathComponent("lingxi_screenshot_\(UUID().uuidString).png")
+        guard let pngData = ScreenCaptureService.encodePNG(cgImage) else { return nil }
+        do {
+            try pngData.write(to: url)
+            return url.path
+        } catch {
+            DebugLog.log("[ScreenshotManager] Failed to save temp screenshot: \(error)")
+            return nil
         }
     }
 

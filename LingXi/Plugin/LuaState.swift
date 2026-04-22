@@ -22,6 +22,9 @@ enum LuaError: Error, CustomStringConvertible {
 nonisolated final class LuaState: @unchecked Sendable {
     private let L: OpaquePointer
 
+    /// Direct access to the underlying Lua state pointer for advanced C API usage.
+    var raw: OpaquePointer { L }
+
     init() {
         L = luaL_newstate()
     }

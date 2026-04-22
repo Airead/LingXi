@@ -192,8 +192,9 @@ struct ClipboardStoreTests {
         let store = await makeStore()
         await store.addTextEntry("paste me")
         let itemId = await store.items[0].id
-        await store.writeToClipboard(itemId: itemId)
-        let pb = NSPasteboard.general
+        let pb = NSPasteboard(name: NSPasteboard.Name("ClipboardStoreTests-\(UUID().uuidString)"))
+        defer { pb.releaseGlobally() }
+        await store.writeToClipboard(itemId: itemId, pasteboard: pb)
         #expect(pb.string(forType: .string) == "paste me")
     }
 
@@ -201,8 +202,9 @@ struct ClipboardStoreTests {
         let store = await makeStore()
         await store.addTextEntry("secret")
         let itemId = await store.items[0].id
-        await store.writeToClipboard(itemId: itemId)
-        let pb = NSPasteboard.general
+        let pb = NSPasteboard(name: NSPasteboard.Name("ClipboardStoreTests-concealed-\(UUID().uuidString)"))
+        defer { pb.releaseGlobally() }
+        await store.writeToClipboard(itemId: itemId, pasteboard: pb)
         let types = pb.types?.map(\.rawValue) ?? []
         #expect(types.contains("org.nspasteboard.ConcealedType"))
         #expect(types.contains("org.nspasteboard.TransientType"))
@@ -337,10 +339,11 @@ struct ClipboardStoreTests {
         let png = makePNGData()
         await store.addImageEntry(pngData: png)
         let itemId = await store.items[0].id
-        let result = await store.writeToClipboard(itemId: itemId)
+        let pb = NSPasteboard(name: NSPasteboard.Name("ClipboardStoreTests-image-\(UUID().uuidString)"))
+        defer { pb.releaseGlobally() }
+        let result = await store.writeToClipboard(itemId: itemId, pasteboard: pb)
         #expect(result)
 
-        let pb = NSPasteboard.general
         let pastedData = pb.data(forType: .png)
         #expect(pastedData == png)
         await cleanupImageFiles(store)

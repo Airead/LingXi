@@ -1,27 +1,13 @@
 import Foundation
 
-/// Event names dispatched to Lua plugins. Each corresponds to a global Lua function.
+/// Event names dispatched to Lua plugins.
 nonisolated enum PluginEvent: String {
-    case clipboardChange = "on_clipboard_change"
-    case searchActivate = "on_search_activate"
-}
-
-/// A command declared by a Lua plugin in `plugin.commands`.
-struct PluginCommand: Sendable {
-    let name: String
-    let title: String
-    let subtitle: String
-    let actionFunctionName: String
-}
-
-/// Metadata parsed from a Lua plugin's `plugin` global table.
-struct PluginManifest: Sendable {
-    let name: String
-    let prefix: String
-    let description: String
-    let debounce: Int
-    let timeout: Int
-    let commands: [PluginCommand]
+    case clipboardChange = "clipboard_change"
+    case searchActivate = "search_activate"
+    case searchDeactivate = "search_deactivate"
+    case appLaunch = "app_launch"
+    case screenshotCaptured = "screenshot_captured"
+    case pluginReload = "plugin_reload"
 }
 
 /// A successfully loaded plugin.
@@ -34,8 +20,9 @@ struct LoadedPlugin: Sendable {
 /// Discovers and loads Lua plugins from the plugins directory.
 @MainActor
 final class PluginManager: PluginService {
-    private enum LoadResult: Sendable {
+    enum LoadResult: Sendable {
         case loaded(LoadedPlugin)
+        case skipped(dirName: String, reason: String)
         case failed(dirName: String, error: String)
     }
 
@@ -48,18 +35,21 @@ final class PluginManager: PluginService {
     private(set) var directory: URL
     private(set) var plugins: [LoadedPlugin] = []
     private(set) var failures: [(dirName: String, error: String)] = []
-    /// Command names registered by plugins (for cleanup on reload).
+    private(set) var skipped: [(dirName: String, reason: String)] = []
     private var registeredCommandNames: Set<String> = []
+    private let settings: AppSettings
 
-    init(router: SearchRouter, directory: URL = pluginsDirectory) {
+    init(router: SearchRouter, directory: URL = pluginsDirectory, settings: AppSettings? = nil) {
         self.router = router
         self.directory = directory
+        self.settings = settings ?? AppSettings.shared
     }
 
     /// Load all plugins and register them with the router.
     func loadAll() async {
         let dir = directory
-        let results = await Task.detached { await Self.scanDirectory(dir) }.value
+        let disabled = Set(settings.disabledPlugins)
+        let results = await Task.detached { await Self.scanDirectory(dir, disabled: disabled) }.value
         await applyResults(results)
     }
 
@@ -76,7 +66,9 @@ final class PluginManager: PluginService {
         await unregisterPluginCommands()
         plugins.removeAll()
         failures.removeAll()
+        skipped.removeAll()
         await loadAll()
+        await dispatchEvent(name: PluginEvent.pluginReload.rawValue, data: [:])
     }
 
     /// Dispatch an event to all loaded plugins concurrently.
@@ -91,16 +83,71 @@ final class PluginManager: PluginService {
     /// Summary of loaded and failed plugins for display.
     var summary: String {
         var lines: [String] = []
-        if plugins.isEmpty && failures.isEmpty {
+        if plugins.isEmpty && failures.isEmpty && skipped.isEmpty {
             lines.append("No plugins found in \(directory.path)")
         }
         for p in plugins {
-            lines.append("[\(p.manifest.prefix)] \(p.manifest.name) — \(p.manifest.description)")
+            let version = p.manifest.version.isEmpty ? "" : " v\(p.manifest.version)"
+            lines.append("[\(p.manifest.prefix)] \(p.manifest.name)\(version) — \(p.manifest.description)")
+        }
+        for s in skipped {
+            lines.append("[skipped] \(s.dirName) — \(s.reason)")
         }
         for f in failures {
             lines.append("[error] \(f.dirName) — \(f.error)")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// List all installed plugins on disk (including disabled and manual).
+    func installedPlugins() -> [InstalledPluginInfo] {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        let disabled = Set(settings.disabledPlugins)
+        var results: [InstalledPluginInfo] = []
+        for entry in entries where entry.hasDirectoryPath {
+            guard let manifest = try? ManifestParser.parseTOMLManifest(from: entry) else { continue }
+            let installTomlURL = entry.appendingPathComponent("install.toml")
+            let installInfo = try? InstallManifest.read(from: installTomlURL)
+
+            let status: PluginStatus
+            if disabled.contains(manifest.id) {
+                status = .disabled
+            } else if installInfo == nil {
+                status = .manuallyPlaced
+            } else {
+                status = .installed
+            }
+
+            results.append(InstalledPluginInfo(
+                id: manifest.id,
+                manifest: manifest,
+                installInfo: installInfo,
+                status: status
+            ))
+        }
+        return results.sorted { $0.manifest.id < $1.manifest.id }
+    }
+
+    /// Uninstall a plugin by ID.
+    func uninstall(pluginId: String) throws {
+        guard isValidPluginID(pluginId) else {
+            throw PluginMarketError.invalidPluginID(pluginId)
+        }
+        let pluginDir = directory.appendingPathComponent(sanitizeDirectoryName(pluginId))
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: pluginDir.path) else {
+            throw PluginMarketError.notInstalled(pluginId)
+        }
+        try fm.removeItem(at: pluginDir)
+        DebugLog.log("[PluginManager] Uninstalled plugin: \(pluginId)")
     }
 
     // MARK: - Private
@@ -117,6 +164,9 @@ final class PluginManager: PluginService {
                 )
                 await registerPluginCommands(for: plugin)
                 DebugLog.log("[PluginManager] Loaded plugin: \(plugin.manifest.name) (prefix: \"\(plugin.manifest.prefix)\")")
+            case .skipped(let dirName, let reason):
+                skipped.append((dirName: dirName, reason: reason))
+                DebugLog.log("[PluginManager] Skipped \(dirName): \(reason)")
             case .failed(let dirName, let error):
                 failures.append((dirName: dirName, error: error))
                 DebugLog.log("[PluginManager] Failed to load \(dirName): \(error)")
@@ -158,7 +208,7 @@ final class PluginManager: PluginService {
         registeredCommandNames.removeAll()
     }
 
-    nonisolated private static func scanDirectory(_ directory: URL) async -> [LoadResult] {
+    nonisolated private static func scanDirectory(_ directory: URL, disabled: Set<String>) async -> [LoadResult] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: directory,
@@ -171,7 +221,22 @@ final class PluginManager: PluginService {
 
         var results: [LoadResult] = []
         for entry in entries {
-            guard entry.hasDirectoryPath else { continue }
+            guard Self.isPluginDirectory(entry) else { continue }
+
+            // Parse manifest to get ID and check disabled
+            let manifest: PluginManifest
+            do {
+                manifest = try ManifestParser.parseTOMLManifest(from: entry)
+            } catch {
+                results.append(.failed(dirName: entry.lastPathComponent, error: "\(error)"))
+                continue
+            }
+
+            // Skip disabled plugins
+            if disabled.contains(manifest.id) {
+                results.append(.skipped(dirName: entry.lastPathComponent, reason: "disabled"))
+                continue
+            }
 
             let scriptPath = entry.appendingPathComponent("plugin.lua").path
             do {
@@ -185,14 +250,27 @@ final class PluginManager: PluginService {
         return results
     }
 
+    /// Check if a URL is a plugin directory (real directory or symlink to directory).
+    nonisolated private static func isPluginDirectory(_ url: URL) -> Bool {
+        if url.hasDirectoryPath { return true }
+        let rv = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+        if rv?.isSymbolicLink == true {
+            let resolved = url.resolvingSymlinksInPath()
+            return resolved.hasDirectoryPath
+        }
+        return false
+    }
+
     nonisolated private static func loadPlugin(scriptPath: String, pluginDir: URL) async throws -> LoadedPlugin {
+        let manifest = try ManifestParser.parseTOMLManifest(from: pluginDir)
+
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
-        LuaAPI.registerAll(state: state)
-        try state.doFile(scriptPath)
 
-        let manifest = readManifest(from: state, dirName: pluginDir.lastPathComponent)
+        LuaAPI.registerAll(state: state, permissions: manifest.permissions, pluginId: manifest.id)
+
+        try state.doFile(scriptPath)
 
         let provider = await LuaSearchProvider(
             name: manifest.name,
@@ -203,61 +281,5 @@ final class PluginManager: PluginService {
         )
 
         return LoadedPlugin(manifest: manifest, provider: provider)
-    }
-
-    nonisolated private static func readManifest(from state: LuaState, dirName: String) -> PluginManifest {
-        state.getGlobal("plugin")
-        defer { state.pop() }
-
-        guard state.isTable(at: -1) else {
-            return PluginManifest(
-                name: dirName,
-                prefix: dirName,
-                description: "",
-                debounce: 100,
-                timeout: 5000,
-                commands: []
-            )
-        }
-
-        let name = state.stringField("name", at: -1) ?? dirName
-        let prefix = state.stringField("prefix", at: -1) ?? dirName
-        let description = state.stringField("description", at: -1) ?? ""
-        let debounce = state.numberField("debounce", at: -1).map { Int($0) } ?? 100
-        let timeout = state.numberField("timeout", at: -1).map { Int($0) } ?? 5000
-        let commands = readCommands(from: state, pluginTableIndex: -1)
-
-        return PluginManifest(
-            name: name,
-            prefix: prefix,
-            description: description,
-            debounce: debounce,
-            timeout: timeout,
-            commands: commands
-        )
-    }
-
-    nonisolated private static func readCommands(from state: LuaState, pluginTableIndex: Int32) -> [PluginCommand] {
-        state.getField("commands", at: pluginTableIndex)
-        defer { state.pop() }
-
-        guard state.isTable(at: -1) else { return [] }
-
-        var commands: [PluginCommand] = []
-        state.iterateArray(at: -1) {
-            guard state.isTable(at: -1) else { return }
-            let name = state.stringField("name", at: -1) ?? ""
-            let title = state.stringField("title", at: -1) ?? ""
-            let action = state.stringField("action", at: -1) ?? ""
-            guard !name.isEmpty, !title.isEmpty, !action.isEmpty else { return }
-            let subtitle = state.stringField("subtitle", at: -1) ?? ""
-            commands.append(PluginCommand(
-                name: name,
-                title: title,
-                subtitle: subtitle,
-                actionFunctionName: action
-            ))
-        }
-        return commands
     }
 }

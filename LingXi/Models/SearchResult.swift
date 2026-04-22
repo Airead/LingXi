@@ -58,6 +58,7 @@ nonisolated struct SearchResult: Identifiable, Sendable {
     var actionContext: String = ""
     var openWithBundleId: String?
     var thumbnailURL: URL?
+    var action: (@MainActor @Sendable (SearchResult) -> Bool)?
 
     private static let modifierPriority: [ActionModifier] = [.command, .option, .control]
 

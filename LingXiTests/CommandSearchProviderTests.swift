@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import LingXi
 
+@MainActor
 struct CommandSearchProviderTests {
     private func makeProvider() -> CommandSearchProvider {
         CommandSearchProvider()
@@ -261,6 +262,7 @@ struct CommandSearchProviderTests {
 
 // MARK: - PromotedCommandSearchProvider tests
 
+@MainActor
 struct PromotedCommandSearchProviderTests {
     @Test func delegatesToPromotedSearch() async throws {
         let cmdProvider = CommandSearchProvider()
