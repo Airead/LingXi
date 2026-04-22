@@ -142,6 +142,24 @@ nonisolated final class LuaState: @unchecked Sendable {
         lua_type(L, index)
     }
 
+    // MARK: - Registry References
+
+    /// Pop the value at the given stack index and store it in the registry.
+    /// Returns a reference that can be used later to retrieve the value.
+    func ref(at index: Int32) -> Int32 {
+        luaL_ref(L, lua_swift_registry_index())
+    }
+
+    /// Push a registry reference onto the stack.
+    func pushRef(_ ref: Int32) {
+        lua_rawgeti(L, lua_swift_registry_index(), lua_Integer(ref))
+    }
+
+    /// Release a registry reference.
+    func unref(_ ref: Int32) {
+        luaL_unref(L, lua_swift_registry_index(), ref)
+    }
+
     // MARK: - Table Operations
 
     func createTable(narr: Int32 = 0, nrec: Int32 = 0) {

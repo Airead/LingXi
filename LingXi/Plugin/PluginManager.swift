@@ -267,6 +267,7 @@ final class PluginManager: PluginService {
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
+        LuaSandbox.setupPackagePath(to: state, pluginDir: pluginDir.path)
 
         LuaAPI.registerAll(state: state, permissions: manifest.permissions, pluginId: manifest.id)
 

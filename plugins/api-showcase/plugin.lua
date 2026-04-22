@@ -179,10 +179,16 @@ function demo_clipboard()
         preview = preview:sub(1, 60) .. "..."
     end
 
+    local function write_demo_text()
+        local text = "Hello from API Showcase! This text was written by the plugin at " .. iso_timestamp()
+        local ok = lingxi.clipboard.write(text)
+        lingxi.alert.show("Demo text copied to clipboard!", 2.0)
+    end
+
     return {
         { title = "Clipboard Read", subtitle = "Content: " .. preview },
         { title = "Clipboard Write", subtitle = "lingxi.clipboard.write(text) -> boolean" },
-        { title = "Write Demo Text", subtitle = "Click to copy sample text to clipboard", action = "action_clipboard_write" },
+        { title = "Write Demo Text", subtitle = "Click to copy sample text to clipboard", action = write_demo_text },
     }
 end
 
@@ -420,18 +426,6 @@ function cmd_notify(args)
     increment_counter("notify_demos")
     local ok = lingxi.notify.send("API Showcase", "Test notification triggered by command!")
     return { { title = "Notification sent", subtitle = "Result: " .. tostring(ok) } }
-end
-
--- ============================================================================
--- Search Action Handlers
--- ============================================================================
-
---- Handle "Write Demo Text" action from clipboard demo
-function action_clipboard_write(args)
-    local text = "Hello from API Showcase! This text was written by the plugin at " .. iso_timestamp()
-    local ok = lingxi.clipboard.write(text)
-    lingxi.alert.show("Demo text copied to clipboard!", 2.0)
-    return { { title = "Copied to clipboard", subtitle = "Result: " .. tostring(ok) } }
 end
 
 -- ============================================================================

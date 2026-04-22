@@ -71,4 +71,29 @@ struct LuaSandboxTests {
         #expect(state.toInt(at: -1) == 5)
         state.pop()
     }
+
+    @Test func requireFunctionPreserved() throws {
+        let state = makeSandboxedState()
+        try state.doString("result = type(require)")
+        state.getGlobal("result")
+        #expect(state.toString(at: -1) == "function")
+        state.pop()
+    }
+
+    @Test func packagePathSetup() throws {
+        let state = makeSandboxedState()
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LuaSandboxTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        LuaSandbox.setupPackagePath(to: state, pluginDir: tempDir.path)
+
+        try state.doString("result = package.path")
+        state.getGlobal("result")
+        let path = state.toString(at: -1) ?? ""
+        #expect(path.hasPrefix(tempDir.path), "package.path should start with plugin directory")
+        #expect(path.contains("/?.lua"), "package.path should contain /?.lua pattern")
+        state.pop()
+    }
 }

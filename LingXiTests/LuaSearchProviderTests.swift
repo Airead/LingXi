@@ -194,4 +194,62 @@ struct LuaSearchProviderTests {
         #expect(results[0].url == nil)
         #expect(results[1].url?.absoluteString == "https://example.com")
     }
+
+    @Test func actionFunctionRef() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                local function my_action()
+                    -- action body
+                end
+                return {
+                    { title = "Action Item", subtitle = "click me", action = my_action },
+                    { title = "No Action", subtitle = "plain item" },
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 2)
+        #expect(results[0].action != nil)
+        #expect(results[1].action == nil)
+    }
+
+    @Test func requireModuleFromPlugin() async throws {
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LuaSearchProviderTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+
+        let utilsPath = tmpDir.appendingPathComponent("utils.lua")
+        try "return { greet = function(name) return 'Hello, ' .. name end }".write(to: utilsPath, atomically: true, encoding: .utf8)
+
+        let scriptPath = tmpDir.appendingPathComponent("plugin.lua")
+        try """
+            local utils = require("utils")
+            function search(query)
+                return {
+                    { title = "Greeting", subtitle = utils.greet(query) }
+                }
+            end
+        """.write(to: scriptPath, atomically: true, encoding: .utf8)
+
+        let state = LuaState()
+        state.openLibs()
+        LuaSandbox.apply(to: state)
+        LuaSandbox.setupPackagePath(to: state, pluginDir: tmpDir.path)
+        try state.doFile(scriptPath.path)
+
+        let provider = LuaSearchProvider(
+            name: "test-plugin",
+            pluginDir: tmpDir,
+            state: state
+        )
+
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let results = await provider.search(query: "World")
+        #expect(results.count == 1)
+        #expect(results[0].name == "Greeting")
+        #expect(results[0].subtitle == "Hello, World")
+    }
 }

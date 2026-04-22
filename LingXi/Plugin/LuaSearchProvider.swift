@@ -146,8 +146,6 @@ actor LuaSearchProvider: SearchProvider {
         let subtitle = state.stringField("subtitle", at: index) ?? ""
         let urlString = state.stringField("url", at: index)
         let score = state.numberField("score", at: index) ?? 50.0
-        let actionFunctionName = state.stringField("action", at: index)
-
         let url: URL? = urlString.flatMap { URL(string: $0) }
         let itemId = "\(Self.idPrefix)\(name):\(title)"
 
@@ -161,31 +159,29 @@ actor LuaSearchProvider: SearchProvider {
             score: score
         )
 
-        if let actionFunctionName = actionFunctionName {
-            let functionName = actionFunctionName
+        state.getField("action", at: index)
+        if state.isFunction(at: -1) {
+            let ref = state.ref(at: -1)
             result.action = { [weak self] _ in
                 guard let self else { return false }
                 Task {
-                    await self.executeActionFunction(name: functionName)
+                    await self.executeAction(ref: ref)
                 }
                 return true
             }
+        } else {
+            state.pop()
         }
 
         return result
     }
 
-    private func executeActionFunction(name functionName: String) {
-        state.getGlobal(functionName)
-        guard state.isFunction(at: -1) else {
-            state.pop()
-            DebugLog.log("[LuaPlugin:\(name)] action function '\(functionName)' not found")
-            return
-        }
+    private func executeAction(ref: Int32) {
+        state.pushRef(ref)
         do {
             try state.pcall(nargs: 0, nresults: 0)
         } catch {
-            DebugLog.log("[LuaPlugin:\(name)] error calling action function '\(functionName)': \(error)")
+            DebugLog.log("[LuaPlugin:\(name)] error calling action ref \(ref): \(error)")
         }
     }
 }

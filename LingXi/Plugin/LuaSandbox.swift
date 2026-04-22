@@ -14,6 +14,20 @@ nonisolated enum LuaSandbox {
         }
     }
 
+    /// Restrict `package.path` to the plugin's own directory.
+    /// Call after `apply(to:)` and before loading the plugin script.
+    static func setupPackagePath(to state: LuaState, pluginDir: String) {
+        let path = "\(pluginDir)/?.lua;\(pluginDir)/?/init.lua"
+        state.getGlobal("package")
+        guard state.isTable(at: -1) else {
+            state.pop()
+            return
+        }
+        state.push(path)
+        state.setField("path", at: -2)
+        state.pop()
+    }
+
     private static let removedGlobals = [
         "dofile",      // Load and execute arbitrary files
         "loadfile",    // Load arbitrary files as chunks

@@ -75,4 +75,7 @@ static inline int lua_swift_type_string(void)        { return LUA_TSTRING; }
 static inline int lua_swift_type_table(void)         { return LUA_TTABLE; }
 static inline int lua_swift_type_function(void)      { return LUA_TFUNCTION; }
 
+// Registry index constant (macro not visible to Swift)
+static inline int lua_swift_registry_index(void)     { return LUA_REGISTRYINDEX; }
+
 #endif /* lua_swift_shim_h */
