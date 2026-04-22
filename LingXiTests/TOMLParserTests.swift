@@ -125,4 +125,38 @@ struct TOMLParserTests {
         #expect(doc.bool("permissions", "network") == true)
         #expect(doc.string("search", "prefix") == "mp")
     }
+
+    @Test func parseMultiLineArray() throws {
+        let doc = try TOMLParser.parse("""
+            [plugin]
+            files = [
+                "plugin.lua",
+                "README.md",
+                "icon.png",
+            ]
+        """)
+
+        let arr = doc.stringArray("plugin", "files")
+        #expect(arr == ["plugin.lua", "README.md", "icon.png"])
+    }
+
+    @Test func parseMultiLineArrayInTableArray() throws {
+        let doc = try TOMLParser.parse("""
+            [[commands]]
+            name = "cmd1"
+            aliases = [
+                "c1",
+                "first",
+            ]
+
+            [[commands]]
+            name = "cmd2"
+            aliases = ["c2"]
+        """)
+
+        let tables = doc.tableArray("commands")
+        #expect(tables?.count == 2)
+        #expect(tables?[0]["aliases"]?.stringArrayValue == ["c1", "first"])
+        #expect(tables?[1]["aliases"]?.stringArrayValue == ["c2"])
+    }
 }

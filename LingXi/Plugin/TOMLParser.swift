@@ -79,11 +79,12 @@ enum TOMLParser {
         var currentArrayItem: [String: TOMLValue] = [:]
 
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-
-        for (lineIndex, line) in lines.enumerated() {
+        var lineIndex = 0
+        
+        while lineIndex < lines.count {
             let lineNo = lineIndex + 1
-            let trimmed = trimComment(from: line)
-            guard !trimmed.isEmpty else { continue }
+            let trimmed = trimComment(from: lines[lineIndex])
+            guard !trimmed.isEmpty else { lineIndex += 1; continue }
 
             // Table header: [section]
             if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
@@ -113,7 +114,7 @@ enum TOMLParser {
                         document.tables[currentTable] = [:]
                     }
                 }
-                continue
+                lineIndex += 1; continue
             }
 
             // Key-value pair
@@ -128,7 +129,48 @@ enum TOMLParser {
                 throw Error.syntaxError(line: lineNo, message: "Empty key")
             }
 
-            let value = try parseValue(valueStr, line: lineNo)
+            var fullValueStr = valueStr
+            
+            // Handle multi-line arrays: if value starts with '[' but doesn't end with ']',
+            // keep reading subsequent lines until brackets are balanced.
+            if isUnclosedArray(fullValueStr) {
+                var depth = 1
+                while lineIndex + 1 < lines.count {
+                    lineIndex += 1
+                    let nextLine = trimComment(from: lines[lineIndex])
+                    fullValueStr += "\n" + nextLine
+                    
+                    // Track bracket depth, respecting strings
+                    var inString = false
+                    var escaped = false
+                    for char in nextLine {
+                        if escaped {
+                            escaped = false
+                            continue
+                        }
+                        if char == "\\" {
+                            escaped = true
+                            continue
+                        }
+                        if char == "\u{0022}" && !inString {
+                            inString = true
+                        } else if char == "\u{0022}" && inString {
+                            inString = false
+                        } else if !inString {
+                            if char == "[" { depth += 1 }
+                            else if char == "]" { depth -= 1 }
+                        }
+                    }
+                    
+                    if depth == 0 { break }
+                }
+                
+                if depth != 0 {
+                    throw Error.syntaxError(line: lineNo, message: "Unclosed array")
+                }
+            }
+            
+            let value = try parseValue(fullValueStr, line: lineNo)
 
             if currentArrayTable != nil {
                 currentArrayItem[key] = value
@@ -139,6 +181,7 @@ enum TOMLParser {
                 }
                 document.tables[currentTable]?[key] = value
             }
+            lineIndex += 1
         }
 
         // Flush final array table
@@ -155,6 +198,37 @@ enum TOMLParser {
     }
 
     // MARK: - Private
+
+    /// Check if a value string starts an array that spans multiple lines.
+    /// Returns true if the string starts with '[' but doesn't have a matching ']'.
+    private nonisolated static func isUnclosedArray(_ text: String) -> Bool {
+        guard text.hasPrefix("[") else { return false }
+        
+        var inString = false
+        var escaped = false
+        var depth = 0
+        
+        for char in text {
+            if escaped {
+                escaped = false
+                continue
+            }
+            if char == "\\" {
+                escaped = true
+                continue
+            }
+            if char == "\u{0022}" && !inString {
+                inString = true
+            } else if char == "\u{0022}" && inString {
+                inString = false
+            } else if !inString {
+                if char == "[" { depth += 1 }
+                else if char == "]" { depth -= 1 }
+            }
+        }
+        
+        return depth > 0
+    }
 
     private nonisolated static func trimComment(from line: Substring) -> String {
         var result = ""
@@ -176,15 +250,17 @@ enum TOMLParser {
     }
 
     private nonisolated static func parseValue(_ text: String, line: Int) throws -> TOMLValue {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        
         // String
-        if text.hasPrefix("\"") && text.hasSuffix("\"") {
-            let inner = String(text.dropFirst().dropLast())
+        if trimmedText.hasPrefix("\"") && trimmedText.hasSuffix("\"") {
+            let inner = String(trimmedText.dropFirst().dropLast())
             return .string(inner)
         }
 
         // Array
-        if text.hasPrefix("[") && text.hasSuffix("]") {
-            let inner = String(text.dropFirst().dropLast())
+        if trimmedText.hasPrefix("[") && trimmedText.hasSuffix("]") {
+            let inner = String(trimmedText.dropFirst().dropLast())
             let elements = splitArrayElements(inner)
             let values = try elements.map { try parseValue($0, line: line) }
             return .array(values)
@@ -220,7 +296,7 @@ enum TOMLParser {
             }
 
             if char == "," && !inString && depth == 0 {
-                let trimmed = current.trimmingCharacters(in: .whitespaces)
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     elements.append(trimmed)
                 }
@@ -230,7 +306,7 @@ enum TOMLParser {
             }
         }
 
-        let trimmed = current.trimmingCharacters(in: .whitespaces)
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             elements.append(trimmed)
         }
