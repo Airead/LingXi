@@ -89,6 +89,12 @@ final class SearchViewModel: ObservableObject {
         let currentQuery = query
         exitHistoryMode()
 
+        if let customAction = selected.action {
+            let executed = customAction(selected)
+            if executed { recordExecution(query: currentQuery, itemId: selected.itemId) }
+            return executed
+        }
+
         if let modifierAction = selected.resolveModifierAction(for: modifiers) {
             let executed = modifierAction.action(selected)
             if executed { recordExecution(query: currentQuery, itemId: selected.itemId) }

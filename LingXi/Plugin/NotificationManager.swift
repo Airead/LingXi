@@ -2,12 +2,21 @@ import Foundation
 import UserNotifications
 
 /// Manages system notifications for plugins.
-final class NotificationManager {
+final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
     private var hasRequestedAuthorization = false
 
-    private init() {}
+    private override init() {
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// Check current notification authorization status.
+    func checkAuthorizationStatus() async -> UNAuthorizationStatus {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        return settings.authorizationStatus
+    }
 
     /// Request notification authorization if not already requested.
     private func requestAuthorizationIfNeeded() {
@@ -15,8 +24,14 @@ final class NotificationManager {
         hasRequestedAuthorization = true
 
         let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in
-            // Ignore result; notifications will simply not show if denied.
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error {
+                DebugLog.log("[NotificationManager] Authorization request error: \(error)")
+            } else if !granted {
+                DebugLog.log("[NotificationManager] Notification authorization denied by user")
+            } else {
+                DebugLog.log("[NotificationManager] Notification authorization granted")
+            }
         }
     }
 
@@ -44,11 +59,25 @@ final class NotificationManager {
         let semaphore = DispatchSemaphore(value: 0)
         var success = false
         center.add(request) { error in
+            if let error {
+                DebugLog.log("[NotificationManager] Failed to schedule notification: \(error)")
+            }
             success = (error == nil)
             semaphore.signal()
         }
         semaphore.wait()
 
         return success
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    /// Allow notifications to display as banners even when the app is in the foreground.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 }
