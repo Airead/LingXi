@@ -122,6 +122,15 @@ final class AppSettings {
         }
     }
 
+    // MARK: - Plugins
+
+    var disabledPlugins: [String] {
+        didSet {
+            guard disabledPlugins != oldValue else { return }
+            save(.disabledPlugins, value: disabledPlugins)
+        }
+    }
+
     // MARK: - Leader Key
 
     var leaderKeyEnabled: Bool {
@@ -229,6 +238,7 @@ final class AppSettings {
         case systemSettingsSearchPrefix = "io.github.airead.lingxi.systemSettingsSearchPrefix"
         case commandSearchEnabled = "io.github.airead.lingxi.commandSearchEnabled"
         case commandSearchPrefix = "io.github.airead.lingxi.commandSearchPrefix"
+        case disabledPlugins = "io.github.airead.lingxi.disabledPlugins"
         case leaderKeyEnabled = "io.github.airead.lingxi.leaderKeyEnabled"
         case screenshotRegionHotKeyKeyCode = "io.github.airead.lingxi.screenshotRegionHotKeyKeyCode"
         case screenshotRegionHotKeyModifiers = "io.github.airead.lingxi.screenshotRegionHotKeyModifiers"
@@ -282,6 +292,8 @@ final class AppSettings {
 
         commandSearchEnabled = Self.load(defaults, .commandSearchEnabled) ?? true
         commandSearchPrefix = Self.load(defaults, .commandSearchPrefix) ?? ">"
+
+        disabledPlugins = Self.load(defaults, .disabledPlugins) ?? []
 
         leaderKeyEnabled = Self.load(defaults, .leaderKeyEnabled) ?? true
 

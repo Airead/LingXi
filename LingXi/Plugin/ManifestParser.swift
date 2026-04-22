@@ -28,7 +28,10 @@ nonisolated enum ManifestParser {
         let version = doc.string("plugin", "version") ?? ""
         let author = doc.string("plugin", "author") ?? ""
         let description = doc.string("plugin", "description") ?? ""
-        let minLingXiVersion = doc.string("plugin", "minLingXiVersion") ?? ""
+        let minLingXiVersion = doc.string("plugin", "min_lingxi_version")
+            ?? doc.string("plugin", "minLingXiVersion")
+            ?? ""
+        let files = doc.stringArray("plugin", "files") ?? []
 
         // Search config
         let searchPrefix = doc.string("search", "prefix")
@@ -66,7 +69,8 @@ nonisolated enum ManifestParser {
             debounce: debounce,
             timeout: timeout,
             permissions: permissions,
-            commands: commands
+            commands: commands,
+            files: files
         )
     }
 

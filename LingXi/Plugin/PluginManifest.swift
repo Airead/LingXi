@@ -1,7 +1,7 @@
 import Foundation
 
 /// A command declared by a plugin manifest.
-nonisolated struct PluginCommand: Sendable {
+nonisolated struct PluginCommand: Sendable, Equatable {
     let name: String
     let title: String
     let subtitle: String
@@ -9,7 +9,7 @@ nonisolated struct PluginCommand: Sendable {
 }
 
 /// Plugin permission configuration.
-nonisolated struct PermissionConfig: Sendable {
+nonisolated struct PermissionConfig: Sendable, Equatable {
     let network: Bool
     let clipboard: Bool
     let filesystem: [String]
@@ -27,14 +27,14 @@ nonisolated struct PermissionConfig: Sendable {
 }
 
 /// Search configuration from manifest.
-nonisolated struct SearchConfig: Sendable {
+nonisolated struct SearchConfig: Sendable, Equatable {
     let prefix: String?
     let debounce: Int?
     let timeout: Int?
 }
 
 /// Metadata parsed from a plugin manifest (TOML or Lua global table).
-nonisolated struct PluginManifest: Sendable {
+nonisolated struct PluginManifest: Sendable, Equatable {
     let id: String
     let name: String
     let version: String
@@ -46,6 +46,7 @@ nonisolated struct PluginManifest: Sendable {
     let timeout: Int
     let permissions: PermissionConfig
     let commands: [PluginCommand]
+    let files: [String]
 
     /// Create manifest with defaults for backward-compatible Lua-only plugins.
     init(
@@ -59,7 +60,8 @@ nonisolated struct PluginManifest: Sendable {
         debounce: Int = 100,
         timeout: Int = 5000,
         permissions: PermissionConfig = .default,
-        commands: [PluginCommand] = []
+        commands: [PluginCommand] = [],
+        files: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -72,5 +74,6 @@ nonisolated struct PluginManifest: Sendable {
         self.timeout = timeout
         self.permissions = permissions
         self.commands = commands
+        self.files = files
     }
 }

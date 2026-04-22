@@ -27,11 +27,12 @@ final class AppAssembly {
         let snippetModule = SnippetModule(store: snippetStore)
         let leaderKeyManager = LeaderKeyManager()
 
-        let pluginManager = PluginManager(router: router)
+        let pluginManager = PluginManager(router: router, settings: settings)
+        let pluginMarket = PluginMarket(pluginsDirectory: pluginManager.directory)
         ScreenshotManager.shared.pluginService = pluginManager
 
         let clipboardModule = ClipboardModule(store: clipboardStore, pluginManager: pluginManager)
-        let commandModule = CommandModule(pluginManager: pluginManager)
+        let commandModule = CommandModule(pluginManager: pluginManager, pluginMarket: pluginMarket, settings: settings)
 
         let modules: [SearchProviderModule] = [
             appModule,

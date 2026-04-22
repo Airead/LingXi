@@ -132,13 +132,12 @@ enum TOMLParser {
 
             if currentArrayTable != nil {
                 currentArrayItem[key] = value
-            } else if !currentTable.isEmpty {
+            } else {
+                // Store in current table (empty string = root/implicit table)
                 if document.tables[currentTable] == nil {
                     document.tables[currentTable] = [:]
                 }
                 document.tables[currentTable]?[key] = value
-            } else {
-                throw Error.syntaxError(line: lineNo, message: "Key-value pair outside of table")
             }
         }
 
