@@ -534,4 +534,81 @@ struct LuaAPITests {
             assert(result.exitCode == -1, "expected exitCode -1, got " .. tostring(result.exitCode))
         """)
     }
+
+    // MARK: - lingxi.notify
+
+    @Test func notifySubtableExists() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true))
+        try state.doString("assert(type(lingxi.notify) == 'table')")
+    }
+
+    @Test func notifySendIsFunction() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true))
+        try state.doString("assert(type(lingxi.notify.send) == 'function')")
+    }
+
+    @Test func notifySendReturnsBoolean() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true))
+        try state.doString("""
+            local ok = lingxi.notify.send("Test Title", "Test Message")
+            assert(type(ok) == "boolean", "expected boolean, got " .. type(ok))
+        """)
+    }
+
+    @Test func notifyDisabledReturnsFalse() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false))
+        try state.doString("""
+            local ok = lingxi.notify.send("Test Title", "Test Message")
+            assert(ok == false, "expected false, got " .. tostring(ok))
+        """)
+    }
+
+    @Test func notifyDisabledSubtableStillExists() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false))
+        try state.doString("assert(type(lingxi.notify) == 'table')")
+    }
+
+    @Test func notifySendWithOnlyTitle() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true))
+        try state.doString("""
+            local ok = lingxi.notify.send("Test Title")
+            assert(type(ok) == "boolean", "expected boolean, got " .. type(ok))
+        """)
+    }
+
+    // MARK: - lingxi.alert
+
+    @Test func alertSubtableExists() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.alert) == 'table')")
+    }
+
+    @Test func alertShowIsFunction() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.alert.show) == 'function')")
+    }
+
+    @Test func alertShowReturnsBoolean() throws {
+        let state = makeState()
+        try state.doString("""
+            local ok = lingxi.alert.show("Test Alert")
+            assert(ok == true, "expected true, got " .. tostring(ok))
+        """)
+    }
+
+    @Test func alertShowWithDuration() throws {
+        let state = makeState()
+        try state.doString("""
+            local ok = lingxi.alert.show("Test Alert", 3.0)
+            assert(ok == true, "expected true, got " .. tostring(ok))
+        """)
+    }
+
+    @Test func alertShowRequiresTextArgument() throws {
+        let state = makeState()
+        try state.doString("""
+            local ok = lingxi.alert.show()
+            assert(ok == false, "expected false, got " .. tostring(ok))
+        """)
+    }
 }

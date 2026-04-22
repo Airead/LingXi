@@ -37,6 +37,12 @@ nonisolated enum LuaAPI {
             registerShell(state: state)
         }
         registerStore(state: state, pluginId: pluginId)
+        if permissions.notify {
+            registerNotify(state: state)
+        } else {
+            registerDisabledNotify(state: state)
+        }
+        registerAlert(state: state)
         state.setGlobal("lingxi")
     }
 
@@ -793,6 +799,69 @@ nonisolated enum LuaAPI {
         lua_setfield(L, -2, "stdout")
         lua_pushstring(L, String(data: stderrData, encoding: .utf8) ?? "")
         lua_setfield(L, -2, "stderr")
+        return 1
+    }
+
+    // MARK: - lingxi.notify
+
+    private static func registerNotify(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(notifySend)
+        state.setField("send", at: -2)
+        state.setField("notify", at: -2)
+    }
+
+    private static func registerDisabledNotify(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(disabledNotifySend)
+        state.setField("send", at: -2)
+        state.setField("notify", at: -2)
+    }
+
+    /// `lingxi.notify.send(title, message) -> boolean`
+    private static let notifySend: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let title = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let message = lua_swift_tostring(L, 2).map({ String(cString: $0) }) ?? ""
+        let ok = NotificationManager.shared.notify(title: title, message: message)
+        lua_pushboolean(L, ok ? 1 : 0)
+        return 1
+    }
+
+    private static let disabledNotifySend: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.notify.send denied: notify permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // MARK: - lingxi.alert
+
+    private static func registerAlert(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(alertShow)
+        state.setField("show", at: -2)
+        state.setField("alert", at: -2)
+    }
+
+    /// `lingxi.alert.show(text, duration?) -> boolean`
+    private static let alertShow: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let text = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let duration: TimeInterval
+        if lua_type(L, 2) == lua_swift_type_number() {
+            duration = TimeInterval(lua_swift_tonumber(L, 2))
+        } else {
+            duration = 2.0
+        }
+        let ok = ToastManager.shared.show(text: text, duration: duration)
+        lua_pushboolean(L, ok ? 1 : 0)
         return 1
     }
 }
