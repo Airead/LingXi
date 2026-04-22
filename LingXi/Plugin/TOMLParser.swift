@@ -71,7 +71,7 @@ enum TOMLParser {
         }
     }
 
-    static func parse(_ text: String) throws -> Document {
+    nonisolated static func parse(_ text: String) throws -> Document {
         var document = Document()
         var currentTable = ""
         var currentArrayTable: String? = nil
@@ -130,7 +130,7 @@ enum TOMLParser {
 
             let value = try parseValue(valueStr, line: lineNo)
 
-            if let arrayTable = currentArrayTable {
+            if currentArrayTable != nil {
                 currentArrayItem[key] = value
             } else if !currentTable.isEmpty {
                 if document.tables[currentTable] == nil {
@@ -157,7 +157,7 @@ enum TOMLParser {
 
     // MARK: - Private
 
-    private static func trimComment(from line: Substring) -> String {
+    private nonisolated static func trimComment(from line: Substring) -> String {
         var result = ""
         var inString = false
         var prevChar: Character?
@@ -176,7 +176,7 @@ enum TOMLParser {
         return result.trimmingCharacters(in: .whitespaces)
     }
 
-    private static func parseValue(_ text: String, line: Int) throws -> TOMLValue {
+    private nonisolated static func parseValue(_ text: String, line: Int) throws -> TOMLValue {
         // String
         if text.hasPrefix("\"") && text.hasSuffix("\"") {
             let inner = String(text.dropFirst().dropLast())
@@ -203,7 +203,7 @@ enum TOMLParser {
         throw Error.syntaxError(line: line, message: "Unsupported value: \(text)")
     }
 
-    private static func splitArrayElements(_ text: String) -> [String] {
+    private nonisolated static func splitArrayElements(_ text: String) -> [String] {
         var elements: [String] = []
         var current = ""
         var inString = false

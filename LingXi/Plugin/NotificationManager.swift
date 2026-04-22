@@ -3,9 +3,9 @@ import UserNotifications
 
 /// Manages system notifications for plugins.
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
-    static let shared = NotificationManager()
+    nonisolated static let shared = NotificationManager()
 
-    private var hasRequestedAuthorization = false
+    private nonisolated(unsafe) var hasRequestedAuthorization = false
 
     private override init() {
         super.init()
@@ -19,7 +19,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Request notification authorization if not already requested.
-    private func requestAuthorizationIfNeeded() {
+    private nonisolated func requestAuthorizationIfNeeded() {
         guard !hasRequestedAuthorization else { return }
         hasRequestedAuthorization = true
 
@@ -41,7 +41,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     ///   - message: The notification body.
     /// - Returns: `true` if the notification was scheduled successfully.
     @discardableResult
-    func notify(title: String, message: String) -> Bool {
+    nonisolated func notify(title: String, message: String) -> Bool {
         requestAuthorizationIfNeeded()
 
         let center = UNUserNotificationCenter.current()

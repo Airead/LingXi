@@ -43,9 +43,7 @@ nonisolated struct PathValidator: Sendable {
     /// Resolve symlinks and standardize the path.
     private func canonicalPath(_ path: String) -> String? {
         let url = URL(fileURLWithPath: path)
-        guard let resolved = try? url.resolvingSymlinksInPath().standardizedFileURL else {
-            return nil
-        }
+        let resolved = url.resolvingSymlinksInPath().standardizedFileURL
         return resolved.path
     }
 }

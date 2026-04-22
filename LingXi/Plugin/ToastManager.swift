@@ -3,7 +3,7 @@ import Foundation
 
 /// Manages floating toast alerts for plugin UI feedback.
 final class ToastManager {
-    static let shared = ToastManager()
+    nonisolated static let shared = ToastManager()
 
     private var currentWindow: NSWindow?
     private var dismissWorkItem: DispatchWorkItem?
@@ -16,7 +16,7 @@ final class ToastManager {
     ///   - duration: Time in seconds before auto-dismiss. Default is 2.0.
     /// - Returns: `true` if the toast was shown.
     @discardableResult
-    func show(text: String, duration: TimeInterval = 2.0) -> Bool {
+    nonisolated func show(text: String, duration: TimeInterval = 2.0) -> Bool {
         DispatchQueue.main.async { [weak self] in
             self?.dismissCurrent()
 
