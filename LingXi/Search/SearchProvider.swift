@@ -9,6 +9,10 @@ extension SearchProvider {
     var debounceMilliseconds: Int { 0 }
     var timeoutMilliseconds: Int { 5000 }
     var supportsPreview: Bool { false }
+
+    func tabComplete(rawQuery: String, strippedQuery: String, selectedItem: SearchResult) async -> String? {
+        nil
+    }
 }
 
 extension SearchProvider {

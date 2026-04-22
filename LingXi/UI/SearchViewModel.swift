@@ -144,6 +144,12 @@ final class SearchViewModel: ObservableObject {
         clampSelectedIndex()
     }
 
+    func tabComplete() async -> String? {
+        guard results.indices.contains(selectedIndex) else { return nil }
+        let selected = results[selectedIndex]
+        return await router.tabComplete(rawQuery: query, selectedItem: selected)
+    }
+
     private func clampSelectedIndex() {
         let clamped = min(selectedIndex, max(results.count - 1, 0))
         if selectedIndex != clamped {

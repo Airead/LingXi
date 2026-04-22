@@ -33,6 +33,26 @@ actor LuaSearchProvider: SearchProvider {
         parseResults(query: query)
     }
 
+    func tabComplete(rawQuery: String, strippedQuery: String, selectedItem: SearchResult) async -> String? {
+        state.getGlobal("complete")
+        guard state.isFunction(at: -1) else {
+            state.pop()
+            return nil
+        }
+        state.push(rawQuery)
+        state.push(selectedItem.name)
+        do {
+            try state.pcall(nargs: 2, nresults: 1)
+            let result = state.toString(at: -1)
+            state.pop()
+            return result
+        } catch {
+            DebugLog.log("[LuaPlugin:\(name)] complete error: \(error)")
+            state.pop()
+            return nil
+        }
+    }
+
     /// Execute a named Lua function with a string argument (used by plugin commands).
     func executeFunction(name functionName: String, args: String) {
         state.getGlobal(functionName)

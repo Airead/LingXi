@@ -204,6 +204,14 @@ final class PanelManager {
                 self?.hide()
             }
         }
+        newPanel.onTab = { [weak self, weak viewModel] in
+            guard let self, let viewModel else { return }
+            Task {
+                if let newQuery = await viewModel.tabComplete() {
+                    viewModel.query = newQuery
+                }
+            }
+        }
 
         // Keep .receive(on:): @Published fires on willSet (before the value is set).
         // Without the dispatch, panel.setFrame(display: true) triggers a SwiftUI layout

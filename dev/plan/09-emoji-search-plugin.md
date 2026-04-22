@@ -467,41 +467,84 @@ end
 
 ---
 
-### 阶段 5：Tab Complete（可选增强）
+### 阶段 5：Tab Complete（已完成）
 
 **目标**：实现 `@` 后的 Tab 补全。
 
-#### 5.1 宿主 Tab Complete 机制
+**实现方式**：在 `SearchProvider` 协议中新增 `tabComplete` 方法，让每个 provider 自己决定补全逻辑。CommandProvider、Lua 插件、甚至未来的其它 provider 都能复用。
 
-**需修改的文件**：
-- `LingXi/UI/SearchViewModel.swift`：处理 Tab 键事件
-- `LingXi/Panel/PanelManager.swift`：监听 Tab 键
-- `LingXi/Plugin/LuaSearchProvider.swift`：调用 Lua `complete(query, selectedItem)`
+#### 5.1 协议层扩展
 
-**实现方式**：
-1. `FloatingPanel` 捕获 Tab 键事件，发送给 `SearchViewModel`
-2. `SearchViewModel` 判断当前选中项的来源是否为 Lua 插件
-3. 若是，调用对应 provider 的 `tabComplete(query:selectedItem:)`
-4. `LuaSearchProvider` 调用 Lua 全局函数 `complete(query, item_title)`
-5. 若 Lua 返回字符串，替换当前 query 为该字符串
+**修改文件**: `LingXi/Search/SearchProvider.swift`
 
-#### 5.2 Emoji 插件 Tab Complete
+在 `SearchProvider` 协议中新增：
 
-在 `init.lua` 中：
+```swift
+func tabComplete(rawQuery: String, strippedQuery: String, selectedItem: SearchResult) async -> String?
+```
+
+默认实现返回 `nil`（不参与补全），不影响现有 provider。
+
+**修改文件**: `LingXi/Models/SearchResult.swift`
+
+新增 `sourceProviderId` 字段，用于标记结果来自哪个 provider，方便 `SearchRouter` 路由 tabComplete 请求。
+
+#### 5.2 键盘事件链路
+
+**修改文件**: `LingXi/Panel/FloatingPanel.swift`
+
+在 `sendEvent(_:)` 中捕获 `kVK_Tab`，调用 `onTab?()`。
+
+**修改文件**: `LingXi/Panel/PanelManager.swift`
+
+连接 `onTab` 到 `SearchViewModel.tabComplete()`。
+
+**修改文件**: `LingXi/UI/SearchViewModel.swift`
+
+新增 `tabComplete()` 方法，调用 `router.tabComplete(rawQuery:selectedItem:)`。
+
+#### 5.3 SearchRouter 路由
+
+**修改文件**: `LingXi/Search/SearchRouter.swift`
+
+1. `executeProvider` 返回结果时注入 `sourceProviderId`
+2. 新增 `tabComplete(rawQuery:selectedItem:)` 方法，根据 `sourceProviderId` 路由到对应 provider
+
+#### 5.4 CommandSearchProvider 实现
+
+**修改文件**: `LingXi/Search/CommandSearchProvider.swift`
+
+实现命令补全逻辑：
+- 已精确匹配 → 追加空格进入 args 模式
+- 模糊匹配 → 替换为精确命令名 + 空格
+
+示例：
+- `/plugin:re` + Tab → `/plugin:reload `
+- `/plugin:reload` + Tab → `/plugin:reload `
+
+#### 5.5 LuaSearchProvider 实现
+
+**修改文件**: `LingXi/Plugin/LuaSearchProvider.swift`
+
+调用 Lua 全局函数 `complete(query, item_title)`，与 WenZi 兼容：
 
 ```lua
 function complete(query, item_title)
-    if query:match("^%s*@") then
-        -- 补全分组名
-        return "@" .. item_title .. " "
+    if query:match("^%s*e%s+@") then
+        return query:gsub("@.*$", "@" .. item_title .. " ")
     end
     return nil
 end
 ```
 
-#### 5.3 决策
+#### 5.6 边界情况
 
-此阶段依赖较多宿主改动（键盘事件链路至 Lua 回调），优先级低于前 4 个阶段。建议作为独立任务，在核心功能稳定后再实现。
+- **Lua 未定义 `complete`** → 返回 nil，不补全
+- **Provider 返回 nil** → SearchViewModel 不修改 query
+- **Tab 键默认行为** → FloatingPanel 拦截后 `return`，不会触发 SwiftUI TextField 的焦点切换
+- **空结果或未选中** → 直接忽略
+- **无 modifier 支持**
+- **不支持多次 Tab 循环补全**
 
 ---
 
@@ -543,6 +586,14 @@ HTML Preview 是锦上添花功能，建议：
 
 | 文件 | 类型 | 说明 |
 |------|------|------|
+| `LingXi/Search/SearchProvider.swift` | 修改 | 新增 `tabComplete` 协议方法 |
+| `LingXi/Models/SearchResult.swift` | 修改 | 新增 `sourceProviderId` 字段 |
+| `LingXi/Search/SearchRouter.swift` | 修改 | 结果注入 `sourceProviderId`；新增 `tabComplete` 路由方法 |
+| `LingXi/Panel/FloatingPanel.swift` | 修改 | 新增 `onTab` 回调，捕获 `kVK_Tab` |
+| `LingXi/Panel/PanelManager.swift` | 修改 | 连接 `onTab` → `viewModel.tabComplete()` |
+| `LingXi/UI/SearchViewModel.swift` | 修改 | 新增 `tabComplete()` 方法 |
+| `LingXi/Search/CommandSearchProvider.swift` | 修改 | 实现命令名 Tab 补全逻辑 |
+| `LingXi/Plugin/LuaSearchProvider.swift` | 修改 | 调用 Lua `complete(query, item_title)` |
 | `LingXi/Plugin/LuaAPI.swift` | 修改 | 新增 `lingxi.paste`、`lingxi.fuzzy.search`、`lingxi.json.parse` |
 | `LingXi/Plugin/LuaSearchProvider.swift` | 修改 | 支持 `icon`、`preview_type`/`preview`、`cmd_action`/`cmd_subtitle` 等 modifier action 字段；`supportsPreview = true` |
 | `LingXi/Models/SearchResult.swift` | 修改 | 新增 `PreviewData.html`（阶段 6） |
