@@ -326,25 +326,22 @@ local function _emoji_item(rec)
     }
 end
 
-local _MAX_PREVIEW_EMOJIS = 50
+local _EMOJIS_PER_ROW = 12
+local _EMOJI_SPACING = "  "
 
 local function _group_preview(g)
-    local lines = { g.name_zh or g.name_en, g.name_en or "", "" }
+    local lines = {}
     local chars = g.chars or {}
     local row = {}
-    for i = 1, math.min(#chars, _MAX_PREVIEW_EMOJIS) do
+    for i = 1, #chars do
         table.insert(row, chars[i])
-        if #row >= 10 then
-            table.insert(lines, table.concat(row, "  "))
+        if #row >= _EMOJIS_PER_ROW then
+            table.insert(lines, table.concat(row, _EMOJI_SPACING))
             row = {}
         end
     end
     if #row > 0 then
-        table.insert(lines, table.concat(row, "  "))
-    end
-    if #chars > _MAX_PREVIEW_EMOJIS then
-        table.insert(lines, "")
-        table.insert(lines, "... and " .. (#chars - _MAX_PREVIEW_EMOJIS) .. " more")
+        table.insert(lines, table.concat(row, _EMOJI_SPACING))
     end
     return table.concat(lines, "\n")
 end

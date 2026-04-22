@@ -362,13 +362,8 @@ private struct PreviewPane: View {
     var body: some View {
         switch data {
         case .text(let content):
-            ScrollView {
-                Text(content)
-                    .font(.system(size: 13, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-            }
+            NativeTextPreview(text: content)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let path, let description):
             VStack(spacing: 12) {
                 CachedImageView(url: path, maxPixelSize: 512) {
@@ -386,6 +381,35 @@ private struct PreviewPane: View {
                     .padding(.bottom, 12)
             }
         }
+    }
+}
+
+/// A native NSTextView wrapped for SwiftUI, optimized for large emoji rendering.
+private struct NativeTextPreview: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = NSFont.systemFont(ofSize: 18)
+        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        textView.string = text
     }
 }
 
