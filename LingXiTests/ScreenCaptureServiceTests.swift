@@ -8,6 +8,7 @@ import Testing
 @testable import LingXi
 
 @Suite("ScreenCaptureService")
+@MainActor
 struct ScreenCaptureServiceTests {
 
     // MARK: - cropImage tests

@@ -3,6 +3,7 @@ import Foundation
 import Testing
 @testable import LingXi
 
+@MainActor
 struct SnippetExpanderTests {
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory

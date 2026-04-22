@@ -8,7 +8,7 @@ struct PluginManagerTests {
     // MARK: - loadAll
 
     @Test func loadAllWithValidPlugin() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "hello", lua: """
@@ -25,7 +25,7 @@ struct PluginManagerTests {
     }
 
     @Test func loadAllWithFailedPlugin() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "broken", lua: "this is not valid lua!!!")
@@ -39,7 +39,7 @@ struct PluginManagerTests {
     }
 
     @Test func loadAllMixedPlugins() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "good", lua: """
@@ -55,7 +55,7 @@ struct PluginManagerTests {
     }
 
     @Test func loadAllEmptyDirectory() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
@@ -79,7 +79,7 @@ struct PluginManagerTests {
     // MARK: - reload
 
     @Test func reloadReplacesPlugins() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "v1", lua: """
@@ -106,7 +106,7 @@ struct PluginManagerTests {
     }
 
     @Test func reloadClearsFailures() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "broken", lua: "bad!!!")
@@ -130,7 +130,7 @@ struct PluginManagerTests {
     }
 
     @Test func reloadUnregistersOldProviders() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "old", lua: """
@@ -155,7 +155,7 @@ struct PluginManagerTests {
     // MARK: - summary
 
     @Test func summaryWithPlugins() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "demo", lua: """
@@ -170,7 +170,7 @@ struct PluginManagerTests {
     }
 
     @Test func summaryEmpty() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let manager = PluginManager(router: emptyRouter(), directory: dir)
@@ -182,7 +182,7 @@ struct PluginManagerTests {
     // MARK: - Skips non-directory entries
 
     @Test func skipsRegularFiles() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try "not a plugin".write(
@@ -201,7 +201,7 @@ struct PluginManagerTests {
     // MARK: - TOML manifest support
 
     @Test func loadAllWithTOMLManifest() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "toml-plugin", toml: """
@@ -238,7 +238,7 @@ struct PluginManagerTests {
     }
 
     @Test func tomlManifestDisablesHttpAPI() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "no-net", toml: """
@@ -271,7 +271,7 @@ struct PluginManagerTests {
     }
 
     @Test func missingTOMLFailsToLoad() async throws {
-        let dir = try makeTestTempDir(label: "PluginManagerTests")
+        let dir = makeTestTempDir(label: "PluginManagerTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // Create a plugin directory with only plugin.lua (no plugin.toml)

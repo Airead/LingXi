@@ -4,6 +4,7 @@ import Testing
 
 // MARK: - LeaderKeyConfig tests
 
+@MainActor
 struct LeaderKeyConfigTests {
 
     @Test func parseValidJSON() throws {
@@ -158,6 +159,7 @@ struct LeaderKeyConfigTests {
 
 // MARK: - JSONC stripping tests
 
+@MainActor
 struct JSONCStripTests {
     @Test func stripsSingleLineComments() {
         let input = """

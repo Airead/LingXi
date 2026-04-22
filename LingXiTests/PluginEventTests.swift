@@ -8,7 +8,7 @@ struct PluginEventTests {
     // MARK: - dispatchEvent on LuaSearchProvider
 
     @Test func dispatchEventCallsSpecificLuaFunction() async throws {
-        let dir = try makeTestTempDir(label: "PluginEventTests")
+        let dir = makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "event-test", lua: """
@@ -46,7 +46,7 @@ struct PluginEventTests {
     }
 
     @Test func dispatchEventCallsGenericOnEvent() async throws {
-        let dir = try makeTestTempDir(label: "PluginEventTests")
+        let dir = makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "generic-event", lua: """
@@ -83,7 +83,7 @@ struct PluginEventTests {
     }
 
     @Test func dispatchEventIgnoresMissingHandler() async throws {
-        let dir = try makeTestTempDir(label: "PluginEventTests")
+        let dir = makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "no-handler", lua: """
@@ -107,7 +107,7 @@ struct PluginEventTests {
     }
 
     @Test func dispatchEventHandlesLuaError() async throws {
-        let dir = try makeTestTempDir(label: "PluginEventTests")
+        let dir = makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "error-handler", lua: """
@@ -137,7 +137,7 @@ struct PluginEventTests {
     // MARK: - dispatchEvent on PluginManager (broadcasts to all)
 
     @Test func managerDispatchesToAllPlugins() async throws {
-        let dir = try makeTestTempDir(label: "PluginEventTests")
+        let dir = makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "plugin-a", lua: """
@@ -207,7 +207,7 @@ struct PluginEventTests {
     // MARK: - LuaSearchProvider.executeFunction
 
     @Test func executeFunctionCallsLuaCode() async throws {
-        let dir = try makeTestTempDir(label: "PluginEventTests")
+        let dir = makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "exec-fn", lua: """
@@ -233,7 +233,7 @@ struct PluginEventTests {
     }
 
     @Test func executeFunctionHandlesMissingFunction() async throws {
-        let dir = try makeTestTempDir(label: "PluginEventTests")
+        let dir = makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "missing-fn", lua: """
@@ -256,7 +256,7 @@ struct PluginEventTests {
     // MARK: - PluginManager.reload triggers plugin_reload
 
     @Test func reloadTriggersPluginReloadEvent() async throws {
-        let dir = try makeTestTempDir(label: "PluginEventTests")
+        let dir = makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "reload-test", lua: """

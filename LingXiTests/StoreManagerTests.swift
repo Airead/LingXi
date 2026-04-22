@@ -66,7 +66,7 @@ struct StoreManagerTests {
 
     @Test func deleteRemovesKey() async {
         let store = makeStore()
-        await store.set(pluginId: "test", key: "temp", value: "value")
+        _ = await store.set(pluginId: "test", key: "temp", value: "value")
         let ok = await store.delete(pluginId: "test", key: "temp")
         #expect(ok == true)
         let value = await store.get(pluginId: "test", key: "temp")
@@ -83,8 +83,8 @@ struct StoreManagerTests {
 
     @Test func pluginsAreIsolated() async {
         let store = makeStore()
-        await store.set(pluginId: "plugin.a", key: "shared", value: "a-value")
-        await store.set(pluginId: "plugin.b", key: "shared", value: "b-value")
+        _ = await store.set(pluginId: "plugin.a", key: "shared", value: "a-value")
+        _ = await store.set(pluginId: "plugin.b", key: "shared", value: "b-value")
 
         let valueA = await store.get(pluginId: "plugin.a", key: "shared")
         let valueB = await store.get(pluginId: "plugin.b", key: "shared")
@@ -100,7 +100,7 @@ struct StoreManagerTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let store1 = StoreManager(baseDirectory: tempDir)
-        await store1.set(pluginId: "persist-test", key: "counter", value: 7)
+        _ = await store1.set(pluginId: "persist-test", key: "counter", value: 7)
 
         let store2 = StoreManager(baseDirectory: tempDir)
         let value = await store2.get(pluginId: "persist-test", key: "counter")
@@ -113,7 +113,7 @@ struct StoreManagerTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let store = StoreManager(baseDirectory: tempDir)
-        await store.set(pluginId: "file-test", key: "name", value: "hello")
+        _ = await store.set(pluginId: "file-test", key: "name", value: "hello")
 
         let fileURL = tempDir.appendingPathComponent("file-test.json")
         #expect(FileManager.default.fileExists(atPath: fileURL.path))

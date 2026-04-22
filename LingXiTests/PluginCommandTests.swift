@@ -8,7 +8,7 @@ struct PluginCommandTests {
     // MARK: - Command parsing
 
     @Test func manifestParsesCommands() async throws {
-        let dir = try makeTestTempDir(label: "PluginCommandTests")
+        let dir = makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(
@@ -61,7 +61,7 @@ struct PluginCommandTests {
     }
 
     @Test func manifestSkipsInvalidCommands() async throws {
-        let dir = try makeTestTempDir(label: "PluginCommandTests")
+        let dir = makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(
@@ -116,7 +116,7 @@ struct PluginCommandTests {
     }
 
     @Test func manifestWithNoCommandsField() async throws {
-        let dir = try makeTestTempDir(label: "PluginCommandTests")
+        let dir = makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(in: dir, name: "no-cmds", lua: """
@@ -134,7 +134,7 @@ struct PluginCommandTests {
     // MARK: - Command registration with CommandSearchProvider
 
     @Test func commandsRegisteredWithProvider() async throws {
-        let dir = try makeTestTempDir(label: "PluginCommandTests")
+        let dir = makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(
@@ -175,7 +175,7 @@ struct PluginCommandTests {
     }
 
     @Test func commandsUnregisteredOnReload() async throws {
-        let dir = try makeTestTempDir(label: "PluginCommandTests")
+        let dir = makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(
@@ -225,7 +225,7 @@ struct PluginCommandTests {
     // MARK: - Command execution
 
     @Test func commandExecutesLuaFunction() async throws {
-        let dir = try makeTestTempDir(label: "PluginCommandTests")
+        let dir = makeTestTempDir(label: "PluginCommandTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
         try writeTestPlugin(

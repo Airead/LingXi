@@ -196,7 +196,7 @@ struct LuaAPITests {
     @Test func storeSetAndGetString() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state = makeState(pluginId: "test.store.string")
         try state.doString("""
@@ -209,7 +209,7 @@ struct LuaAPITests {
     @Test func storeSetAndGetNumber() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state = makeState(pluginId: "test.store.number")
         try state.doString("""
@@ -222,7 +222,7 @@ struct LuaAPITests {
     @Test func storeSetAndGetBoolean() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state = makeState(pluginId: "test.store.bool")
         try state.doString("""
@@ -235,7 +235,7 @@ struct LuaAPITests {
     @Test func storeSetAndGetTable() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state = makeState(pluginId: "test.store.table")
         try state.doString("""
@@ -250,7 +250,7 @@ struct LuaAPITests {
     @Test func storeDeleteRemovesKey() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state = makeState(pluginId: "test.store.delete")
         try state.doString("""
@@ -265,7 +265,7 @@ struct LuaAPITests {
     @Test func storeGetMissingReturnsNil() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state = makeState(pluginId: "test.store.missing")
         try state.doString("""
@@ -277,7 +277,7 @@ struct LuaAPITests {
     @Test func storePersistsAcrossStates() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state1 = makeState(pluginId: "test.store.persist")
         try state1.doString("lingxi.store.set(\"counter\", 5)")
@@ -292,7 +292,7 @@ struct LuaAPITests {
     @Test func storeIsIsolatedByPluginId() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let stateA = makeState(pluginId: "plugin.a")
         try stateA.doString("lingxi.store.set(\"key\", \"value-a\")")
@@ -307,7 +307,7 @@ struct LuaAPITests {
     @Test func storeSetReturnsTrue() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state = makeState(pluginId: "test.store.set.ok")
         try state.doString("""
@@ -319,7 +319,7 @@ struct LuaAPITests {
     @Test func storeSetAndGetArray() throws {
         let tempDir = makeTestTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = StoreManager(baseDirectory: tempDir)
+        _ = StoreManager(baseDirectory: tempDir)
 
         let state = makeState(pluginId: "test.store.array")
         try state.doString("""
