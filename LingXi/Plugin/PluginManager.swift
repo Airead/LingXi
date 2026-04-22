@@ -1,9 +1,13 @@
 import Foundation
 
-/// Event names dispatched to Lua plugins. Each corresponds to a global Lua function.
+/// Event names dispatched to Lua plugins.
 nonisolated enum PluginEvent: String {
-    case clipboardChange = "on_clipboard_change"
-    case searchActivate = "on_search_activate"
+    case clipboardChange = "clipboard_change"
+    case searchActivate = "search_activate"
+    case searchDeactivate = "search_deactivate"
+    case appLaunch = "app_launch"
+    case screenshotCaptured = "screenshot_captured"
+    case pluginReload = "plugin_reload"
 }
 
 /// A successfully loaded plugin.
@@ -59,6 +63,7 @@ final class PluginManager: PluginService {
         plugins.removeAll()
         failures.removeAll()
         await loadAll()
+        await dispatchEvent(name: PluginEvent.pluginReload.rawValue, data: [:])
     }
 
     /// Dispatch an event to all loaded plugins concurrently.

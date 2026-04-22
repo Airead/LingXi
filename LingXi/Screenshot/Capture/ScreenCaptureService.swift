@@ -94,7 +94,7 @@ final class ScreenCaptureService {
     }
 
     /// Encode a CGImage as PNG data.
-    private nonisolated static func encodePNG(_ image: CGImage) -> Data? {
+    nonisolated static func encodePNG(_ image: CGImage) -> Data? {
         let data = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(dest, image, nil)

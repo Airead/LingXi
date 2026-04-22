@@ -28,6 +28,7 @@ final class AppAssembly {
         let leaderKeyManager = LeaderKeyManager()
 
         let pluginManager = PluginManager(router: router)
+        ScreenshotManager.shared.pluginService = pluginManager
 
         let clipboardModule = ClipboardModule(store: clipboardStore, pluginManager: pluginManager)
         let commandModule = CommandModule(pluginManager: pluginManager)
@@ -68,6 +69,11 @@ final class AppAssembly {
         for module in modules {
             module.bindEvents(to: viewModel, context: panelManager)
         }
+
+        await pluginManager.dispatchEvent(
+            name: PluginEvent.appLaunch.rawValue,
+            data: [:]
+        )
 
         return Result(panelManager: panelManager, pluginManager: pluginManager)
     }

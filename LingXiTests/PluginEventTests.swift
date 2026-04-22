@@ -7,7 +7,7 @@ struct PluginEventTests {
 
     // MARK: - dispatchEvent on LuaSearchProvider
 
-    @Test func dispatchEventCallsLuaFunction() async throws {
+    @Test func dispatchEventCallsSpecificLuaFunction() async throws {
         let dir = try makeTestTempDir(label: "PluginEventTests")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -32,9 +32,9 @@ struct PluginEventTests {
         #expect(manager.plugins.count == 1)
         let provider = manager.plugins[0].provider
 
-        // Dispatch event
+        // Dispatch event using new raw value name
         await provider.dispatchEvent(
-            name: "on_clipboard_change",
+            name: "clipboard_change",
             data: ["text": "hello from clipboard", "source_app": "Safari"]
         )
 
@@ -43,6 +43,43 @@ struct PluginEventTests {
         #expect(results.count == 1)
         #expect(results[0].name == "hello from clipboard")
         #expect(results[0].subtitle == "Safari")
+    }
+
+    @Test func dispatchEventCallsGenericOnEvent() async throws {
+        let dir = try makeTestTempDir(label: "PluginEventTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try writeTestPlugin(in: dir, name: "generic-event", lua: """
+            plugin = { name = "generic-event", prefix = "ge" }
+            last_event = ""
+            last_data = ""
+            function on_event(event, data)
+                last_event = event
+                last_data = data.query or ""
+            end
+            function search(query)
+                return {
+                    { title = last_event, subtitle = last_data }
+                }
+            end
+        """)
+
+        let manager = PluginManager(router: emptyRouter(), directory: dir)
+        await manager.loadAll()
+
+        #expect(manager.plugins.count == 1)
+        let provider = manager.plugins[0].provider
+
+        // Dispatch event — should be caught by on_event
+        await provider.dispatchEvent(
+            name: "search_activate",
+            data: ["query": "hello world"]
+        )
+
+        let results = await provider.search(query: "check")
+        #expect(results.count == 1)
+        #expect(results[0].name == "search_activate")
+        #expect(results[0].subtitle == "hello world")
     }
 
     @Test func dispatchEventIgnoresMissingHandler() async throws {
@@ -61,7 +98,7 @@ struct PluginEventTests {
 
         // Should not crash or error when handler is missing
         await provider.dispatchEvent(
-            name: "on_clipboard_change",
+            name: "clipboard_change",
             data: ["text": "test"]
         )
 
@@ -88,7 +125,7 @@ struct PluginEventTests {
 
         // Should not crash; error is logged
         await provider.dispatchEvent(
-            name: "on_clipboard_change",
+            name: "clipboard_change",
             data: ["text": "trigger error"]
         )
 
@@ -132,7 +169,7 @@ struct PluginEventTests {
 
         // Dispatch to all
         await manager.dispatchEvent(
-            name: "on_search_activate",
+            name: "search_activate",
             data: ["prefix": "file"]
         )
 
@@ -214,5 +251,45 @@ struct PluginEventTests {
 
         let results = await provider.search(query: "test")
         #expect(results.isEmpty)
+    }
+
+    // MARK: - PluginManager.reload triggers plugin_reload
+
+    @Test func reloadTriggersPluginReloadEvent() async throws {
+        let dir = try makeTestTempDir(label: "PluginEventTests")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try writeTestPlugin(in: dir, name: "reload-test", lua: """
+            plugin = { name = "reload-test", prefix = "rt" }
+            reload_received = false
+            function on_plugin_reload(data)
+                reload_received = true
+            end
+            function search(query)
+                local title = reload_received and "reloaded" or "not-reloaded"
+                return { { title = title } }
+            end
+        """)
+
+        let manager = PluginManager(router: emptyRouter(), directory: dir)
+        await manager.loadAll()
+
+        #expect(manager.plugins.count == 1)
+
+        // Before reload, plugin should not have received the event
+        let resultsBefore = await manager.plugins[0].provider.search(query: "check")
+        #expect(resultsBefore.count == 1)
+        #expect(resultsBefore[0].name == "not-reloaded")
+
+        // Reload triggers plugin_reload event
+        await manager.reload()
+
+        // After reload, the plugin should have been reloaded and received the event
+        // Note: because reload() unloads all plugins before re-loading them,
+        // the old plugin instance is gone. We need to check the new instance.
+        #expect(manager.plugins.count == 1)
+        let resultsAfter = await manager.plugins[0].provider.search(query: "check")
+        #expect(resultsAfter.count == 1)
+        #expect(resultsAfter[0].name == "reloaded")
     }
 }

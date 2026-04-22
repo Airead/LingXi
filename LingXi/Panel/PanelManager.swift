@@ -129,6 +129,12 @@ final class PanelManager {
         previousApp = nil
         snippetModule.resume()
         leaderKeyManager.resume()
+        Task {
+            await pluginService.dispatchEvent(
+                name: PluginEvent.searchDeactivate.rawValue,
+                data: [:]
+            )
+        }
         if returnFocus {
             app?.activate()
         }
