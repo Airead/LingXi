@@ -9,7 +9,7 @@ struct LuaAPITests {
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
-        LuaAPI.registerAll(state: state, permissions: permissions, pluginId: pluginId)
+        LuaAPI.registerAll(state: state, permissions: permissions, pluginId: pluginId, pluginDir: "")
         return state
     }
 

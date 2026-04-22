@@ -281,7 +281,17 @@ final class PluginManager: PluginService {
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: pluginDir.path)
 
-        LuaAPI.registerAll(state: state, permissions: manifest.permissions, pluginId: manifest.id)
+        // Automatically grant access to the plugin's own directory for bundled resources.
+        let permissions = PermissionConfig(
+            network: manifest.permissions.network,
+            clipboard: manifest.permissions.clipboard,
+            filesystem: manifest.permissions.filesystem + [pluginDir.path],
+            shell: manifest.permissions.shell,
+            notify: manifest.permissions.notify,
+            store: manifest.permissions.store
+        )
+
+        LuaAPI.registerAll(state: state, permissions: permissions, pluginId: manifest.id, pluginDir: pluginDir.path)
 
         try state.doFile(scriptPath)
 

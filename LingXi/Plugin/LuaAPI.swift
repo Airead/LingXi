@@ -10,6 +10,9 @@ nonisolated enum LuaAPI {
     /// Maps plugin ID to its shell command whitelist for C callbacks.
     private static var shellPermissions: [String: [String]] = [:]
 
+    /// Maps plugin ID to its plugin directory for resolving relative paths.
+    private static var pluginDirs: [String: String] = [:]
+
     /// Injectable pasteboard for testing clipboard APIs without touching the system pasteboard.
     internal static var testingPasteboard: NSPasteboard? = nil
 
@@ -18,11 +21,15 @@ nonisolated enum LuaAPI {
 
     /// Call after `openLibs()` and `LuaSandbox.apply()`.
     /// APIs without permission are registered as stubs that return nil/false and log a warning.
-    static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "") {
+    static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "", pluginDir: String = "") {
         state.createTable()
         // Store pluginId as a hidden field on the lingxi table so C callbacks can retrieve it.
         state.push(pluginId)
         state.setField("_pluginId", at: -2)
+        // Store pluginDir for resolving relative paths in file APIs.
+        if !pluginId.isEmpty && !pluginDir.isEmpty {
+            pluginDirs[pluginId] = pluginDir
+        }
         if permissions.network {
             registerHTTP(state: state)
         } else {
@@ -177,9 +184,17 @@ nonisolated enum LuaAPI {
     /// `lingxi.file.read(path) -> string | nil`
     private static let fileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        guard let path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
             lua_pushnil(L)
             return 1
+        }
+
+        // Resolve relative paths against the plugin's directory.
+        if !path.hasPrefix("/") {
+            let pid = pluginId(from: L)
+            if let pluginDir = pluginDirs[pid] {
+                path = pluginDir + "/" + path
+            }
         }
 
         let validator = PathValidator(allowedPaths: filePaths(from: L))

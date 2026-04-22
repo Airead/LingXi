@@ -1,0 +1,27 @@
+[plugin]
+id = "io.github.airead.lingxi.emoji-search"
+name = "Emoji Search"
+description = "Search and paste emoji via the launcher (prefix: e)"
+version = "1.0.0"
+author = "LingXi Team"
+url = "https://github.com/Airead/LingXi"
+min_lingxi_version = "1.0.0"
+
+files = [
+    "init.lua",
+    "emoji-tree.json",
+    "README.md",
+]
+
+[search]
+prefix = "e"
+debounce = 50
+timeout = 10000
+
+[permissions]
+network = false
+clipboard = true
+filesystem = ["~/.config/LingXi/plugins/io.github.airead.lingxi.emoji-search/"]
+store = false
+notify = false
+shell = []
