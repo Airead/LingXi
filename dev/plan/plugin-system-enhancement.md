@@ -387,101 +387,230 @@
 
 ---
 
-## 阶段 7：插件市场 CLI（安装/卸载/列表）
+## 阶段 7：插件市场 CLI（安装/卸载/列表/更新）
 
-### 工作内容
+### 设计概要
 
-1. **定义 registry.toml 格式**
-   ```toml
-   name = "LingXi Official"
-   url = "https://github.com/airead/lingxi-plugins"
-   
-   [[plugins]]
-   id = "io.github.airead.lingxi.emoji-search"
-   name = "Emoji Search"
-   version = "1.0.0"
-   description = "Search emojis by keyword"
-   author = "LingXi Team"
-   source = "https://raw.githubusercontent.com/.../plugin.toml"
-   min_lingxi_version = "0.1.0"
-   ```
+> **重要约定**：所有 LingXi 缓存路径禁止硬编码。后续所有缓存相关内容统一放在 `~/.cache/LingXi/` 目录下，通过共享配置或环境变量获取，确保一致性和可维护性。
 
-2. **实现安装流程**
-   - `plugin:install <id>`：从注册表查找插件，下载并安装
-   - `plugin:install <url>`：从 URL 直接安装（zip 或目录）
-   - 安装后生成 `install.toml`
+1. **官方 Registry**：从 GitHub 远程获取（`https://raw.githubusercontent.com/Airead/LingXi/main/plugins/registry.toml`），本地缓存 24h
+2. **Plugin.toml 扩展**：`files = ["plugin.lua", "data.json"]` 列出所有需下载的文件
+3. **无 ZIP 支持**：逐个文件从 GitHub raw URL 下载
+4. **默认禁用**：安装后自动加入 `disabled_plugins`，需手动 `plugin:enable`
+5. **手动插件检测**：无 `install.toml` 的目录标记为 `MANUALLY_PLACED`，正常加载
+6. **版本兼容性**：安装/更新前检查 `min_lingxi_version`，不兼容则拒绝
+7. **CLI 先行**：配置界面将在后续阶段实现
 
-3. **实现 uninstall**
-   - `plugin:uninstall <id>`：删除插件目录
+### 新增文件
 
-4. **实现 list**
-   - `plugin:list`：显示已安装插件（已有，需增强显示版本和来源）
+- `LingXi/Plugin/PluginRegistry.swift` — Registry 数据结构与解析
+- `LingXi/Plugin/RegistryManager.swift` — 远程获取、缓存、TTL 管理
+- `LingXi/Plugin/InstallManifest.swift` — `install.toml` 读写
+- `LingXi/Plugin/PluginMarket.swift` — 安装/卸载/更新核心逻辑
+- `LingXi/Plugin/Semver.swift` — 语义化版本比较
 
-5. **注册表管理命令**
-   - `plugin:registry add <url>`
-   - `plugin:registry remove <name>`
-   - `plugin:registry list`
+### registry.toml 格式
 
-### 验证方法
+```toml
+name = "LingXi Official"
+url = "https://github.com/Airead/LingXi"
 
-1. **创建本地测试注册表**
-   - 在 `~/.config/LingXi/registries/test.toml` 放置测试 registry.toml
-   - 指向本地或 GitHub 上的测试插件
+[[plugins]]
+id = "io.github.airead.lingxi.emoji-search"
+name = "Emoji Search"
+version = "1.0.0"
+description = "Search emojis by keyword"
+author = "LingXi Team"
+source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/emoji-search/plugin.toml"
+min_lingxi_version = "0.1.0"
+```
 
-2. **人工验证**：
-   - `plugin:registry add <本地 registry.toml 路径>`
-   - `plugin:registry list`，确认注册表已添加
-   - `plugin:install <测试插件 id>`，确认插件下载到 `plugins/` 目录
-   - 检查插件目录包含 `install.toml`
-   - `plugin:list`，确认显示新版本信息
-   - `plugin:uninstall <id>`，确认目录被删除
-   - `plugin:install <zip 文件 URL>`，确认 URL 安装方式工作
+### plugin.toml 扩展格式（files 数组）
+
+```toml
+[plugin]
+id = "io.github.airead.lingxi.emoji-search"
+name = "Emoji Search"
+description = "Search emojis by keyword"
+version = "1.0.0"
+author = "LingXi Team"
+url = "https://github.com/Airead/LingXi"
+min_lingxi_version = "0.1.0"
+
+files = [
+    "plugin.lua",
+    "emoji-data.json",
+]
+
+[search]
+prefix = "emoji"
+
+[permissions]
+network = true
+clipboard = false
+shell = []
+```
+
+### install.toml 格式
+
+```toml
+[install]
+source_url = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/emoji-search/plugin.toml"
+installed_version = "1.0.0"
+installed_at = "2026-04-22T10:00:00Z"
+pinned_ref = ""            # 预留字段
+```
+
+### 插件状态枚举
+
+```swift
+enum PluginStatus: String {
+    case notInstalled = "not_installed"
+    case installed = "installed"
+    case updateAvailable = "update_available"
+    case manuallyPlaced = "manually_placed"
+    case disabled = "disabled"
+}
+```
+
+### 子阶段 7.1：Registry Manager
+
+**工作内容**：
+1. `PluginRegistryEntry`、`RegistryPlugin` 数据结构
+2. `RegistryParser`：使用现有 `TOMLParser` 解析 registry.toml
+3. `RegistryManager`：
+   - `fetchRegistry()`：从 `BUILTIN_REGISTRY_URL` 下载
+   - `cachedRegistry()`：读取本地缓存（`~/.cache/LingXi/registry.toml`）
+   - `refreshRegistry()`：下载并写入缓存，24h TTL
+   - 网络失败时回退到缓存
+4. `Semver`：语义化版本比较（`major.minor.patch`）
+
+**验证方法**：
+1. 创建本地测试 registry.toml
+2. `RegistryParser` 正确解析
+3. `Semver.compare("1.0.0", "1.0.1")` 返回 `.orderedAscending`
+4. `RegistryManager` 获取并缓存到临时目录
+5. 断网时使用缓存文件，不报错
+
+### 子阶段 7.2：Plugin Market Core
+
+**工作内容**：
+1. `InstallInfo` 结构体 + `install.toml` 读写
+2. `PluginMarket` actor：
+   - `install(id:)`：从 registry 查找并下载
+   - `install(url:)`：从 plugin.toml URL 直接安装
+   - `uninstall(id:)`：删除插件目录
+   - `listInstalled()`：扫描 plugins/ 目录
+   - `listAvailable()`：从 registry 获取可安装列表
+   - `checkUpdates()`：对比版本
+3. 安装流程：
+   1. 下载 `plugin.toml`
+   2. 解析 manifest，检查 `min_lingxi_version`
+   3. 创建 `plugins/<id>/` 目录
+   4. 下载 `files` 数组中的所有文件（同 base URL）
+   5. 写入 `install.toml`
+   6. 加入 `disabled_plugins`（默认禁用）
+4. 路径安全：验证 plugin ID，防止目录遍历
+
+**验证方法**：
+1. 在临时 HTTP 服务放置测试插件（plugin.toml + plugin.lua）
+2. `plugin:install <id>` 下载文件到 `plugins/<id>/`
+3. 检查 `install.toml` 存在且版本正确
+4. 检查 `disabled_plugins` 包含新插件 ID
+5. `plugin:uninstall <id>` 删除目录
+6. `plugin:install <url>` 支持直接 URL
+7. `min_lingxi_version = "99.0.0"` 时安装被拒绝
+
+### 子阶段 7.3：CLI 命令集成
+
+**工作内容**：
+1. `PluginManager` 增强：
+   - `uninstall(pluginId:)`
+   - `installedPlugins` 属性
+   - 读取 `disabled_plugins`，跳过加载
+   - `enable(pluginId:)` / `disable(pluginId:)` 修改配置并重载
+2. `CommandModule` 新增命令：
+   - `plugin:install <id>` — 从 registry 安装
+   - `plugin:install <url>` — 从 URL 安装
+   - `plugin:uninstall <id>`
+   - `plugin:update <id>` — 更新单个插件
+   - `plugin:update` — 更新所有有更新的插件
+   - `plugin:enable <id>` — 启用插件
+   - `plugin:disable <id>` — 禁用插件
+   - `plugin:registry refresh` — 强制刷新 registry 缓存
+   - 增强 `plugin:list` — 显示版本、状态（disabled/manual/update-available）
+
+**验证方法**：
+1. `plugin:install` → `plugin:list` 显示 `(disabled)`
+2. `plugin:enable` → reload → 插件激活
+3. `plugin:disable` → reload → 插件不加载但文件保留
+4. `plugin:uninstall` → 目录删除
+5. `plugin:update` 检测并安装新版本
+6. `plugin:registry refresh` 更新缓存文件时间戳
+
+### 子阶段 7.4：手动插件检测
+
+**工作内容**：
+1. `PluginManager.loadAll()` 扫描时：
+   - 有 `plugin.toml` 但无 `install.toml` → `MANUALLY_PLACED`
+   - 正常加载，日志警告
+2. `plugin:list` 显示 `(manual)`
+3. `plugin:uninstall` 支持手动插件
+
+**验证方法**：
+1. 手动创建 `plugins/test.manual/`（含 plugin.toml + plugin.lua，无 install.toml）
+2. 重启 LingXi，`plugin:list` 显示 `(manual)`
+3. 插件功能正常
+4. `plugin:uninstall test.manual` 删除目录
+
+### 子阶段 7.5：更新检测
+
+**工作内容**：
+1. `PluginMarket.checkUpdates()`：
+   - 扫描所有已安装插件
+   - 对比 registry version vs install.toml version
+   - registry 版本更高 → `UPDATE_AVAILABLE`
+2. `plugin:update <id>` 流程：
+   1. 检查更新可用
+   2. 备份旧目录（`plugins/<id>.backup/`）
+   3. 重新下载所有文件
+   4. 失败时恢复备份
+   5. 更新 `install.toml`
+   6. Reload 插件
+3. 启动时后台检查更新，日志提示
+
+**验证方法**：
+1. 安装插件 v1.0.0
+2. 手动修改缓存 registry.toml 为 v1.0.1
+3. `plugin:list` 显示 `(update available)`
+4. `plugin:update <id>` 下载新版本
+5. `install.toml` 版本变为 1.0.1
+6. 插件功能正常
+7. 模拟更新失败（如断网），旧版本仍然可用
 
 ---
 
-## 阶段 8：插件更新与版本管理
+## 阶段 8：插件市场配置界面（后续阶段）
 
 ### 工作内容
 
-1. **版本比较**
-   - 实现语义化版本比较（`1.0.0` < `1.0.1` < `1.1.0` < `2.0.0`）
-
-2. **实现更新检查**
-   - `PluginUpdater.checkAll()`：对比已安装版本与注册表最新版本
-   - `plugin:update <id>`：更新单个插件
-   - `plugin:update`：更新所有有更新的插件
-
-3. **更新流程**
-   - 下载新版本 → 备份旧版本 → 替换 → 重载插件
-   - 失败时回滚到备份
-
-4. **版本兼容性检查**
-   - 安装/更新前检查 `min_lingxi_version`
-   - 如果不兼容，拒绝安装并提示
-
-5. **install.toml 增强**
-   ```toml
-   [install]
-   source_url = "..."
-   installed_version = "1.0.0"
-   installed_at = "2026-04-21T10:00:00Z"
-   registry = "LingXi Official"
-   pinned = false  -- 是否固定版本（暂不实现 pin 功能，预留字段）
-   ```
+1. **Settings 窗口新增 Plugins Tab**
+   - 插件列表：名称、版本、状态、描述
+   - 操作按钮：安装/卸载/启用/禁用/更新
+   - 详情区域：权限、作者、描述
+2. **状态显示**
+   - 颜色或图标区分状态（未安装/已安装/有更新/已禁用/手动放置）
+3. **Registry 刷新按钮**
+   - 手动触发 registry 刷新
 
 ### 验证方法
 
-1. **准备测试场景**
-   - 本地 registry.toml 中有一个插件版本为 `1.0.0`
-   - 安装该插件
-   - 修改 registry.toml 中该插件版本为 `1.0.1`（模拟更新）
+1. 打开 Settings → Plugins Tab
+2. 确认列表与 `plugin:list` 一致
+3. 点击安装/卸载/更新按钮，功能正常
+4. 状态变化实时反映在列表中
 
-2. **人工验证**：
-   - `plugin:list`，确认当前版本为 `1.0.0`
-   - `plugin:update`，确认检测到更新并自动升级
-   - 检查 `install.toml` 中版本变为 `1.0.1`
-   - 测试 `min_lingxi_version = "99.0.0"` 的插件，确认安装被拒绝
-   - 测试更新失败场景（如断网），确认旧版本仍然可用
+---
 
 ---
 
