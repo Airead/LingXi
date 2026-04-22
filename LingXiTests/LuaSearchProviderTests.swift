@@ -378,27 +378,6 @@ struct LuaSearchProviderTests {
         #expect(results[0].modifierActions[.option]?.subtitle == "Show details")
     }
 
-    @Test func ctrlActionWithSubtitle() async throws {
-        let (provider, cleanup) = try makeTempPlugin(luaCode: """
-            function search(query)
-                return {
-                    {
-                        title = "Test Item",
-                        subtitle = "test",
-                        ctrl_action = function() end,
-                        ctrl_subtitle = "Delete item"
-                    }
-                }
-            end
-        """)
-        defer { cleanup() }
-
-        let results = await provider.search(query: "test")
-        #expect(results.count == 1)
-        #expect(results[0].modifierActions[.control] != nil)
-        #expect(results[0].modifierActions[.control]?.subtitle == "Delete item")
-    }
-
     @Test func allModifierActions() async throws {
         let (provider, cleanup) = try makeTempPlugin(luaCode: """
             function search(query)
@@ -410,9 +389,7 @@ struct LuaSearchProviderTests {
                         cmd_action = function() end,
                         cmd_subtitle = "Copy",
                         alt_action = function() end,
-                        alt_subtitle = "Details",
-                        ctrl_action = function() end,
-                        ctrl_subtitle = "Delete"
+                        alt_subtitle = "Details"
                     }
                 }
             end
@@ -423,7 +400,6 @@ struct LuaSearchProviderTests {
         #expect(results.count == 1)
         #expect(results[0].modifierActions[.command] != nil)
         #expect(results[0].modifierActions[.option] != nil)
-        #expect(results[0].modifierActions[.control] != nil)
     }
 
     // MARK: - Preview Data Tests

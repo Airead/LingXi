@@ -234,22 +234,6 @@ actor LuaSearchProvider: SearchProvider {
             state.pop()
         }
 
-        // Parse ctrl_action / ctrl_subtitle (Control modifier)
-        state.getField("ctrl_action", at: index)
-        if state.isFunction(at: -1) {
-            let ref = state.ref(at: -1)
-            let subtitle = state.stringField("ctrl_subtitle", at: index) ?? ""
-            actions[.control] = ModifierAction(subtitle: subtitle) { [weak self] _ in
-                guard let self else { return false }
-                Task {
-                    await self.executeAction(ref: ref)
-                }
-                return true
-            }
-        } else {
-            state.pop()
-        }
-
         return actions
     }
 
