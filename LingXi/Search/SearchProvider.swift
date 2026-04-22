@@ -3,12 +3,17 @@ protocol SearchProvider: Sendable {
     var debounceMilliseconds: Int { get }
     var timeoutMilliseconds: Int { get }
     var supportsPreview: Bool { get }
+    func tabComplete(rawQuery: String, strippedQuery: String, selectedItem: SearchResult) async -> String?
 }
 
 extension SearchProvider {
     var debounceMilliseconds: Int { 0 }
     var timeoutMilliseconds: Int { 5000 }
     var supportsPreview: Bool { false }
+
+    func tabComplete(rawQuery: String, strippedQuery: String, selectedItem: SearchResult) async -> String? {
+        nil
+    }
 }
 
 extension SearchProvider {

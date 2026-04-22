@@ -252,4 +252,268 @@ struct LuaSearchProviderTests {
         #expect(results[0].name == "Greeting")
         #expect(results[0].subtitle == "Hello, World")
     }
+
+    @Test func iconFieldWithEmoji() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "Test Item", subtitle = "test", icon = "😀" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].icon != nil)
+    }
+
+    @Test func iconFieldWithEmptyString() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "Test Item", subtitle = "test", icon = "" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].icon == nil)
+    }
+
+    @Test func iconFieldMissing() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "Test Item", subtitle = "test" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].icon == nil)
+    }
+
+    // MARK: - Modifier Action Tests
+
+    @Test func cmdActionWithSubtitle() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Test Item",
+                        subtitle = "test",
+                        action = function() end,
+                        cmd_action = function() end,
+                        cmd_subtitle = "Copy to clipboard"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].modifierActions[.command] != nil)
+        #expect(results[0].modifierActions[.command]?.subtitle == "Copy to clipboard")
+    }
+
+    @Test func cmdActionWithoutSubtitle() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Test Item",
+                        subtitle = "test",
+                        cmd_action = function() end
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].modifierActions[.command] != nil)
+        #expect(results[0].modifierActions[.command]?.subtitle == "")
+    }
+
+    @Test func noCmdAction() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "Test Item", subtitle = "test" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].modifierActions[.command] == nil)
+    }
+
+    @Test func altActionWithSubtitle() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Test Item",
+                        subtitle = "test",
+                        alt_action = function() end,
+                        alt_subtitle = "Show details"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].modifierActions[.option] != nil)
+        #expect(results[0].modifierActions[.option]?.subtitle == "Show details")
+    }
+
+    @Test func allModifierActions() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Test Item",
+                        subtitle = "test",
+                        action = function() end,
+                        cmd_action = function() end,
+                        cmd_subtitle = "Copy",
+                        alt_action = function() end,
+                        alt_subtitle = "Details"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].modifierActions[.command] != nil)
+        #expect(results[0].modifierActions[.option] != nil)
+    }
+
+    // MARK: - Preview Data Tests
+
+    @Test func textPreviewData() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Test Item",
+                        subtitle = "test",
+                        preview_type = "text",
+                        preview = "This is a preview\\nwith multiple lines"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        if case .text(let content) = results[0].previewData {
+            #expect(content == "This is a preview\nwith multiple lines")
+        } else {
+            Issue.record("Expected text preview data")
+        }
+    }
+
+    @Test func missingPreviewData() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "Test Item", subtitle = "test" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].previewData == nil)
+    }
+
+    @Test func previewWithOnlyTypeNoContent() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Test Item",
+                        subtitle = "test",
+                        preview_type = "text"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].previewData == nil)
+    }
+
+    @Test func previewWithOnlyContentNoType() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Test Item",
+                        subtitle = "test",
+                        preview = "Some content"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].previewData == nil)
+    }
+
+    @Test func htmlPreviewFallsBackToText() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Test Item",
+                        subtitle = "test",
+                        preview_type = "html",
+                        preview = "<h1>HTML Preview</h1>"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        // HTML preview should fall back to text for now
+        if case .text(let content) = results[0].previewData {
+            #expect(content == "<h1>HTML Preview</h1>")
+        } else {
+            Issue.record("Expected text preview data for HTML fallback")
+        }
+    }
+
+    @Test func supportsPreviewIsTrue() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {}
+            end
+        """)
+        defer { cleanup() }
+
+        #expect(provider.supportsPreview == true)
+    }
 }

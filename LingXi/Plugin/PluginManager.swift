@@ -26,9 +26,11 @@ final class PluginManager: PluginService {
         case failed(dirName: String, error: String)
     }
 
-    nonisolated static let pluginsDirectory: URL =
-        FileManager.default.homeDirectoryForCurrentUser
+    nonisolated static let pluginsDirectory: URL = {
+        let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/LingXi/plugins", isDirectory: true)
+        return url.resolvingSymlinksInPath()
+    }()
 
     private let router: SearchRouter
     private var commandProvider: CommandSearchProvider?
@@ -112,7 +114,8 @@ final class PluginManager: PluginService {
 
         let disabled = Set(settings.disabledPlugins)
         var results: [InstalledPluginInfo] = []
-        for entry in entries where entry.hasDirectoryPath {
+        for entry in entries {
+            guard Self.isPluginDirectory(entry) else { continue }
             guard let manifest = try? ManifestParser.parseTOMLManifest(from: entry) else { continue }
             let installTomlURL = entry.appendingPathComponent("install.toml")
             let installInfo = try? InstallManifest.read(from: installTomlURL)
@@ -157,6 +160,8 @@ final class PluginManager: PluginService {
             switch result {
             case .loaded(let plugin):
                 plugins.append(plugin)
+                // Set panel context for Lua paste operations
+                await plugin.provider.setPanelContext(LuaAPI.panelContext)
                 router.register(
                     prefix: plugin.manifest.prefix,
                     id: plugin.routerId,
@@ -276,7 +281,17 @@ final class PluginManager: PluginService {
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: pluginDir.path)
 
-        LuaAPI.registerAll(state: state, permissions: manifest.permissions, pluginId: manifest.id)
+        // Automatically grant access to the plugin's own directory for bundled resources.
+        let permissions = PermissionConfig(
+            network: manifest.permissions.network,
+            clipboard: manifest.permissions.clipboard,
+            filesystem: manifest.permissions.filesystem + [pluginDir.path],
+            shell: manifest.permissions.shell,
+            notify: manifest.permissions.notify,
+            store: manifest.permissions.store
+        )
+
+        LuaAPI.registerAll(state: state, permissions: permissions, pluginId: manifest.id, pluginDir: pluginDir.path)
 
         try state.doFile(scriptPath)
 

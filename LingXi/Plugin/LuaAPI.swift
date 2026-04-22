@@ -10,16 +10,26 @@ nonisolated enum LuaAPI {
     /// Maps plugin ID to its shell command whitelist for C callbacks.
     private static var shellPermissions: [String: [String]] = [:]
 
+    /// Maps plugin ID to its plugin directory for resolving relative paths.
+    private static var pluginDirs: [String: String] = [:]
+
     /// Injectable pasteboard for testing clipboard APIs without touching the system pasteboard.
     internal static var testingPasteboard: NSPasteboard? = nil
 
+    /// Weak reference to the panel context for paste operations.
+    internal weak static var panelContext: PanelContext?
+
     /// Call after `openLibs()` and `LuaSandbox.apply()`.
     /// APIs without permission are registered as stubs that return nil/false and log a warning.
-    static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "") {
+    static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "", pluginDir: String = "") {
         state.createTable()
         // Store pluginId as a hidden field on the lingxi table so C callbacks can retrieve it.
         state.push(pluginId)
         state.setField("_pluginId", at: -2)
+        // Store pluginDir for resolving relative paths in file APIs.
+        if !pluginId.isEmpty && !pluginDir.isEmpty {
+            pluginDirs[pluginId] = pluginDir
+        }
         if permissions.network {
             registerHTTP(state: state)
         } else {
@@ -27,8 +37,10 @@ nonisolated enum LuaAPI {
         }
         if permissions.clipboard {
             registerClipboard(state: state)
+            registerPaste(state: state)
         } else {
             registerDisabledClipboard(state: state)
+            registerDisabledPaste(state: state)
         }
         if permissions.filesystem.isEmpty {
             registerDisabledFile(state: state)
@@ -54,6 +66,8 @@ nonisolated enum LuaAPI {
         }
         registerAlert(state: state)
         registerLog(state: state)
+        registerJSON(state: state)
+        registerFuzzy(state: state)
         state.setGlobal("lingxi")
     }
 
@@ -95,6 +109,18 @@ nonisolated enum LuaAPI {
         state.pushFunction(disabledClipboardWrite)
         state.setField("write", at: -2)
         state.setField("clipboard", at: -2)
+    }
+
+    // MARK: - lingxi.paste
+
+    private static func registerPaste(state: LuaState) {
+        state.pushFunction(pasteText)
+        state.setField("paste", at: -2)
+    }
+
+    private static func registerDisabledPaste(state: LuaState) {
+        state.pushFunction(disabledPasteText)
+        state.setField("paste", at: -2)
     }
 
     // MARK: - lingxi.shell
@@ -158,9 +184,17 @@ nonisolated enum LuaAPI {
     /// `lingxi.file.read(path) -> string | nil`
     private static let fileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        guard let path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
             lua_pushnil(L)
             return 1
+        }
+
+        // Resolve relative paths against the plugin's directory.
+        if !path.hasPrefix("/") {
+            let pid = pluginId(from: L)
+            if let pluginDir = pluginDirs[pid] {
+                path = pluginDir + "/" + path
+            }
         }
 
         let validator = PathValidator(allowedPaths: filePaths(from: L))
@@ -454,6 +488,38 @@ nonisolated enum LuaAPI {
     private static let disabledClipboardWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.clipboard.write denied: clipboard permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // MARK: - Paste C Functions
+
+    /// `lingxi.paste(text) -> boolean`
+    /// Writes text to the clipboard, hides the panel, activates the previous app, and simulates paste.
+    private static let pasteText: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let text = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        if let context = panelContext {
+            Task { @MainActor in
+                context.pasteText(text)
+            }
+        } else {
+            // Fallback: just write to clipboard if no panel context
+            let pb = ClipboardStore.prepareTransientPasteboard(types: [.string], pasteboard: testingPasteboard)
+            pb.setString(text, forType: .string)
+        }
+
+        lua_pushboolean(L, 1)
+        return 1
+    }
+
+    private static let disabledPasteText: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.paste denied: clipboard permission not granted")
         lua_pushboolean(L, 0)
         return 1
     }
@@ -927,5 +993,44 @@ nonisolated enum LuaAPI {
         let prefix = pid.isEmpty ? "[Lua]" : "[Lua:\(pid)]"
         DebugLog.log("\(prefix) \(message)")
         return 0
+    }
+
+    // MARK: - lingxi.json
+
+    private static func registerJSON(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(jsonParse)
+        state.setField("parse", at: -2)
+        state.setField("json", at: -2)
+    }
+
+    /// `lingxi.json.parse(json_string) -> table | nil`
+    /// Parses a JSON string into a Lua table.
+    private static let jsonParse: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let jsonString = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        guard let data = jsonString.data(using: .utf8) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        do {
+            let jsonObject = try JSONSerialization.jsonObject(with: data, options: [])
+            pushSwiftValue(L, value: jsonObject)
+        } catch {
+            DebugLog.log("[LuaAPI] lingxi.json.parse error: \(error)")
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    // MARK: - lingxi.fuzzy
+
+    private static func registerFuzzy(state: LuaState) {
+        LuaFuzzyAPI.register(state: state)
     }
 }

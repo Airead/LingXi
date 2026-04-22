@@ -116,7 +116,24 @@ final class SearchRouter {
         let results: [SearchResult]? = await withTaskTimeout(nanoseconds: timeoutNs) {
             await entry.provider.search(query: query)
         }
-        return results ?? []
+        return results?.map { result in
+            var r = result
+            r.sourceProviderId = entry.id
+            return r
+        } ?? []
+    }
+
+    func tabComplete(rawQuery: String, selectedItem: SearchResult) async -> String? {
+        guard let providerId = selectedItem.sourceProviderId,
+              let entry = entries.first(where: { $0.id == providerId }) else {
+            return nil
+        }
+        let stripped = strippedQuery(rawQuery: rawQuery, entries: [entry])
+        return await entry.provider.tabComplete(
+            rawQuery: rawQuery,
+            strippedQuery: stripped,
+            selectedItem: selectedItem
+        )
     }
 
     private func matchedEntries(for rawQuery: String) -> [ProviderEntry] {

@@ -18,6 +18,7 @@ final class FloatingPanel: NSPanel {
     var onCommandComma: (() -> Void)?
     var onCommandN: (() -> Void)?
     var onNumberKey: ((Int) -> Void)?
+    var onTab: (() -> Void)?
 
     init(contentRect: NSRect) {
         super.init(
@@ -70,6 +71,9 @@ final class FloatingPanel: NSPanel {
                 return
             case kVK_Return:
                 onReturn?(Self.activeModifiers(from: event.modifierFlags))
+                return
+            case kVK_Tab:
+                onTab?()
                 return
             default:
                 break

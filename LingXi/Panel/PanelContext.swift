@@ -14,4 +14,8 @@ protocol PanelContext: AnyObject {
 
     /// Hide the search panel.
     func hidePanel()
+
+    /// Paste text to the previous application.
+    /// This hides the panel, activates the previous app, and simulates paste.
+    func pasteText(_ text: String)
 }

@@ -109,4 +109,22 @@ actor CommandSearchProvider: SearchProvider {
             actionContext: args
         )
     }
+
+    func tabComplete(rawQuery: String, strippedQuery: String, selectedItem: SearchResult) async -> String? {
+        guard let name = Self.extractName(from: selectedItem.itemId) else { return nil }
+        let trimmed = strippedQuery.trimmingCharacters(in: .whitespaces)
+
+        // Already exact match → append space for args mode
+        if trimmed == name {
+            return rawQuery + " "
+        }
+
+        // Replace fuzzy input with exact command name + space
+        if rawQuery.hasSuffix(trimmed) {
+            let prefix = String(rawQuery.dropLast(trimmed.count))
+            return prefix + name + " "
+        }
+
+        return nil
+    }
 }

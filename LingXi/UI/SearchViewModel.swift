@@ -89,14 +89,15 @@ final class SearchViewModel: ObservableObject {
         let currentQuery = query
         exitHistoryMode()
 
-        if let customAction = selected.action {
-            let executed = customAction(selected)
+        // Check modifier actions first when modifiers are pressed
+        if !modifiers.isEmpty, let modifierAction = selected.resolveModifierAction(for: modifiers) {
+            let executed = modifierAction.action(selected)
             if executed { recordExecution(query: currentQuery, itemId: selected.itemId) }
             return executed
         }
 
-        if let modifierAction = selected.resolveModifierAction(for: modifiers) {
-            let executed = modifierAction.action(selected)
+        if let customAction = selected.action {
+            let executed = customAction(selected)
             if executed { recordExecution(query: currentQuery, itemId: selected.itemId) }
             return executed
         }
@@ -141,6 +142,12 @@ final class SearchViewModel: ObservableObject {
         onDeleteItem?(selected.itemId)
         results.remove(at: selectedIndex)
         clampSelectedIndex()
+    }
+
+    func tabComplete() async -> String? {
+        guard results.indices.contains(selectedIndex) else { return nil }
+        let selected = results[selectedIndex]
+        return await router.tabComplete(rawQuery: query, selectedItem: selected)
     }
 
     private func clampSelectedIndex() {

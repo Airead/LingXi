@@ -749,4 +749,37 @@ struct SearchViewModelTests {
         vm.query = "cb "
         #expect(vm.hasPreview == false)
     }
+
+    @Test func modifierActionTakesPriorityOverCustomAction() async {
+        var defaultActionCalled = false
+        var modifierActionCalled = false
+        let modifierAction = ModifierAction(subtitle: "Modifier Action") { _ in
+            modifierActionCalled = true
+            return true
+        }
+        let provider = StubSearchProvider(results: [
+            SearchResult(
+                itemId: "test:1",
+                icon: nil,
+                name: "Test",
+                subtitle: "",
+                resultType: .command,
+                url: nil,
+                score: 1.0,
+                modifierActions: [.command: modifierAction],
+                action: { _ in
+                    defaultActionCalled = true
+                    return true
+                }
+            ),
+        ])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "Test"
+        await waitUntil { !vm.results.isEmpty }
+        let result = vm.confirm(modifiers: [.command])
+        #expect(result == true)
+        #expect(modifierActionCalled == true)
+        #expect(defaultActionCalled == false)
+    }
 }

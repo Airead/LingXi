@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// A SearchProvider backed by a Lua plugin script.
@@ -10,20 +11,46 @@ actor LuaSearchProvider: SearchProvider {
 
     nonisolated let debounceMilliseconds: Int
     nonisolated let timeoutMilliseconds: Int
-    nonisolated var supportsPreview: Bool { false }
+    nonisolated var supportsPreview: Bool { true }
 
     private let state: LuaState
+    private weak var panelContext: PanelContext?
 
-    init(name: String, pluginDir: URL, state: LuaState, debounce: Int = 100, timeout: Int = 5000) {
+    init(name: String, pluginDir: URL, state: LuaState, debounce: Int = 100, timeout: Int = 5000, panelContext: PanelContext? = nil) {
         self.name = name
         self.pluginDir = pluginDir
         self.debounceMilliseconds = debounce
         self.timeoutMilliseconds = timeout
         self.state = state
+        self.panelContext = panelContext
+    }
+
+    func setPanelContext(_ context: PanelContext?) {
+        self.panelContext = context
     }
 
     func search(query: String) async -> [SearchResult] {
         parseResults(query: query)
+    }
+
+    func tabComplete(rawQuery: String, strippedQuery: String, selectedItem: SearchResult) async -> String? {
+        state.getGlobal("complete")
+        guard state.isFunction(at: -1) else {
+            state.pop()
+            return nil
+        }
+        state.push(rawQuery)
+        state.push(selectedItem.name)
+        do {
+            try state.pcall(nargs: 2, nresults: 1)
+            let result = state.toString(at: -1)
+            state.pop()
+            return result
+        } catch {
+            DebugLog.log("[LuaPlugin:\(name)] complete error: \(error)")
+            state.pop()
+            return nil
+        }
     }
 
     /// Execute a named Lua function with a string argument (used by plugin commands).
@@ -148,10 +175,12 @@ actor LuaSearchProvider: SearchProvider {
         let score = state.numberField("score", at: index) ?? 50.0
         let url: URL? = urlString.flatMap { URL(string: $0) }
         let itemId = "\(Self.idPrefix)\(name):\(title)"
+        let iconString = state.stringField("icon", at: index)
+        let icon: NSImage? = iconString.flatMap { Self.imageFromString($0) }
 
         var result = SearchResult(
             itemId: itemId,
-            icon: nil,
+            icon: icon,
             name: title,
             subtitle: subtitle,
             resultType: .command,
@@ -173,7 +202,59 @@ actor LuaSearchProvider: SearchProvider {
             state.pop()
         }
 
+        // Parse modifier actions
+        result.modifierActions = parseModifierActions(at: index)
+
+        // Parse preview data
+        if let previewType = state.stringField("preview_type", at: index),
+           let previewContent = state.stringField("preview", at: index) {
+            if previewType == "text" {
+                result.previewData = .text(previewContent)
+            } else if previewType == "html" {
+                // HTML preview not yet supported, fall back to text
+                result.previewData = .text(previewContent)
+            }
+        }
+
         return result
+    }
+
+    private func parseModifierActions(at index: Int32) -> [ActionModifier: ModifierAction] {
+        var actions: [ActionModifier: ModifierAction] = [:]
+
+        // Parse cmd_action / cmd_subtitle (Command modifier)
+        state.getField("cmd_action", at: index)
+        if state.isFunction(at: -1) {
+            let ref = state.ref(at: -1)
+            let subtitle = state.stringField("cmd_subtitle", at: index) ?? ""
+            actions[.command] = ModifierAction(subtitle: subtitle) { [weak self] _ in
+                guard let self else { return false }
+                Task {
+                    await self.executeAction(ref: ref)
+                }
+                return true
+            }
+        } else {
+            state.pop()
+        }
+
+        // Parse alt_action / alt_subtitle (Option modifier)
+        state.getField("alt_action", at: index)
+        if state.isFunction(at: -1) {
+            let ref = state.ref(at: -1)
+            let subtitle = state.stringField("alt_subtitle", at: index) ?? ""
+            actions[.option] = ModifierAction(subtitle: subtitle) { [weak self] _ in
+                guard let self else { return false }
+                Task {
+                    await self.executeAction(ref: ref)
+                }
+                return true
+            }
+        } else {
+            state.pop()
+        }
+
+        return actions
     }
 
     private func executeAction(ref: Int32) {
@@ -183,5 +264,38 @@ actor LuaSearchProvider: SearchProvider {
         } catch {
             DebugLog.log("[LuaPlugin:\(name)] error calling action ref \(ref): \(error)")
         }
+    }
+
+    // MARK: - Icon rendering
+
+    /// Converts a string to an NSImage for use as a search result icon.
+    /// Supports single emoji characters and base64-encoded SVG data URIs.
+    /// Returns nil for empty strings.
+    nonisolated static func imageFromString(_ string: String) -> NSImage? {
+        guard !string.isEmpty else { return nil }
+
+        if string.hasPrefix("data:image/svg+xml;base64,") {
+            let base64String = String(string.dropFirst("data:image/svg+xml;base64,".count))
+            guard let data = Data(base64Encoded: base64String) else { return nil }
+            return NSImage(data: data)
+        }
+
+        // Treat as text (emoji or other character)
+        let size = NSSize(width: 32, height: 32)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 24),
+            .foregroundColor: NSColor.labelColor
+        ]
+        let attributedString = NSAttributedString(string: string, attributes: attributes)
+        let textSize = attributedString.size()
+        let point = NSPoint(
+            x: (size.width - textSize.width) / 2,
+            y: (size.height - textSize.height) / 2
+        )
+        attributedString.draw(at: point)
+        image.unlockFocus()
+        return image
     }
 }

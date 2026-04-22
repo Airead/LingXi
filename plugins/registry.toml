@@ -9,3 +9,12 @@ description = "Demonstrates every LingXi plugin API and capability. A reference 
 author = "LingXi Team"
 source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/api-showcase/plugin.toml"
 min_lingxi_version = "1.0.0"
+
+[[plugins]]
+id = "io.github.airead.lingxi.emoji-search"
+name = "Emoji Search"
+version = "1.0.0"
+description = "Search and paste emoji via the launcher (prefix: e)"
+author = "LingXi Team"
+source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/emoji-search/plugin.toml"
+min_lingxi_version = "1.0.0"
