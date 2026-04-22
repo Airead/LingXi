@@ -815,4 +815,201 @@ struct LuaAPITests {
         let content = pb.string(forType: .string)
         #expect(content == "clipboard-test-value")
     }
+
+    // MARK: - lingxi.json
+
+    @Test func jsonSubtableExists() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.json) == 'table')")
+    }
+
+    @Test func jsonParseIsFunction() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.json.parse) == 'function')")
+    }
+
+    @Test func jsonParseSimpleObject() throws {
+        let state = makeState()
+        try state.doString("""
+            local result = lingxi.json.parse('{"name":"cat","count":3}')
+            assert(type(result) == 'table', "expected table, got " .. type(result))
+            assert(result.name == 'cat', "expected cat, got " .. tostring(result.name))
+            assert(result.count == 3, "expected 3, got " .. tostring(result.count))
+        """)
+    }
+
+    @Test func jsonParseNestedObject() throws {
+        let state = makeState()
+        try state.doString("""
+            local result = lingxi.json.parse('{"outer":{"inner":"value"}}')
+            assert(type(result) == 'table')
+            assert(type(result.outer) == 'table')
+            assert(result.outer.inner == 'value')
+        """)
+    }
+
+    @Test func jsonParseArray() throws {
+        let state = makeState()
+        try state.doString("""
+            local result = lingxi.json.parse('[1,2,3]')
+            assert(type(result) == 'table')
+            assert(result[1] == 1)
+            assert(result[2] == 2)
+            assert(result[3] == 3)
+            assert(#result == 3)
+        """)
+    }
+
+    @Test func jsonParseArrayOfObjects() throws {
+        let state = makeState()
+        try state.doString("""
+            local result = lingxi.json.parse('[{"name":"a"},{"name":"b"}]')
+            assert(type(result) == 'table')
+            assert(#result == 2)
+            assert(result[1].name == 'a')
+            assert(result[2].name == 'b')
+        """)
+    }
+
+    @Test func jsonParseNullField() throws {
+        let state = makeState()
+        try state.doString("""
+            local result = lingxi.json.parse('{"name":"test","optional":null}')
+            assert(type(result) == 'table')
+            assert(result.name == 'test')
+            assert(result.optional == nil)
+        """)
+    }
+
+    @Test func jsonParseBoolean() throws {
+        let state = makeState()
+        try state.doString("""
+            local result = lingxi.json.parse('{"active":true,"deleted":false}')
+            assert(type(result) == 'table')
+            assert(result.active == true)
+            assert(result.deleted == false)
+        """)
+    }
+
+    @Test func jsonParseInvalidJSON() throws {
+        let state = makeState()
+        try state.doString("""
+            local result = lingxi.json.parse('not valid json')
+            assert(result == nil, "expected nil for invalid json, got " .. type(result))
+        """)
+    }
+
+    @Test func jsonParseEmptyString() throws {
+        let state = makeState()
+        try state.doString("""
+            local result = lingxi.json.parse('')
+            assert(result == nil)
+        """)
+    }
+
+    // MARK: - lingxi.fuzzy
+
+    @Test func fuzzySubtableExists() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.fuzzy) == 'table')")
+    }
+
+    @Test func fuzzySearchIsFunction() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.fuzzy.search) == 'function')")
+    }
+
+    @Test func fuzzySearchBasicMatch() throws {
+        let state = makeState()
+        try state.doString("""
+            local items = {
+                {name = "cat", group = "animals"},
+                {name = "dog", group = "animals"},
+                {name = "apple", group = "food"}
+            }
+            local results = lingxi.fuzzy.search("cat", items, {"name", "group"})
+            assert(type(results) == 'table', "expected table, got " .. type(results))
+            assert(#results >= 1, "expected at least 1 result, got " .. #results)
+            assert(results[1].item.name == 'cat', "expected cat, got " .. tostring(results[1].item.name))
+            assert(results[1].score > 0, "expected score > 0, got " .. tostring(results[1].score))
+        """)
+    }
+
+    @Test func fuzzySearchMultipleFields() throws {
+        let state = makeState()
+        try state.doString("""
+            local items = {
+                {name_en = "cat", name_zh = "猫", group = "animals"},
+                {name_en = "dog", name_zh = "狗", group = "animals"},
+                {name_en = "apple", name_zh = "苹果", group = "food"}
+            }
+            -- Search by English name across multiple fields
+            local results = lingxi.fuzzy.search("cat", items, {"name_en", "name_zh", "group"})
+            assert(type(results) == 'table')
+            assert(#results >= 1)
+            assert(results[1].item.name_en == 'cat')
+        """)
+    }
+
+    @Test func fuzzySearchEmptyItems() throws {
+        let state = makeState()
+        try state.doString("""
+            local results = lingxi.fuzzy.search("cat", {}, {"name"})
+            assert(type(results) == 'table')
+            assert(#results == 0)
+        """)
+    }
+
+    @Test func fuzzySearchEmptyFields() throws {
+        let state = makeState()
+        try state.doString("""
+            local items = {{name = "cat"}}
+            local results = lingxi.fuzzy.search("cat", items, {})
+            assert(type(results) == 'table')
+            assert(#results == 0)
+        """)
+    }
+
+    @Test func fuzzySearchNoMatch() throws {
+        let state = makeState()
+        try state.doString("""
+            local items = {
+                {name = "cat"},
+                {name = "dog"}
+            }
+            local results = lingxi.fuzzy.search("xyz123", items, {"name"})
+            assert(type(results) == 'table')
+            assert(#results == 0)
+        """)
+    }
+
+    @Test func fuzzySearchSortedByScore() throws {
+        let state = makeState()
+        try state.doString("""
+            local items = {
+                {name = "catfish"},
+                {name = "caterpillar"},
+                {name = "cat"}
+            }
+            local results = lingxi.fuzzy.search("cat", items, {"name"})
+            assert(#results == 3)
+            -- All three items have prefix match (cat*), so scores should be equal and high
+            assert(results[1].score == 100, "expected prefix match score 100")
+            assert(results[1].score >= results[2].score, "expected descending scores")
+            assert(results[2].score >= results[3].score, "expected descending scores")
+        """)
+    }
+
+    @Test func fuzzySearchPreservesItemStructure() throws {
+        let state = makeState()
+        try state.doString("""
+            local items = {
+                {name = "cat", emoji = "🐱", tags = {"animal", "pet"}}
+            }
+            local results = lingxi.fuzzy.search("cat", items, {"name", "tags"})
+            assert(#results == 1)
+            assert(results[1].item.emoji == '🐱')
+            assert(results[1].item.name == 'cat')
+        """)
+    }
 }

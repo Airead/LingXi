@@ -59,6 +59,8 @@ nonisolated enum LuaAPI {
         }
         registerAlert(state: state)
         registerLog(state: state)
+        registerJSON(state: state)
+        registerFuzzy(state: state)
         state.setGlobal("lingxi")
     }
 
@@ -976,5 +978,44 @@ nonisolated enum LuaAPI {
         let prefix = pid.isEmpty ? "[Lua]" : "[Lua:\(pid)]"
         DebugLog.log("\(prefix) \(message)")
         return 0
+    }
+
+    // MARK: - lingxi.json
+
+    private static func registerJSON(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(jsonParse)
+        state.setField("parse", at: -2)
+        state.setField("json", at: -2)
+    }
+
+    /// `lingxi.json.parse(json_string) -> table | nil`
+    /// Parses a JSON string into a Lua table.
+    private static let jsonParse: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let jsonString = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        guard let data = jsonString.data(using: .utf8) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        do {
+            let jsonObject = try JSONSerialization.jsonObject(with: data, options: [])
+            pushSwiftValue(L, value: jsonObject)
+        } catch {
+            DebugLog.log("[LuaAPI] lingxi.json.parse error: \(error)")
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    // MARK: - lingxi.fuzzy
+
+    private static func registerFuzzy(state: LuaState) {
+        LuaFuzzyAPI.register(state: state)
     }
 }
