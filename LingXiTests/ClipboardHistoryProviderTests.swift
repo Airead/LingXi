@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import LingXi
 
+@MainActor
 struct ClipboardHistoryProviderTests {
 
     private func makeProvider(capacity: Int = 200) async -> (ClipboardStore, ClipboardHistoryProvider) {
