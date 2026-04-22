@@ -381,14 +381,30 @@ function search(query)
     query = query or ""
     query = query:gsub("^%s*e%s*", ""):gsub("^%s*", "")
 
-    if query == "@" then
-        local items = {}
-        for _, g in ipairs(_groups) do
-            if g.char and g.char ~= "" then
-                table.insert(items, _group_item(g))
+    -- Group selection mode: query starts with @ and no space after @ content
+    if query:find("^@") then
+        local after_at = query:sub(2)
+        if not after_at:find("%s") then
+            local search_term = after_at:lower()
+            local items = {}
+
+            if search_term == "" then
+                -- Return all groups
+                for _, g in ipairs(_groups) do
+                    if g.char and g.char ~= "" then
+                        table.insert(items, _group_item(g))
+                    end
+                end
+            else
+                -- Fuzzy search group names
+                local scored = lingxi.fuzzy.search(search_term, _groups, { "name_zh", "name_en" })
+                for i = 1, math.min(#scored, _MAX_RESULTS) do
+                    table.insert(items, _group_item(scored[i].item))
+                end
             end
+
+            return items
         end
-        return items
     end
 
     local results = _search_emojis(query)
@@ -397,4 +413,27 @@ function search(query)
         table.insert(items, _emoji_item(rec))
     end
     return items
+end
+
+-- ============================================================================
+-- Tab Complete
+-- ============================================================================
+
+function complete(query, item_title)
+    _load_emoji_data()
+
+    for _, g in ipairs(_groups) do
+        local group_title = g.name_zh ~= "" and g.name_zh or g.name_en
+        if group_title == item_title then
+            if query:find("@") then
+                local new_query = query:gsub("@.*$", "@" .. group_title .. " ")
+                return new_query
+            else
+                local new_query = query:gsub("%s*$", "")
+                return new_query .. " @" .. group_title .. " "
+            end
+        end
+    end
+
+    return nil
 end
