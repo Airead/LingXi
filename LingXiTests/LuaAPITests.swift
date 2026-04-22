@@ -756,4 +756,60 @@ struct LuaAPITests {
             assert(ok == false, "expected false, got " .. tostring(ok))
         """)
     }
+
+    // MARK: - lingxi.paste
+
+    @Test func pasteFunctionExists() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
+        try state.doString("assert(type(lingxi.paste) == 'function')")
+    }
+
+    @Test func pasteReturnsTrueOnSuccess() throws {
+        let pb = NSPasteboard(name: .init("LuaAPITests-paste-\(UUID().uuidString)"))
+        defer {
+            pb.releaseGlobally()
+            LuaAPI.testingPasteboard = nil
+        }
+        LuaAPI.testingPasteboard = pb
+
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
+        try state.doString("""
+            local ok = lingxi.paste("test-paste-content")
+            assert(ok == true, "expected true, got " .. tostring(ok))
+        """)
+    }
+
+    @Test func pasteReturnsFalseOnNil() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
+        try state.doString("""
+            local ok = lingxi.paste(nil)
+            assert(ok == false, "expected false, got " .. tostring(ok))
+        """)
+    }
+
+    @Test func pasteDisabledReturnsFalse() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false))
+        try state.doString("""
+            local ok = lingxi.paste("test")
+            assert(ok == false, "expected false, got " .. tostring(ok))
+        """)
+    }
+
+    @Test @MainActor func pasteWritesToClipboard() throws {
+        let pb = NSPasteboard(name: .init("LuaAPITests-paste-content-\(UUID().uuidString)"))
+        defer {
+            pb.releaseGlobally()
+            LuaAPI.testingPasteboard = nil
+        }
+        LuaAPI.testingPasteboard = pb
+
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
+        try state.doString("""
+            lingxi.paste("clipboard-test-value")
+        """)
+
+        // Verify the content was written to clipboard
+        let content = pb.string(forType: .string)
+        #expect(content == "clipboard-test-value")
+    }
 }

@@ -252,4 +252,49 @@ struct LuaSearchProviderTests {
         #expect(results[0].name == "Greeting")
         #expect(results[0].subtitle == "Hello, World")
     }
+
+    @Test func iconFieldWithEmoji() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "Test Item", subtitle = "test", icon = "😀" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].icon != nil)
+    }
+
+    @Test func iconFieldWithEmptyString() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "Test Item", subtitle = "test", icon = "" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].icon == nil)
+    }
+
+    @Test func iconFieldMissing() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "Test Item", subtitle = "test" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "test")
+        #expect(results.count == 1)
+        #expect(results[0].icon == nil)
+    }
 }

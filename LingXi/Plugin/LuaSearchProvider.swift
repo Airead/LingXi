@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// A SearchProvider backed by a Lua plugin script.
@@ -148,10 +149,12 @@ actor LuaSearchProvider: SearchProvider {
         let score = state.numberField("score", at: index) ?? 50.0
         let url: URL? = urlString.flatMap { URL(string: $0) }
         let itemId = "\(Self.idPrefix)\(name):\(title)"
+        let iconString = state.stringField("icon", at: index)
+        let icon: NSImage? = iconString.flatMap { Self.imageFromString($0) }
 
         var result = SearchResult(
             itemId: itemId,
-            icon: nil,
+            icon: icon,
             name: title,
             subtitle: subtitle,
             resultType: .command,
@@ -183,5 +186,38 @@ actor LuaSearchProvider: SearchProvider {
         } catch {
             DebugLog.log("[LuaPlugin:\(name)] error calling action ref \(ref): \(error)")
         }
+    }
+
+    // MARK: - Icon rendering
+
+    /// Converts a string to an NSImage for use as a search result icon.
+    /// Supports single emoji characters and base64-encoded SVG data URIs.
+    /// Returns nil for empty strings.
+    nonisolated static func imageFromString(_ string: String) -> NSImage? {
+        guard !string.isEmpty else { return nil }
+
+        if string.hasPrefix("data:image/svg+xml;base64,") {
+            let base64String = String(string.dropFirst("data:image/svg+xml;base64,".count))
+            guard let data = Data(base64Encoded: base64String) else { return nil }
+            return NSImage(data: data)
+        }
+
+        // Treat as text (emoji or other character)
+        let size = NSSize(width: 32, height: 32)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 24),
+            .foregroundColor: NSColor.labelColor
+        ]
+        let attributedString = NSAttributedString(string: string, attributes: attributes)
+        let textSize = attributedString.size()
+        let point = NSPoint(
+            x: (size.width - textSize.width) / 2,
+            y: (size.height - textSize.height) / 2
+        )
+        attributedString.draw(at: point)
+        image.unlockFocus()
+        return image
     }
 }

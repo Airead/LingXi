@@ -66,6 +66,7 @@ final class AppAssembly {
             leaderKeyManager: leaderKeyManager,
             modules: modules
         )
+        LuaAPI.panelContext = panelManager
 
         for module in modules {
             module.bindEvents(to: viewModel, context: panelManager)

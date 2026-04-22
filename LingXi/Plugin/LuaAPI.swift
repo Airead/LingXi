@@ -13,6 +13,9 @@ nonisolated enum LuaAPI {
     /// Injectable pasteboard for testing clipboard APIs without touching the system pasteboard.
     internal static var testingPasteboard: NSPasteboard? = nil
 
+    /// Weak reference to the panel context for paste operations.
+    internal weak static var panelContext: PanelContext?
+
     /// Call after `openLibs()` and `LuaSandbox.apply()`.
     /// APIs without permission are registered as stubs that return nil/false and log a warning.
     static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "") {
@@ -27,8 +30,10 @@ nonisolated enum LuaAPI {
         }
         if permissions.clipboard {
             registerClipboard(state: state)
+            registerPaste(state: state)
         } else {
             registerDisabledClipboard(state: state)
+            registerDisabledPaste(state: state)
         }
         if permissions.filesystem.isEmpty {
             registerDisabledFile(state: state)
@@ -95,6 +100,18 @@ nonisolated enum LuaAPI {
         state.pushFunction(disabledClipboardWrite)
         state.setField("write", at: -2)
         state.setField("clipboard", at: -2)
+    }
+
+    // MARK: - lingxi.paste
+
+    private static func registerPaste(state: LuaState) {
+        state.pushFunction(pasteText)
+        state.setField("paste", at: -2)
+    }
+
+    private static func registerDisabledPaste(state: LuaState) {
+        state.pushFunction(disabledPasteText)
+        state.setField("paste", at: -2)
     }
 
     // MARK: - lingxi.shell
@@ -454,6 +471,36 @@ nonisolated enum LuaAPI {
     private static let disabledClipboardWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.clipboard.write denied: clipboard permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // MARK: - Paste C Functions
+
+    /// `lingxi.paste(text) -> boolean`
+    /// Writes text to the clipboard and simulates paste in the previous application.
+    private static let pasteText: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let text = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+        let pb = ClipboardStore.prepareTransientPasteboard(types: [.string], pasteboard: testingPasteboard)
+        pb.setString(text, forType: .string)
+
+        if let context = panelContext {
+            Task { @MainActor in
+                context.pasteAndActivate(target: context.previousApp)
+            }
+        }
+
+        lua_pushboolean(L, 1)
+        return 1
+    }
+
+    private static let disabledPasteText: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.paste denied: clipboard permission not granted")
         lua_pushboolean(L, 0)
         return 1
     }
