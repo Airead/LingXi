@@ -1,11 +1,12 @@
 -- Paste & Icon Test Plugin
--- 用于人工验证阶段 1-3 实现：
+-- 用于人工验证阶段 1-3 和 5 实现：
 --   - lingxi.paste() API
 --   - icon 字段支持
 --   - modifier actions (cmd_action, alt_action)
 --   - preview data (preview_type, preview)
 --   - lingxi.fuzzy.search API (阶段 3)
 --   - lingxi.json.parse API (阶段 3)
+--   - Tab Complete API (阶段 5)
 
 -- 复用的 modifier action 回调函数
 local function cmdModifierAction(item)
@@ -46,6 +47,14 @@ local fuzzyTestData = {
     { name = "bicycle", category = "vehicle", icon = "🚲" },
     { name = "rocket", category = "space", icon = "🚀" },
     { name = "star", category = "space", icon = "⭐" },
+}
+
+-- 阶段 5：Tab Complete 测试 - 可用分类
+local categories = {
+    { name = "animal", display = "🐾 Animal" },
+    { name = "fruit", display = "🍎 Fruit" },
+    { name = "vehicle", display = "🚗 Vehicle" },
+    { name = "space", display = "🚀 Space" },
 }
 
 -- 阶段 3：JSON 测试数据
@@ -110,6 +119,37 @@ function search(query)
         end,
         alt_subtitle = "Paste with Opt modifier hint",
     })
+    
+    -- 阶段 5：Tab Complete Demo
+    table.insert(results, {
+        title = "Tab Complete Demo",
+        subtitle = "Type '@' then Tab to complete category names",
+        icon = "🔤",
+        preview_type = "text",
+        preview = "🔤 Tab Complete Demo\n\nTry these steps:\n1. Type: test @an\n2. Select '🐾 Animal' from results\n3. Press Tab to auto-complete to: test @animal \n4. Results will filter to animal items only\n\nAvailable categories:\n• @animal  (🐱 cat, 🐶 dog)\n• @fruit   (🍎 apple, 🍌 banana)\n• @vehicle (🚗 car, 🚲 bicycle)\n• @space   (🚀 rocket, ⭐ star)",
+        action = function()
+            lingxi.alert.show("Type 'test @' then Tab to complete category names!", 3.0)
+        end,
+    })
+    
+    -- 阶段 5：Category filter items (visible when using @ syntax)
+    if query:match("@(%w+)") then
+        local catFilter = query:match("@(%w+)"):lower()
+        for _, cat in ipairs(categories) do
+            if cat.name:lower():find(catFilter, 1, true) then
+                table.insert(results, {
+                    title = cat.display,
+                    subtitle = "Press Tab to auto-complete this category",
+                    icon = "🏷️",
+                    preview_type = "text",
+                    preview = "Category: " .. cat.name .. "\n\nPress Tab to auto-complete to:\ntest @" .. cat.name .. " ",
+                    action = function()
+                        lingxi.alert.show("Press Tab to complete: @" .. cat.name, 2.0)
+                    end,
+                })
+            end
+        end
+    end
     
     -- 阶段 3：JSON Parse Demo
     table.insert(results, {
@@ -221,4 +261,23 @@ function search(query)
     end
     
     return results
+end
+
+-- 阶段 5：Tab Complete 测试
+-- 当用户在查询中输入 "@" 后按 Tab 键，自动补全分类名
+function complete(query, item_title)
+    -- 检查是否正在输入 @ 分类名（支持 @ 后跟单词字符，以及尾部空格）
+    if query:match("@%w[%w]*%s*$") then
+        -- 尝试从 item_title 中提取分类名
+        for _, cat in ipairs(categories) do
+            local itemLower = item_title:lower()
+            local catLower = cat.name:lower()
+            if itemLower:find(catLower, 1, true) then
+                -- 替换 @ 及其后的内容为完整的分类名
+                local newQuery = query:gsub("@%w[%w]*%s*$", "@" .. cat.name .. " ")
+                return newQuery
+            end
+        end
+    end
+    return nil
 end
