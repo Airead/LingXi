@@ -53,6 +53,7 @@ nonisolated enum LuaAPI {
             registerDisabledNotify(state: state)
         }
         registerAlert(state: state)
+        registerLog(state: state)
         state.setGlobal("lingxi")
     }
 
@@ -645,29 +646,29 @@ nonisolated enum LuaAPI {
     }
 
     /// Push a Swift JSON-compatible value onto the Lua stack.
-    private static func pushSwiftValue(_ L: OpaquePointer, value: Any) {
+    internal static func pushSwiftValue(_ L: OpaquePointer, value: Any) {
         switch value {
         case let s as String:
             lua_pushstring(L, s)
-        case let b as Bool:
-            // Note: Swift Bool bridges to NSNumber, so this case must come before NSNumber
-            // and we rely on Swift's dynamic type dispatch to match Bool before NSNumber.
-            lua_pushboolean(L, b ? 1 : 0)
-        case let d as Double:
-            lua_pushnumber(L, d)
-        case let i as Int:
-            lua_pushinteger(L, lua_Integer(i))
         case let num as NSNumber:
-            // JSONSerialization deserializes booleans as NSNumber with CFNumberType .charType.
-            let cfNumber = num as CFNumber
-            let numberType = CFNumberGetType(cfNumber)
-            if numberType == .charType {
+            // JSONSerialization deserializes booleans as NSNumber (__NSCFBoolean).
+            // This case MUST come before Bool/Int/Double because Foundation allows
+            // NSNumber to bridge to those types (e.g. NSNumber(1) as? Bool is true),
+            // which would cause incorrect type dispatch.
+            // Use CFBoolean singleton identity to distinguish real booleans.
+            if num === (kCFBooleanTrue as NSNumber) || num === (kCFBooleanFalse as NSNumber) {
                 lua_pushboolean(L, num.boolValue ? 1 : 0)
             } else if num.doubleValue == Double(num.int64Value) {
                 lua_pushinteger(L, lua_Integer(num.int64Value))
             } else {
                 lua_pushnumber(L, num.doubleValue)
             }
+        case let b as Bool:
+            lua_pushboolean(L, b ? 1 : 0)
+        case let d as Double:
+            lua_pushnumber(L, d)
+        case let i as Int:
+            lua_pushinteger(L, lua_Integer(i))
         case let arr as [Any]:
             lua_createtable(L, Int32(arr.count), 0)
             for (idx, elem) in arr.enumerated() {
@@ -904,5 +905,27 @@ nonisolated enum LuaAPI {
         let ok = ToastManager.shared.show(text: text, duration: duration)
         lua_pushboolean(L, ok ? 1 : 0)
         return 1
+    }
+
+    // MARK: - lingxi.log
+
+    private static func registerLog(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(logWrite)
+        state.setField("write", at: -2)
+        state.setField("log", at: -2)
+    }
+
+    /// `lingxi.log.write(message) -> void`
+    /// Writes a log message via DebugLog, prefixed with the plugin ID.
+    private static let logWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let message = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            return 0
+        }
+        let pid = pluginId(from: L)
+        let prefix = pid.isEmpty ? "[Lua]" : "[Lua:\(pid)]"
+        DebugLog.log("\(prefix) \(message)")
+        return 0
     }
 }

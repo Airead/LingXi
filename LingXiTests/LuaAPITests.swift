@@ -1,4 +1,5 @@
 import AppKit
+import CLua
 import Foundation
 import Testing
 @testable import LingXi
@@ -620,6 +621,104 @@ struct LuaAPITests {
             assert(type(ok) == "boolean", "expected boolean, got " .. type(ok))
             assert(ok == true, "expected true, got " .. tostring(ok))
         """)
+    }
+
+    // MARK: - JSONSerialization round-trip type preservation
+
+    @Test func pushSwiftValueJSONNumberOneIsLuaNumber() throws {
+        let state = LuaState()
+        state.openLibs()
+
+        // Simulate JSONSerialization result: {"count": 1} -> NSNumber
+        let json = "{\"count\": 1}"
+        let data = json.data(using: .utf8)!
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let nsNumber = dict["count"] as! NSNumber
+
+        // Verify it's NOT a CFBoolean
+        #expect(CFGetTypeID(nsNumber as CFTypeRef) != CFBooleanGetTypeID(),
+                "NSNumber(1) should not be CFBoolean")
+
+        LuaAPI.pushSwiftValue(state.raw, value: nsNumber)
+
+        let luaType = state.type(at: -1)
+        #expect(luaType == LUA_TNUMBER,
+                "Expected Lua number type (\(LUA_TNUMBER)), got \(luaType)")
+
+        // Verify the value is correct
+        let value = state.toNumber(at: -1)
+        #expect(value == 1.0, "Expected 1.0, got \(String(describing: value))")
+        state.pop()
+    }
+
+    @Test func pushSwiftValueJSONBooleanTrueIsLuaBoolean() throws {
+        let state = LuaState()
+        state.openLibs()
+
+        // Simulate JSONSerialization result: {"enabled": true} -> CFBoolean
+        let json = "{\"enabled\": true}"
+        let data = json.data(using: .utf8)!
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let nsNumber = dict["enabled"] as! NSNumber
+
+        // Verify it's a CFBoolean
+        #expect(CFGetTypeID(nsNumber as CFTypeRef) == CFBooleanGetTypeID(),
+                "JSON true should be CFBoolean")
+
+        LuaAPI.pushSwiftValue(state.raw, value: nsNumber)
+
+        let luaType = state.type(at: -1)
+        #expect(luaType == LUA_TBOOLEAN,
+                "Expected Lua boolean type (\(LUA_TBOOLEAN)), got \(luaType)")
+
+        // Verify the value is correct
+        let value = state.toBool(at: -1)
+        #expect(value == true, "Expected true, got \(value)")
+        state.pop()
+    }
+
+    @Test func pushSwiftValueCFBooleanFalseIsLuaBoolean() throws {
+        let state = LuaState()
+        state.openLibs()
+
+        let json = "{\"enabled\": false}"
+        let data = json.data(using: .utf8)!
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let nsNumber = dict["enabled"] as! NSNumber
+
+        #expect(CFGetTypeID(nsNumber as CFTypeRef) == CFBooleanGetTypeID(),
+                "JSON false should be CFBoolean")
+
+        LuaAPI.pushSwiftValue(state.raw, value: nsNumber)
+
+        let luaType = state.type(at: -1)
+        #expect(luaType == LUA_TBOOLEAN,
+                "Expected Lua boolean type, got \(luaType)")
+
+        let value = state.toBool(at: -1)
+        #expect(value == false, "Expected false, got \(value)")
+        state.pop()
+    }
+
+    @Test func pushSwiftValueNSNumberZeroIsLuaNumber() throws {
+        let state = LuaState()
+        state.openLibs()
+
+        // NSNumber 0 should be a number, not boolean
+        let nsNumber = NSNumber(value: 0)
+
+        #expect(CFGetTypeID(nsNumber as CFTypeRef) != CFBooleanGetTypeID(),
+                "NSNumber(0) should not be CFBoolean")
+
+        LuaAPI.pushSwiftValue(state.raw, value: nsNumber)
+
+        let luaType = state.type(at: -1)
+        #expect(luaType == LUA_TNUMBER,
+                "Expected Lua number type, got \(luaType)")
+
+        let value = state.toNumber(at: -1)
+        #expect(value == 0.0, "Expected 0.0, got \(String(describing: value))")
+        state.pop()
     }
 
     // MARK: - lingxi.alert

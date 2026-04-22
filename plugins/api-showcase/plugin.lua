@@ -32,21 +32,33 @@ end
 
 --- Increment a counter in the plugin store
 local function increment_counter(key)
-    local current = lingxi.store.get(key) or 0
-    if type(current) ~= "number" then
+    local raw = lingxi.store.get(key)
+    local current = 0
+    if type(raw) == "number" then
+        current = raw
+    elseif type(raw) == "boolean" then
+        -- Previously stored as boolean due to CFNumberGetType bug; clean up and restart
+        lingxi.store.delete(key)
         current = 0
     end
-    lingxi.store.set(key, current + 1)
+    local ok = lingxi.store.set(key, current + 1)
+    lingxi.log.write("[increment_counter] key=" .. key .. " old=" .. current .. " new=" .. (current + 1) .. " ok=" .. tostring(ok))
     return current + 1
 end
 
 --- Get a counter value from the plugin store
 local function get_counter(key)
-    local value = lingxi.store.get(key) or 0
-    if type(value) ~= "number" then
+    local value = lingxi.store.get(key)
+    if type(value) == "number" then
+        lingxi.log.write("[get_counter] key=" .. key .. " value=" .. value)
+        return value
+    elseif type(value) == "boolean" then
+        -- Previously stored as boolean due to CFNumberGetType bug; clean up
+        lingxi.store.delete(key)
+        lingxi.log.write("[get_counter] key=" .. key .. " boolean value (legacy) -> delete and return 0")
         return 0
     end
-    return value
+    return 0
 end
 
 -- ============================================================================
