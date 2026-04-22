@@ -64,7 +64,7 @@ notify = true           # Required for notification API
 ```
 api-showcase/
 ├── plugin.toml     # Plugin manifest with metadata and permissions
-├── plugin.lua      # Main plugin code
+├── init.lua        # Main plugin code
 └── README.md       # This documentation
 ```
 

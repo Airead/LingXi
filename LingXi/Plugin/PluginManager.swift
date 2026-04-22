@@ -238,7 +238,14 @@ final class PluginManager: PluginService {
                 continue
             }
 
-            let scriptPath = entry.appendingPathComponent("plugin.lua").path
+            let scriptPath: String
+            let initPath = entry.appendingPathComponent("init.lua").path
+            let legacyPath = entry.appendingPathComponent("plugin.lua").path
+            if FileManager.default.fileExists(atPath: initPath) {
+                scriptPath = initPath
+            } else {
+                scriptPath = legacyPath
+            }
             do {
                 let plugin = try await loadPlugin(scriptPath: scriptPath, pluginDir: entry)
                 results.append(.loaded(plugin))

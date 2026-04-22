@@ -8,7 +8,7 @@ url = "https://github.com/Airead/LingXi"
 min_lingxi_version = "1.0.0"
 
 files = [
-    "plugin.lua",
+    "init.lua",
     "README.md",
 ]
 
