@@ -478,20 +478,22 @@ nonisolated enum LuaAPI {
     // MARK: - Paste C Functions
 
     /// `lingxi.paste(text) -> boolean`
-    /// Writes text to the clipboard and simulates paste in the previous application.
+    /// Writes text to the clipboard, hides the panel, activates the previous app, and simulates paste.
     private static let pasteText: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         guard let text = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
             lua_pushboolean(L, 0)
             return 1
         }
-        let pb = ClipboardStore.prepareTransientPasteboard(types: [.string], pasteboard: testingPasteboard)
-        pb.setString(text, forType: .string)
 
         if let context = panelContext {
             Task { @MainActor in
-                context.pasteAndActivate(target: context.previousApp)
+                context.pasteText(text)
             }
+        } else {
+            // Fallback: just write to clipboard if no panel context
+            let pb = ClipboardStore.prepareTransientPasteboard(types: [.string], pasteboard: testingPasteboard)
+            pb.setString(text, forType: .string)
         }
 
         lua_pushboolean(L, 1)

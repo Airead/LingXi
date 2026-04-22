@@ -796,6 +796,9 @@ struct LuaAPITests {
     }
 
     @Test @MainActor func pasteWritesToClipboard() throws {
+        // Ensure no panel context is set, so lingxi.paste uses the fallback path
+        LuaAPI.panelContext = nil
+
         let pb = NSPasteboard(name: .init("LuaAPITests-paste-content-\(UUID().uuidString)"))
         defer {
             pb.releaseGlobally()

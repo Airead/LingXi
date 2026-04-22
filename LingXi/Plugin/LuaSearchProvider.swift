@@ -14,13 +14,19 @@ actor LuaSearchProvider: SearchProvider {
     nonisolated var supportsPreview: Bool { false }
 
     private let state: LuaState
+    private weak var panelContext: PanelContext?
 
-    init(name: String, pluginDir: URL, state: LuaState, debounce: Int = 100, timeout: Int = 5000) {
+    init(name: String, pluginDir: URL, state: LuaState, debounce: Int = 100, timeout: Int = 5000, panelContext: PanelContext? = nil) {
         self.name = name
         self.pluginDir = pluginDir
         self.debounceMilliseconds = debounce
         self.timeoutMilliseconds = timeout
         self.state = state
+        self.panelContext = panelContext
+    }
+
+    func setPanelContext(_ context: PanelContext?) {
+        self.panelContext = context
     }
 
     func search(query: String) async -> [SearchResult] {

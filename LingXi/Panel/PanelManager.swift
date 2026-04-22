@@ -125,8 +125,7 @@ final class PanelManager {
         guard isVisible else { return }
         panel?.orderOut(nil)
         inputSourceManager.restore()
-        let app = previousApp
-        previousApp = nil
+        // Don't clear previousApp here - let pasteText use it first
         snippetModule.resume()
         leaderKeyManager.resume()
         Task {
@@ -136,8 +135,13 @@ final class PanelManager {
             )
         }
         if returnFocus {
-            app?.activate()
+            previousApp?.activate()
         }
+    }
+
+    /// Clear previousApp after paste operations are complete
+    func clearPreviousApp() {
+        previousApp = nil
     }
 
     func setAutoExpandEnabled(_ enabled: Bool) {
@@ -255,11 +259,27 @@ extension PanelManager: PanelContext {
         Task {
             try? await Task.sleep(nanoseconds: 150_000_000)
             KeyboardUtils.simulatePaste()
+            // Clear previousApp after paste is complete
+            await MainActor.run {
+                self.clearPreviousApp()
+            }
         }
     }
 
     func hidePanel() {
         hide()
+    }
+
+    func pasteText(_ text: String) {
+        // Save previousApp before anything else clears it
+        let target = previousApp
+
+        // Write to clipboard
+        let pb = ClipboardStore.prepareTransientPasteboard(types: [.string])
+        pb.setString(text, forType: .string)
+
+        // Activate target app and paste (hide is handled by the caller/onReturn)
+        pasteAndActivate(target: target)
     }
 }
 
