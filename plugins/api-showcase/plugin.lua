@@ -3,13 +3,6 @@
 -- This is a reference implementation for plugin developers.
 
 -- ============================================================================
--- Constants
--- ============================================================================
-
-local PLUGIN_ID = "io.github.airead.lingxi.api-showcase"
-local STORE_PREFIX = "api_showcase_"
-
--- ============================================================================
 -- Utility Functions
 -- ============================================================================
 
@@ -39,19 +32,17 @@ end
 
 --- Increment a counter in the plugin store
 local function increment_counter(key)
-    local full_key = STORE_PREFIX .. key
-    local current = lingxi.store.get(full_key) or 0
+    local current = lingxi.store.get(key) or 0
     if type(current) ~= "number" then
         current = 0
     end
-    lingxi.store.set(full_key, current + 1)
+    lingxi.store.set(key, current + 1)
     return current + 1
 end
 
 --- Get a counter value from the plugin store
 local function get_counter(key)
-    local full_key = STORE_PREFIX .. key
-    local value = lingxi.store.get(full_key) or 0
+    local value = lingxi.store.get(key) or 0
     if type(value) ~= "number" then
         return 0
     end
@@ -235,10 +226,10 @@ function demo_store()
     increment_counter("store_demos")
 
     -- Set a demo value
-    lingxi.store.set(STORE_PREFIX .. "demo_key", "Hello from store! " .. iso_timestamp())
+    lingxi.store.set("demo_key", "Hello from store! " .. iso_timestamp())
 
     -- Retrieve it
-    local value = lingxi.store.get(STORE_PREFIX .. "demo_key") or "(not found)"
+    local value = lingxi.store.get("demo_key") or "(not found)"
 
     -- Show all store keys for this plugin
     local keys = list_store_keys()
@@ -256,19 +247,19 @@ end
 function list_store_keys()
     -- StoreManager does not provide enumeration, so we track known keys manually
     local known_keys = {
-        STORE_PREFIX .. "demo_key",
-        STORE_PREFIX .. "searches",
-        STORE_PREFIX .. "http_demos",
-        STORE_PREFIX .. "clipboard_demos",
-        STORE_PREFIX .. "file_demos",
-        STORE_PREFIX .. "shell_demos",
-        STORE_PREFIX .. "store_demos",
-        STORE_PREFIX .. "notify_demos",
-        STORE_PREFIX .. "alert_demos",
-        STORE_PREFIX .. "event_count_clipboard",
-        STORE_PREFIX .. "event_count_search",
-        STORE_PREFIX .. "event_count_screenshot",
-        STORE_PREFIX .. "last_event",
+        "demo_key",
+        "searches",
+        "http_demos",
+        "clipboard_demos",
+        "file_demos",
+        "shell_demos",
+        "store_demos",
+        "notify_demos",
+        "alert_demos",
+        "event_count_clipboard",
+        "event_count_search",
+        "event_count_screenshot",
+        "last_event",
     }
     local existing = {}
     for _, key in ipairs(known_keys) do
@@ -314,7 +305,7 @@ function demo_events()
     local clipboard_count = get_counter("event_count_clipboard")
     local search_count = get_counter("event_count_search")
     local screenshot_count = get_counter("event_count_screenshot")
-    local last_event = lingxi.store.get(STORE_PREFIX .. "last_event") or "none"
+    local last_event = lingxi.store.get("last_event") or "none"
 
     return {
         { title = "Event: clipboard_change", subtitle = "Received " .. clipboard_count .. " times" },
@@ -405,7 +396,7 @@ function cmd_clear(args)
     }
 
     for _, key in ipairs(keys) do
-        lingxi.store.delete(STORE_PREFIX .. key)
+        lingxi.store.delete(key)
     end
 
     lingxi.alert.show("All plugin data cleared!", 2.0)
@@ -438,7 +429,7 @@ end
 --- Handle clipboard_change events
 function on_clipboard_change(data)
     increment_counter("event_count_clipboard")
-    lingxi.store.set(STORE_PREFIX .. "last_event", "clipboard_change")
+    lingxi.store.set("last_event", "clipboard_change")
 
     local content_type = data.type or "unknown"
     if content_type == "text" then
@@ -456,13 +447,13 @@ end
 --- Handle search_activate events
 function on_search_activate(data)
     increment_counter("event_count_search")
-    lingxi.store.set(STORE_PREFIX .. "last_event", "search_activate")
+    lingxi.store.set("last_event", "search_activate")
 end
 
 --- Handle screenshot_captured events
 function on_screenshot_captured(data)
     increment_counter("event_count_screenshot")
-    lingxi.store.set(STORE_PREFIX .. "last_event", "screenshot_captured")
+    lingxi.store.set("last_event", "screenshot_captured")
 
     local screenshot_type = data.type or "unknown"
     local path = data.path or ""
