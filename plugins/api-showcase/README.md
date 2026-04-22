@@ -54,7 +54,7 @@ The `plugin.toml` file declares all required permissions:
 [permissions]
 network = true          # Required for HTTP API
 clipboard = true        # Required for clipboard API
-filesystem = ["plugin_data"]  # Sandbox: only plugin_data directory
+filesystem = ["/tmp/lingxi-api-showcase"]  # Sandbox: only this directory
 shell = ["date", "sw_vers"]   # Whitelist: only these commands
 notify = true           # Required for notification API
 ```
@@ -99,16 +99,16 @@ local ok = lingxi.clipboard.write("Hello, World!")  -- boolean
 -- All paths are relative to the plugin's sandbox directory
 
 -- Read file
-local content = lingxi.file.read("plugin_data/config.txt")  -- string | nil
+local content = lingxi.file.read("/tmp/lingxi-api-showcase/config.txt")  -- string | nil
 
 -- Write file
-local ok = lingxi.file.write("plugin_data/config.txt", "content")
+local ok = lingxi.file.write("/tmp/lingxi-api-showcase/config.txt", "content")
 
 -- List directory
-local entries = lingxi.file.list("plugin_data")  -- {name, isDir}[] | nil
+local entries = lingxi.file.list("/tmp/lingxi-api-showcase")  -- {name, isDir}[] | nil
 
 -- Check if file exists
-local exists = lingxi.file.exists("plugin_data/config.txt")  -- boolean
+local exists = lingxi.file.exists("/tmp/lingxi-api-showcase/config.txt")  -- boolean
 ```
 
 ### Shell API

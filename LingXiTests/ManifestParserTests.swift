@@ -49,6 +49,7 @@ struct ManifestParserTests {
         #expect(manifest.permissions.filesystem == ["/tmp", "~/.config"])
         #expect(manifest.permissions.shell == ["echo", "ls"])
         #expect(manifest.permissions.notify == true)
+        #expect(manifest.permissions.store == false)
         #expect(manifest.commands.count == 1)
         #expect(manifest.commands[0].name == "hello")
         #expect(manifest.commands[0].title == "Say Hello")
@@ -73,6 +74,7 @@ struct ManifestParserTests {
         #expect(manifest.permissions.filesystem == [])
         #expect(manifest.permissions.shell == [])
         #expect(manifest.permissions.notify == false)
+        #expect(manifest.permissions.store == false)
         #expect(manifest.commands.isEmpty)
     }
 

@@ -14,6 +14,9 @@ nonisolated enum LuaAPI {
     /// APIs without permission are registered as stubs that return nil/false and log a warning.
     static func registerAll(state: LuaState, permissions: PermissionConfig, pluginId: String = "") {
         state.createTable()
+        // Store pluginId as a hidden field on the lingxi table so C callbacks can retrieve it.
+        state.push(pluginId)
+        state.setField("_pluginId", at: -2)
         if permissions.network {
             registerHTTP(state: state)
         } else {
@@ -36,7 +39,11 @@ nonisolated enum LuaAPI {
             shellPermissions[pluginId] = permissions.shell
             registerShell(state: state)
         }
-        registerStore(state: state, pluginId: pluginId)
+        if permissions.store {
+            registerStore(state: state)
+        } else {
+            registerDisabledStore(state: state)
+        }
         if permissions.notify {
             registerNotify(state: state)
         } else {
@@ -461,17 +468,24 @@ nonisolated enum LuaAPI {
 
     // MARK: - lingxi.store
 
-    private static func registerStore(state: LuaState, pluginId: String) {
-        // Store pluginId as a hidden field on the lingxi table so C callbacks can retrieve it.
-        state.push(pluginId)
-        state.setField("_pluginId", at: -2)
-
+    private static func registerStore(state: LuaState) {
         state.createTable(nrec: 3)
         state.pushFunction(storeGet)
         state.setField("get", at: -2)
         state.pushFunction(storeSet)
         state.setField("set", at: -2)
         state.pushFunction(storeDelete)
+        state.setField("delete", at: -2)
+        state.setField("store", at: -2)
+    }
+
+    private static func registerDisabledStore(state: LuaState) {
+        state.createTable(nrec: 3)
+        state.pushFunction(disabledStoreGet)
+        state.setField("get", at: -2)
+        state.pushFunction(disabledStoreSet)
+        state.setField("set", at: -2)
+        state.pushFunction(disabledStoreDelete)
         state.setField("delete", at: -2)
         state.setField("store", at: -2)
     }
@@ -535,6 +549,29 @@ nonisolated enum LuaAPI {
         let pid = pluginId(from: L)
         let ok = StoreManager.shared.syncDelete(pluginId: pid, key: key)
         lua_pushboolean(L, ok ? 1 : 0)
+        return 1
+    }
+
+    // MARK: - Disabled Store Stubs
+
+    private static let disabledStoreGet: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.store.get denied: store permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledStoreSet: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.store.set denied: store permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledStoreDelete: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.store.delete denied: store permission not granted")
+        lua_pushboolean(L, 0)
         return 1
     }
 

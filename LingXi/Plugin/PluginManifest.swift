@@ -15,6 +15,7 @@ nonisolated struct PermissionConfig: Sendable, Equatable {
     let filesystem: [String]
     let shell: [String]
     let notify: Bool
+    let store: Bool
 
     /// Restrictive default for plugins.
     nonisolated static let `default` = PermissionConfig(
@@ -22,7 +23,8 @@ nonisolated struct PermissionConfig: Sendable, Equatable {
         clipboard: false,
         filesystem: [],
         shell: [],
-        notify: false
+        notify: false,
+        store: false
     )
 }
 

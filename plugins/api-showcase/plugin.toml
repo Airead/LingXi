@@ -20,9 +20,10 @@ timeout = 10000
 [permissions]
 network = true
 clipboard = true
-filesystem = ["plugin_data"]
+filesystem = ["/tmp/lingxi-api-showcase"]
 shell = ["date", "sw_vers"]
 notify = true
+store = true
 
 [[commands]]
 name = "api:stats"

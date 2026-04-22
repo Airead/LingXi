@@ -4,7 +4,7 @@ import Testing
 @testable import LingXi
 
 struct LuaAPITests {
-    private func makeState(permissions: PermissionConfig = .default, pluginId: String = "test.plugin") -> LuaState {
+    private func makeState(permissions: PermissionConfig = PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: true), pluginId: String = "test.plugin") -> LuaState {
         let state = LuaState()
         state.openLibs()
         LuaSandbox.apply(to: state)
@@ -22,39 +22,39 @@ struct LuaAPITests {
     }
 
     @Test func httpSubtableExists() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.http) == 'table')")
     }
 
     @Test func clipboardSubtableExists() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.clipboard) == 'table')")
     }
 
     @Test func httpGetIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.http.get) == 'function')")
     }
 
     @Test func httpPostIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.http.post) == 'function')")
     }
 
     @Test func clipboardReadIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.clipboard.read) == 'function')")
     }
 
     @Test func clipboardWriteIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.clipboard.write) == 'function')")
     }
 
     // MARK: - lingxi.http.get
 
     @Test func httpGetInvalidURL() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         #expect(throws: LuaError.self) {
             try state.doString("""
                 lingxi.http.get("not a valid url %%%")
@@ -63,7 +63,7 @@ struct LuaAPITests {
     }
 
     @Test func httpGetMissingArgument() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         #expect(throws: LuaError.self) {
             try state.doString("lingxi.http.get()")
         }
@@ -72,7 +72,7 @@ struct LuaAPITests {
     // MARK: - lingxi.http.post
 
     @Test func httpPostInvalidURL() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         #expect(throws: LuaError.self) {
             try state.doString("""
                 lingxi.http.post("not a valid url %%%", "body")
@@ -81,7 +81,7 @@ struct LuaAPITests {
     }
 
     @Test func httpPostMissingArgument() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         #expect(throws: LuaError.self) {
             try state.doString("lingxi.http.post()")
         }
@@ -95,7 +95,7 @@ struct LuaAPITests {
 
         // Use the real pasteboard for this test since the C callback uses NSPasteboard.general.
         // Instead, we test the Lua-level write/read cycle.
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("""
             lingxi.clipboard.write("lua-test-value-42")
             local text = lingxi.clipboard.read()
@@ -107,7 +107,7 @@ struct LuaAPITests {
     }
 
     @Test func clipboardWriteReturnsTrueOnSuccess() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("""
             local ok = lingxi.clipboard.write("test")
             assert(ok == true)
@@ -116,7 +116,7 @@ struct LuaAPITests {
     }
 
     @Test func clipboardWriteReturnsFalseOnNil() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("""
             local ok = lingxi.clipboard.write(nil)
             assert(ok == false)
@@ -124,7 +124,7 @@ struct LuaAPITests {
     }
 
     @Test func clipboardReadReturnsNilWhenEmpty() throws {
-        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: true, clipboard: true, filesystem: [], shell: [], notify: false, store: false))
         // Clear the pasteboard first
         let general = NSPasteboard.general
         general.clearContents()
@@ -137,7 +137,7 @@ struct LuaAPITests {
     // MARK: - Permission-based API gating
 
     @Test func httpDisabledReturnsNil() throws {
-        let perms = PermissionConfig(network: false, clipboard: true, filesystem: [], shell: [], notify: false)
+        let perms = PermissionConfig(network: false, clipboard: true, filesystem: [], shell: [], notify: false, store: false)
         let state = makeState(permissions: perms)
         try state.doString("""
             local result = lingxi.http.get("https://example.com")
@@ -146,7 +146,7 @@ struct LuaAPITests {
     }
 
     @Test func clipboardDisabledReadReturnsNil() throws {
-        let perms = PermissionConfig(network: true, clipboard: false, filesystem: [], shell: [], notify: false)
+        let perms = PermissionConfig(network: true, clipboard: false, filesystem: [], shell: [], notify: false, store: false)
         let state = makeState(permissions: perms)
         try state.doString("""
             local text = lingxi.clipboard.read()
@@ -155,7 +155,7 @@ struct LuaAPITests {
     }
 
     @Test func clipboardDisabledWriteReturnsFalse() throws {
-        let perms = PermissionConfig(network: true, clipboard: false, filesystem: [], shell: [], notify: false)
+        let perms = PermissionConfig(network: true, clipboard: false, filesystem: [], shell: [], notify: false, store: false)
         let state = makeState(permissions: perms)
         try state.doString("""
             local ok = lingxi.clipboard.write("test")
@@ -164,11 +164,38 @@ struct LuaAPITests {
     }
 
     @Test func lingxiTableStillCreatedWhenNoPermissions() throws {
-        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false)
+        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false)
         let state = makeState(permissions: perms)
         state.getGlobal("lingxi")
         #expect(state.isTable(at: -1))
         state.pop()
+    }
+
+    @Test func storeDisabledGetReturnsNil() throws {
+        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false)
+        let state = makeState(permissions: perms)
+        try state.doString("""
+            local value = lingxi.store.get("key")
+            assert(value == nil, "expected nil, got " .. tostring(value))
+        """)
+    }
+
+    @Test func storeDisabledSetReturnsFalse() throws {
+        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false)
+        let state = makeState(permissions: perms)
+        try state.doString("""
+            local ok = lingxi.store.set("key", "value")
+            assert(ok == false, "expected false, got " .. tostring(ok))
+        """)
+    }
+
+    @Test func storeDisabledDeleteReturnsFalse() throws {
+        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false)
+        let state = makeState(permissions: perms)
+        try state.doString("""
+            local ok = lingxi.store.delete("key")
+            assert(ok == false, "expected false, got " .. tostring(ok))
+        """)
     }
 
     // MARK: - lingxi.store
@@ -335,27 +362,27 @@ struct LuaAPITests {
     // MARK: - lingxi.file
 
     @Test func fileSubtableExists() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.file) == 'table')")
     }
 
     @Test func fileReadIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.file.read) == 'function')")
     }
 
     @Test func fileWriteIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.file.write) == 'function')")
     }
 
     @Test func fileListIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.file.list) == 'function')")
     }
 
     @Test func fileExistsIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: ["/tmp"], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.file.exists) == 'function')")
     }
 
@@ -364,7 +391,7 @@ struct LuaAPITests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let state = makeState(
-            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false),
             pluginId: "test.file.write-read"
         )
         let filePath = tempDir.appendingPathComponent("test.txt").path
@@ -384,7 +411,7 @@ struct LuaAPITests {
         try "test".write(toFile: filePath, atomically: true, encoding: .utf8)
 
         let state = makeState(
-            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false),
             pluginId: "test.file.exists"
         )
         try state.doString("""
@@ -398,7 +425,7 @@ struct LuaAPITests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let state = makeState(
-            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false),
             pluginId: "test.file.exists-missing"
         )
         try state.doString("""
@@ -416,7 +443,7 @@ struct LuaAPITests {
         try "file2".write(toFile: tempDir.appendingPathComponent("file2.txt").path, atomically: true, encoding: .utf8)
 
         let state = makeState(
-            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false),
             pluginId: "test.file.list"
         )
         try state.doString("""
@@ -435,7 +462,7 @@ struct LuaAPITests {
         }
 
         let state = makeState(
-            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [allowedDir.path], shell: [], notify: false),
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [allowedDir.path], shell: [], notify: false, store: false),
             pluginId: "test.file.denied"
         )
         try state.doString("""
@@ -447,7 +474,7 @@ struct LuaAPITests {
     }
 
     @Test func fileDisabledReturnsNilOrFalse() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("""
             local content = lingxi.file.read("/tmp/test.txt")
             assert(content == nil, "expected nil, got " .. tostring(content))
@@ -465,7 +492,7 @@ struct LuaAPITests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let state = makeState(
-            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false),
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false),
             pluginId: "test.file.read-missing"
         )
         try state.doString("""
@@ -477,17 +504,17 @@ struct LuaAPITests {
     // MARK: - lingxi.shell
 
     @Test func shellSubtableExists() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false, store: false))
         try state.doString("assert(type(lingxi.shell) == 'table')")
     }
 
     @Test func shellExecIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false, store: false))
         try state.doString("assert(type(lingxi.shell.exec) == 'function')")
     }
 
     @Test func shellExecEcho() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false, store: false))
         try state.doString("""
             local result = lingxi.shell.exec("echo hello")
             assert(type(result) == "table", "expected table, got " .. type(result))
@@ -497,7 +524,7 @@ struct LuaAPITests {
     }
 
     @Test func shellExecDeniedCommand() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false, store: false))
         try state.doString("""
             local result = lingxi.shell.exec("rm -rf /")
             assert(type(result) == "table", "expected table, got " .. type(result))
@@ -507,7 +534,7 @@ struct LuaAPITests {
     }
 
     @Test func shellExecDisabled() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("""
             local result = lingxi.shell.exec("echo hello")
             assert(type(result) == "table", "expected table, got " .. type(result))
@@ -517,7 +544,7 @@ struct LuaAPITests {
     }
 
     @Test func shellExecAbsolutePath() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false, store: false))
         try state.doString("""
             local result = lingxi.shell.exec("/bin/echo hello")
             assert(type(result) == "table", "expected table, got " .. type(result))
@@ -527,7 +554,7 @@ struct LuaAPITests {
     }
 
     @Test func shellExecMissingArgument() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: ["echo"], notify: false, store: false))
         try state.doString("""
             local result = lingxi.shell.exec()
             assert(type(result) == "table", "expected table, got " .. type(result))
@@ -538,17 +565,17 @@ struct LuaAPITests {
     // MARK: - lingxi.notify
 
     @Test func notifySubtableExists() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true, store: true))
         try state.doString("assert(type(lingxi.notify) == 'table')")
     }
 
     @Test func notifySendIsFunction() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true, store: true))
         try state.doString("assert(type(lingxi.notify.send) == 'function')")
     }
 
     @Test func notifySendReturnsBoolean() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true, store: true))
         try state.doString("""
             local ok = lingxi.notify.send("Test Title", "Test Message")
             assert(type(ok) == "boolean", "expected boolean, got " .. type(ok))
@@ -556,7 +583,7 @@ struct LuaAPITests {
     }
 
     @Test func notifyDisabledReturnsFalse() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("""
             local ok = lingxi.notify.send("Test Title", "Test Message")
             assert(ok == false, "expected false, got " .. tostring(ok))
@@ -564,12 +591,12 @@ struct LuaAPITests {
     }
 
     @Test func notifyDisabledSubtableStillExists() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false))
         try state.doString("assert(type(lingxi.notify) == 'table')")
     }
 
     @Test func notifySendWithOnlyTitle() throws {
-        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true))
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: true, store: true))
         try state.doString("""
             local ok = lingxi.notify.send("Test Title")
             assert(type(ok) == "boolean", "expected boolean, got " .. type(ok))

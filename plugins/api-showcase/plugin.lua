@@ -187,23 +187,24 @@ end
 function demo_filesystem()
     increment_counter("file_demos")
 
-    -- Write a test file in the plugin_data directory
-    local test_file = "plugin_data/demo.txt"
+    -- Write a test file in a temporary directory
+    local test_dir = "/tmp/lingxi-api-showcase"
+    local test_file = test_dir .. "/demo.txt"
     lingxi.file.write(test_file, "Hello from API Showcase plugin!\nCreated at: " .. iso_timestamp())
 
     -- Read it back
     local content = lingxi.file.read(test_file) or "(failed to read)"
     local file_exists = lingxi.file.exists(test_file)
 
-    -- List plugin_data directory
-    local entries = lingxi.file.list("plugin_data") or {}
+    -- List directory
+    local entries = lingxi.file.list(test_dir) or {}
     local entry_count = #entries
 
     return {
         { title = "File Write", subtitle = "lingxi.file.write(path, content) -> boolean" },
         { title = "File Read", subtitle = "Content: " .. content:gsub("\n", " "):sub(1, 60) },
-        { title = "File Exists", subtitle = "plugin_data/demo.txt exists: " .. tostring(file_exists) },
-        { title = "Directory List", subtitle = "plugin_data contains " .. entry_count .. " entries" },
+        { title = "File Exists", subtitle = test_file .. " exists: " .. tostring(file_exists) },
+        { title = "Directory List", subtitle = test_dir .. " contains " .. entry_count .. " entries" },
         { title = "File API Summary", subtitle = "read | write | list | exists (all sandboxed)" },
     }
 end
