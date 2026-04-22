@@ -1,0 +1,11 @@
+name = "LingXi Official"
+url = "https://github.com/Airead/LingXi"
+
+[[plugins]]
+id = "io.github.airead.lingxi.api-showcase"
+name = "API Showcase"
+version = "1.0.0"
+description = "Demonstrates every LingXi plugin API and capability. A reference implementation for plugin developers."
+author = "LingXi Team"
+source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/api-showcase/plugin.toml"
+min_lingxi_version = "1.0.0"
