@@ -221,7 +221,7 @@ final class PluginManager: PluginService {
 
         var results: [LoadResult] = []
         for entry in entries {
-            guard entry.hasDirectoryPath else { continue }
+            guard Self.isPluginDirectory(entry) else { continue }
 
             // Parse manifest to get ID and check disabled
             let manifest: PluginManifest
@@ -248,6 +248,17 @@ final class PluginManager: PluginService {
         }
 
         return results
+    }
+
+    /// Check if a URL is a plugin directory (real directory or symlink to directory).
+    nonisolated private static func isPluginDirectory(_ url: URL) -> Bool {
+        if url.hasDirectoryPath { return true }
+        let rv = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+        if rv?.isSymbolicLink == true {
+            let resolved = url.resolvingSymlinksInPath()
+            return resolved.hasDirectoryPath
+        }
+        return false
     }
 
     nonisolated private static func loadPlugin(scriptPath: String, pluginDir: URL) async throws -> LoadedPlugin {
