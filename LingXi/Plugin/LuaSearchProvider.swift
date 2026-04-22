@@ -11,7 +11,7 @@ actor LuaSearchProvider: SearchProvider {
 
     nonisolated let debounceMilliseconds: Int
     nonisolated let timeoutMilliseconds: Int
-    nonisolated var supportsPreview: Bool { false }
+    nonisolated var supportsPreview: Bool { true }
 
     private let state: LuaState
     private weak var panelContext: PanelContext?
@@ -182,7 +182,75 @@ actor LuaSearchProvider: SearchProvider {
             state.pop()
         }
 
+        // Parse modifier actions
+        result.modifierActions = parseModifierActions(at: index)
+
+        // Parse preview data
+        if let previewType = state.stringField("preview_type", at: index),
+           let previewContent = state.stringField("preview", at: index) {
+            if previewType == "text" {
+                result.previewData = .text(previewContent)
+            } else if previewType == "html" {
+                // HTML preview not yet supported, fall back to text
+                result.previewData = .text(previewContent)
+            }
+        }
+
         return result
+    }
+
+    private func parseModifierActions(at index: Int32) -> [ActionModifier: ModifierAction] {
+        var actions: [ActionModifier: ModifierAction] = [:]
+
+        // Parse cmd_action / cmd_subtitle (Command modifier)
+        state.getField("cmd_action", at: index)
+        if state.isFunction(at: -1) {
+            let ref = state.ref(at: -1)
+            let subtitle = state.stringField("cmd_subtitle", at: index) ?? ""
+            actions[.command] = ModifierAction(subtitle: subtitle) { [weak self] _ in
+                guard let self else { return false }
+                Task {
+                    await self.executeAction(ref: ref)
+                }
+                return true
+            }
+        } else {
+            state.pop()
+        }
+
+        // Parse alt_action / alt_subtitle (Option modifier)
+        state.getField("alt_action", at: index)
+        if state.isFunction(at: -1) {
+            let ref = state.ref(at: -1)
+            let subtitle = state.stringField("alt_subtitle", at: index) ?? ""
+            actions[.option] = ModifierAction(subtitle: subtitle) { [weak self] _ in
+                guard let self else { return false }
+                Task {
+                    await self.executeAction(ref: ref)
+                }
+                return true
+            }
+        } else {
+            state.pop()
+        }
+
+        // Parse ctrl_action / ctrl_subtitle (Control modifier)
+        state.getField("ctrl_action", at: index)
+        if state.isFunction(at: -1) {
+            let ref = state.ref(at: -1)
+            let subtitle = state.stringField("ctrl_subtitle", at: index) ?? ""
+            actions[.control] = ModifierAction(subtitle: subtitle) { [weak self] _ in
+                guard let self else { return false }
+                Task {
+                    await self.executeAction(ref: ref)
+                }
+                return true
+            }
+        } else {
+            state.pop()
+        }
+
+        return actions
     }
 
     private func executeAction(ref: Int32) {
