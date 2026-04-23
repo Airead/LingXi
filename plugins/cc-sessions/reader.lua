@@ -60,7 +60,6 @@ function M.read_metadata(file_path)
         lingxi.log.write("[reader] read_metadata: failed to read file " .. file_path)
         return nil
     end
-    lingxi.log.write("[reader] read_metadata: read " .. #content .. " bytes from " .. file_path)
 
     local result = {
         session_id = "",
@@ -185,13 +184,11 @@ function M.read_metadata(file_path)
         ::continue::
     end
 
-    lingxi.log.write("[reader] read_metadata: line_count=" .. line_count .. ", first_timestamp=" .. tostring(result.first_timestamp) .. ", first_user_message=" .. tostring(result.first_user_message and result.first_user_message:sub(1, 50) or "nil"))
     if result.first_timestamp == nil and result.first_user_message == nil then
         lingxi.log.write("[reader] read_metadata: returning nil - no timestamp or user message found")
         return nil
     end
 
-    lingxi.log.write("[reader] read_metadata: returning result")
     return result
 end
 

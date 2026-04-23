@@ -2,6 +2,7 @@
 -- Discovers JSONL session files under ~/.claude/projects/
 
 local reader = require("reader")
+local cache = require("cache")
 
 local M = {}
 
@@ -142,13 +143,10 @@ local function _scan_session_jsonl(jsonl_path, project_name)
         return nil
     end
 
-    lingxi.log.write("[cc-sessions] _scan_session_jsonl: reading " .. jsonl_path)
     local meta = reader.read_metadata(jsonl_path)
     if not meta then
-        lingxi.log.write("[cc-sessions] _scan_session_jsonl: read_metadata returned nil for " .. jsonl_path)
         return nil
     end
-    lingxi.log.write("[cc-sessions] _scan_session_jsonl: got meta, first_timestamp=" .. tostring(meta.first_timestamp) .. ", first_user_message=" .. tostring(meta.first_user_message and meta.first_user_message:sub(1, 50) or "nil"))
 
     local project = _resolve_project_name(meta.cwd, project_name)
     local custom_title = meta.custom_title
@@ -222,26 +220,54 @@ local function _load_index_supplements(proj_dir)
     return lookup
 end
 
--- Scan all sessions
+-- Scan all sessions with incremental caching
 function M.scan_all()
+    -- 1. Memory cache hit
+    local mem = cache.get_memory_cache()
+    if mem then
+        lingxi.log.write("[cc-sessions] scan_all: returning " .. #mem .. " sessions from memory cache")
+        return mem
+    end
+
+    -- 2. Concurrency guard: if scanning in progress, return empty
+    if cache.is_scanning() then
+        lingxi.log.write("[cc-sessions] scan_all: scan in progress, returning empty")
+        return {}
+    end
+
+    cache.set_scanning(true)
+    lingxi.log.write("[cc-sessions] scan_all: starting incremental scan")
+
+    -- 3. Load disk cache
+    local disk_cache = cache.load_disk_cache()
+    local new_cache = {}
     local sessions = {}
     local seen_ids = {}
+    local live_paths = {}
+
+    -- TEST: Limit to 3 sessions for testing
+    local max_scans = 3
+    local scanned_count = 0
 
     local base_dir = "~/.claude/projects"
-    lingxi.log.write("[cc-sessions] scan_all: checking base_dir=" .. base_dir)
     local exists = lingxi.file.exists(base_dir)
-    lingxi.log.write("[cc-sessions] scan_all: exists=" .. tostring(exists))
     if not exists then
+        cache.set_scanning(false)
         return sessions
     end
 
     local entries = lingxi.file.list(base_dir)
-    lingxi.log.write("[cc-sessions] scan_all: entries count=" .. tostring(entries and #entries or 0))
     if not entries then
+        cache.set_scanning(false)
         return sessions
     end
 
     for _, entry in ipairs(entries) do
+        -- TEST: Check limit before each project
+        if scanned_count >= max_scans then
+            break
+        end
+
         if not entry.isDir then
             goto continue
         end
@@ -249,7 +275,7 @@ function M.scan_all()
         local proj_dir = base_dir .. "/" .. entry.name
         local dir_fallback = _project_name_from_dir(entry.name)
 
-        -- Load index supplements
+        -- Load index supplements (always fresh)
         local index_lookup = _load_index_supplements(proj_dir)
 
         -- Scan all JSONL files
@@ -257,20 +283,43 @@ function M.scan_all()
         if not files then
             goto continue
         end
-        lingxi.log.write("[cc-sessions] scan_all: proj_dir=" .. proj_dir .. ", files count=" .. #files)
 
         for _, file in ipairs(files) do
+            -- TEST: Limit scan count
+            if scanned_count >= max_scans then
+                break
+            end
+
             if not file.name:match("%.jsonl$") then
                 goto next_file
             end
 
             local jsonl_path = proj_dir .. "/" .. file.name
-            local session = _scan_session_jsonl(jsonl_path, dir_fallback)
+            live_paths[jsonl_path] = true
+            scanned_count = scanned_count + 1
+
+            local mtime = cache.get_mtime(jsonl_path)
+            local session = nil
+
+            -- Try cache first
+            if mtime then
+                session = cache.get(disk_cache, jsonl_path, mtime)
+            end
+
+            -- Cache miss or no mtime: parse fresh
+            if not session then
+                session = _scan_session_jsonl(jsonl_path, dir_fallback)
+                if session and mtime then
+                    -- Cache the raw session (before index supplements)
+                    cache.put(new_cache, jsonl_path, mtime, session)
+                end
+            end
+
             if not session then
                 goto next_file
             end
 
-            -- Merge index supplements
+            -- Apply index supplements (always fresh, even on cache hit)
             if index_lookup and index_lookup[session.session_id] then
                 local supplement = index_lookup[session.session_id]
                 local new_summary = supplement.summary or ""
@@ -297,12 +346,24 @@ function M.scan_all()
         ::continue::
     end
 
+    -- 4. Prune deleted files from cache
+    cache.prune(new_cache, live_paths)
+
+    -- 5. Save disk cache
+    cache.save_disk_cache(new_cache)
+
+    -- 6. Set memory cache
+    cache.set_memory_cache(sessions)
+
+    -- 7. Release lock
+    cache.set_scanning(false)
+
     -- Sort by modified descending
     table.sort(sessions, function(a, b)
         return (a.modified or "") > (b.modified or "")
     end)
 
-    lingxi.log.write("[cc-sessions] scan_all: returning " .. #sessions .. " sessions")
+    lingxi.log.write("[cc-sessions] scan_all: returning " .. #sessions .. " sessions (scan complete)")
     return sessions
 end
 

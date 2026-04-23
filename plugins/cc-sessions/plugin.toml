@@ -29,7 +29,7 @@ timeout = 10000
 [permissions]
 clipboard = true
 filesystem = ["~/.claude", "~/.claude/projects"]
-shell = ["git"]
+shell = ["git", "stat"]
 store = true
 webview = true
 

@@ -201,10 +201,8 @@ end
 -- ============================================================================
 
 function search(query)
-    lingxi.log.write("[cc-sessions] search called with query: '" .. tostring(query) .. "'")
     query = query or ""
     query = query:gsub("^%s*cc%s*", ""):gsub("^%s*", "")
-    lingxi.log.write("[cc-sessions] parsed query: '" .. tostring(query) .. "'")
 
     -- Group selection mode: query starts with @ and no space after @ content
     if query:find("^@") then
@@ -259,18 +257,14 @@ function search(query)
     end
 
     local project_filter, text_query = _parse_query(query)
-    lingxi.log.write("[cc-sessions] search: project_filter=" .. tostring(project_filter) .. ", text_query=" .. tostring(text_query))
     local sessions = scanner.scan_all()
-    lingxi.log.write("[cc-sessions] search: got " .. #sessions .. " sessions")
     local filtered = _filter_sessions(sessions, project_filter, text_query)
-    lingxi.log.write("[cc-sessions] search: filtered to " .. #filtered .. " sessions")
 
     local items = {}
     for i = 1, math.min(#filtered, 50) do
         table.insert(items, _build_result_item(filtered[i]))
     end
 
-    lingxi.log.write("[cc-sessions] search: returning " .. #items .. " items")
     return items
 end
 
@@ -291,7 +285,8 @@ end
 -- ============================================================================
 
 function cmd_clear_cache(args)
-    -- TODO: Implement cache clearing (Phase 4)
+    local cache = require("cache")
+    cache.clear()
     lingxi.alert.show("Cache cleared!", 2.0)
     return { { title = "Cache cleared", subtitle = "Session scan cache has been cleared" } }
 end
