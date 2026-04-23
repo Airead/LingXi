@@ -1,0 +1,32 @@
+[plugin]
+id = "io.github.airead.lingxi.api-test-cache"
+name = "API Test: Cache & File Stat"
+version = "1.0.0"
+author = "LingXi Team"
+description = "Test plugin for lingxi.cache and lingxi.file.stat APIs"
+min_lingxi_version = "1.1.0"
+
+files = ["init.lua"]
+
+[search]
+prefix = "test-api"
+debounce = 50
+timeout = 5000
+
+[permissions]
+clipboard = true
+filesystem = ["/tmp"]
+store = true
+cache = true
+
+[[commands]]
+name = "test-api:run-all"
+title = "Run All Cache/Stat Tests"
+subtitle = "Execute comprehensive API test suite"
+action = "cmd_run_all"
+
+[[commands]]
+name = "test-api:clear-results"
+title = "Clear Test Results"
+subtitle = "Reset all stored test results"
+action = "cmd_clear_results"
