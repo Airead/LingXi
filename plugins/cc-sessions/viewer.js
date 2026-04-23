@@ -160,6 +160,21 @@ function renderSession(info, messages) {
 // ── Render conversation ──
 let _lastRenderedTime = "";
 
+function buildToolResultMap(messages) {
+  const map = {};
+  for (const msg of messages) {
+    if (msg.type !== "user") continue;
+    const content = msg.message?.content || msg.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool_result" && part.tool_use_id) {
+        map[part.tool_use_id] = part;
+      }
+    }
+  }
+  return map;
+}
+
 function renderConversation(messages) {
   const conv = document.getElementById("conversation");
   conv.innerHTML = "";
@@ -172,34 +187,58 @@ function renderConversation(messages) {
   const validTypes = new Set(["user", "assistant"]);
   const turns = messages.filter(m => validTypes.has(m.type));
 
-  // Build tool result map for resolving tool outputs
-  const resultMap = {};
-  for (const msg of turns) {
-    if (msg.type !== "user") continue;
-    const content = msg.message?.content || msg.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (part.type === "tool_result" && part.tool_use_id) {
-        resultMap[part.tool_use_id] = part;
-      }
-    }
-  }
+  const resultMap = buildToolResultMap(turns);
 
-  for (let i = 0; i < turns.length; i++) {
+  let i = 0;
+  while (i < turns.length) {
     const msg = turns[i];
 
     if (msg.type === "user") {
-      // Skip pure tool_result messages
-      if (_isToolResultOnly(msg)) continue;
+      if (_isToolResultOnly(msg)) {
+        i++;
+        continue;
+      }
       renderUserTurn(conv, msg);
+      i++;
     } else if (msg.type === "assistant") {
-      renderAssistantTurn(conv, msg, resultMap);
+      // Merge consecutive assistant messages into one turn
+      const turnEl = document.createElement("div");
+      turnEl.className = "turn";
+
+      const firstTime = formatTime(msg.timestamp);
+      const showTime = firstTime !== _lastRenderedTime;
+      if (showTime) _lastRenderedTime = firstTime;
+
+      const header = document.createElement("div");
+      header.className = "turn-header";
+      header.innerHTML = `
+        <span class="badge badge-assistant">Claude</span>
+        ${showTime ? `<span class="timestamp">${escapeHtml(firstTime)}</span>` : ""}
+      `;
+      turnEl.appendChild(header);
+
+      const assistantTexts = [];
+
+      // Collect consecutive assistant messages (and tool_result-only user msgs in between)
+      while (i < turns.length && (turns[i].type === "assistant" || (turns[i].type === "user" && _isToolResultOnly(turns[i])))) {
+        if (turns[i].type === "assistant") {
+          renderAssistantContent(turnEl, turns[i], assistantTexts, resultMap);
+        }
+        i++;
+      }
+
+      conv.appendChild(turnEl);
+
+      const combinedText = assistantTexts.join(" ").trim();
+      if (combinedText) {
+        addOutlineItem(combinedText, turnEl, "assistant");
+      }
+    } else {
+      i++;
     }
   }
 
   setupOutlineObserver();
-
-  // Auto-scroll to bottom
   conv.scrollTop = conv.scrollHeight;
 }
 
@@ -243,25 +282,9 @@ function renderUserTurn(conv, msg) {
   addOutlineItem(text, turnEl, "user");
 }
 
-// ── Assistant turn ──
-function renderAssistantTurn(conv, msg, resultMap) {
-  const time = formatTime(msg.timestamp);
-  const showTime = time !== _lastRenderedTime;
-  if (showTime) _lastRenderedTime = time;
-
-  const turnEl = document.createElement("div");
-  turnEl.className = "turn";
-
-  const header = document.createElement("div");
-  header.className = "turn-header";
-  header.innerHTML = `
-    <span class="badge badge-assistant">Claude</span>
-    ${showTime ? `<span class="timestamp">${escapeHtml(time)}</span>` : ""}
-  `;
-  turnEl.appendChild(header);
-
+// ── Assistant content (renders into an existing turnEl) ──
+function renderAssistantContent(turnEl, msg, textCollector, resultMap) {
   const content = msg.message?.content || msg.content;
-  const texts = [];
 
   if (Array.isArray(content)) {
     for (const part of content) {
@@ -270,7 +293,7 @@ function renderAssistantTurn(conv, msg, resultMap) {
         textEl.className = "assistant-text";
         textEl.innerHTML = renderMarkdown(part.text);
         turnEl.appendChild(textEl);
-        texts.push(part.text.trim());
+        textCollector.push(part.text.trim());
       } else if (part.type === "thinking" && part.thinking) {
         turnEl.appendChild(createThinkingBlock(part.thinking));
       } else if (part.type === "tool_use") {
@@ -283,14 +306,7 @@ function renderAssistantTurn(conv, msg, resultMap) {
     textEl.className = "assistant-text";
     textEl.innerHTML = renderMarkdown(content);
     turnEl.appendChild(textEl);
-    texts.push(content.trim());
-  }
-
-  conv.appendChild(turnEl);
-
-  const combinedText = texts.join(" ").trim();
-  if (combinedText) {
-    addOutlineItem(combinedText, turnEl, "assistant");
+    textCollector.push(content.trim());
   }
 }
 
