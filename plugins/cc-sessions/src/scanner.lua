@@ -235,7 +235,7 @@ end
 
 -- Scan all sessions with incremental caching
 function M.scan_all()
-    -- 1. Memory cache hit with TTL (30 seconds)
+    -- 1. Memory cache hit with TTL (60 seconds)
     local mem = cache.get_memory_cache()
     if mem then
         lingxi.log.write("[cc-sessions] scan_all: returning " .. #mem .. " sessions from TTL memory cache")
@@ -251,9 +251,8 @@ function M.scan_all()
     cache.set_scanning(true)
     lingxi.log.write("[cc-sessions] scan_all: starting incremental scan")
 
-    -- 3. Load disk cache
+    -- 3. Load disk cache (incremental: modify in-place)
     local disk_cache = cache.load_disk_cache()
-    local new_cache = {}
     local sessions = {}
     local seen_ids = {}
     local live_paths = {}
@@ -299,17 +298,16 @@ function M.scan_all()
             local mtime = cache.get_mtime(jsonl_path)
             local session = nil
 
-            -- Try cache first
+            -- Try disk cache first (incremental: modify disk_cache in-place)
             if mtime then
                 session = cache.get(disk_cache, jsonl_path, mtime)
             end
 
-            -- Cache miss or no mtime: parse fresh
+            -- Cache miss or no mtime: parse fresh and update disk_cache
             if not session then
                 session = _scan_session_jsonl(jsonl_path, dir_fallback)
                 if session and mtime then
-                    -- Cache the raw session (before index supplements)
-                    cache.put(new_cache, jsonl_path, mtime, session)
+                    cache.put(disk_cache, jsonl_path, mtime, session)
                 end
             end
 
@@ -344,11 +342,11 @@ function M.scan_all()
         ::continue::
     end
 
-    -- 4. Prune deleted files from cache
-    cache.prune(new_cache, live_paths)
+    -- 4. Prune deleted files from disk_cache (incremental)
+    cache.prune(disk_cache, live_paths)
 
     -- 5. Save disk cache (only if dirty)
-    cache.save_disk_cache(new_cache)
+    cache.save_disk_cache()
 
     -- 6. Set memory cache with TTL
     cache.set_memory_cache(sessions)

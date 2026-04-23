@@ -17,7 +17,7 @@ local CACHE_VERSION = 2
 local _sessions = nil
 local _scanning = false
 local _scan_all_cached_at = 0
-local _SCAN_ALL_TTL = 30.0 -- 30 seconds
+local _SCAN_ALL_TTL = 60.0 -- 60 seconds
 
 function M.get_memory_cache()
     local now = os.time()
@@ -129,7 +129,7 @@ function M.save_disk_cache(sessions_map)
     
     local data = {
         version = CACHE_VERSION,
-        sessions = sessions_map or {}
+        sessions = sessions_map or _disk_cache or {}
     }
     
     local ok, encoded = pcall(function()
