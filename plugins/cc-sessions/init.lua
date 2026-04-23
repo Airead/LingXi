@@ -115,6 +115,116 @@ local function _filter_sessions(sessions, project_filter, query)
 end
 
 -- ============================================================================
+-- Subagent Helpers
+-- ============================================================================
+
+-- Extract model from subagent session JSONL (first assistant message)
+local function _extract_subagent_model(jsonl_path)
+    local content = lingxi.file.read(jsonl_path)
+    if not content then
+        return ""
+    end
+
+    for line in content:gmatch("[^\r\n]+") do
+        local trimmed = line:match("^%s*(.-)%s*$")
+        if trimmed ~= "" then
+            local ok, obj = pcall(function()
+                return lingxi.json.parse(trimmed)
+            end)
+            if ok and type(obj) == "table" then
+                if obj.type == "assistant" then
+                    local model = obj.message and obj.message.model
+                    if model and model ~= "" then
+                        return model
+                    end
+                end
+            end
+        end
+    end
+
+    return ""
+end
+
+local function _list_subagents(file_path)
+    if not file_path or file_path == "" then
+        return {}
+    end
+
+    local session_dir = file_path:match("^(.*)%.jsonl$")
+    if not session_dir then
+        return {}
+    end
+
+    local subagents_dir = session_dir .. "/subagents"
+    local exists = lingxi.file.exists(subagents_dir)
+    if not exists then
+        return {}
+    end
+
+    local entries = lingxi.file.list(subagents_dir)
+    if not entries then
+        return {}
+    end
+
+    local subagents = {}
+    for _, entry in ipairs(entries) do
+        if entry.name:match("^agent%-.+%.jsonl$") then
+            local agent_id = entry.name:match("^agent%-(.+)%.jsonl$")
+            local meta_path = subagents_dir .. "/agent-" .. agent_id .. ".meta.json"
+            local meta = { agentType = "", description = "" }
+
+            local meta_exists = lingxi.file.exists(meta_path)
+            if meta_exists then
+                local meta_content = lingxi.file.read(meta_path)
+                if meta_content then
+                    local ok, meta_obj = pcall(function()
+                        return lingxi.json.parse(meta_content)
+                    end)
+                    if ok and type(meta_obj) == "table" then
+                        meta.agentType = meta_obj.agentType or ""
+                        meta.description = meta_obj.description or ""
+                    end
+                end
+            end
+
+            -- Extract model from subagent session
+            local subagent_path = subagents_dir .. "/" .. entry.name
+            local model = _extract_subagent_model(subagent_path)
+
+            table.insert(subagents, {
+                agent_id = agent_id,
+                agent_type = meta.agentType,
+                description = meta.description,
+                file_path = subagent_path,
+                model = model,
+            })
+        end
+    end
+
+    return subagents
+end
+
+local function _is_subagent(file_path)
+    if not file_path then
+        return false
+    end
+    return file_path:find("/subagents/agent%-") ~= nil
+end
+
+local function _find_parent_session(file_path)
+    if not _is_subagent(file_path) then
+        return nil
+    end
+
+    local parent_dir = file_path:match("^(.*)/subagents/")
+    if not parent_dir then
+        return nil
+    end
+
+    return parent_dir .. ".jsonl"
+end
+
+-- ============================================================================
 -- WebView State
 -- ============================================================================
 
@@ -153,6 +263,16 @@ lingxi.webview.on_message(function(raw)
             end
         end
 
+        -- Check if this is a subagent and find parent
+        local is_subagent = _is_subagent(_current_session.file_path)
+        local parent_file_path = nil
+        if is_subagent then
+            parent_file_path = _find_parent_session(_current_session.file_path)
+        end
+
+        -- List subagents
+        local subagents = _list_subagents(_current_session.file_path)
+
         -- Send structured data to JS
         local payload = {
             action = "session_data",
@@ -163,8 +283,11 @@ lingxi.webview.on_message(function(raw)
                 version = _current_session.version or "",
                 cwd = _current_session.cwd or "",
                 session_id = _current_session.session_id or "",
+                is_subagent = is_subagent,
+                parent_file_path = parent_file_path,
             },
             messages = messages,
+            subagents = subagents,
         }
 
         lingxi.webview.send(lingxi.json.encode(payload))
@@ -176,6 +299,62 @@ lingxi.webview.on_message(function(raw)
 
     elseif data.action == "close" then
         lingxi.webview.close()
+
+    elseif data.action == "open_subagent" then
+        if data.file_path and data.file_path ~= "" then
+            local meta = reader.read_metadata(data.file_path)
+            if meta then
+                local session_id = data.file_path:match("([^/]+)%.jsonl$") or ""
+                local project = ""
+                if _current_session then
+                    project = _current_session.project
+                end
+
+                local session = {
+                    file_path = data.file_path,
+                    title = meta.summary ~= "" and meta.summary or meta.custom_title ~= "" and meta.custom_title or "Subagent Session",
+                    project = project,
+                    git_branch = meta.git_branch or "",
+                    version = meta.version or "",
+                    cwd = meta.cwd or "",
+                    session_id = session_id,
+                }
+                _current_session = session
+                lingxi.webview.open("viewer.html", {
+                    title = session.title,
+                    width = 900,
+                    height = 700
+                })
+            end
+        end
+
+    elseif data.action == "open_parent" then
+        if data.file_path and data.file_path ~= "" then
+            local meta = reader.read_metadata(data.file_path)
+            if meta then
+                local session_id = data.file_path:match("([^/]+)%.jsonl$") or ""
+                local project = ""
+                if _current_session then
+                    project = _current_session.project
+                end
+
+                local session = {
+                    file_path = data.file_path,
+                    title = meta.summary ~= "" and meta.summary or meta.custom_title ~= "" and meta.custom_title or "Parent Session",
+                    project = project,
+                    git_branch = meta.git_branch or "",
+                    version = meta.version or "",
+                    cwd = meta.cwd or "",
+                    session_id = session_id,
+                }
+                _current_session = session
+                lingxi.webview.open("viewer.html", {
+                    title = session.title,
+                    width = 900,
+                    height = 700
+                })
+            end
+        end
     end
 end)
 

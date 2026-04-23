@@ -208,6 +208,7 @@ function extractAssistantText(content) {
 
 // ── State ──
 let sessionInfo = null;
+let subagentList = [];
 const outlineItems = [];
 let activeOutlineIdx = -1;
 
@@ -223,6 +224,7 @@ window.onLingXiMessage = function(raw) {
 
   if (data.action === "session_data") {
     sessionInfo = data.info || {};
+    subagentList = data.subagents || [];
     renderSession(data.info, data.messages || []);
   }
 };
@@ -234,13 +236,93 @@ function renderSession(info, messages) {
     document.getElementById("titlebar-title").textContent = t;
   }
 
+  // Collect metadata from messages
+  let userCount = 0, assistantCount = 0;
+  const models = new Set();
+  let firstTime = null, lastTime = null;
+  for (const msg of messages) {
+    if (msg.type === "user") userCount++;
+    else if (msg.type === "assistant") {
+      assistantCount++;
+      const model = msg.message?.model || msg.model;
+      if (model) models.add(model);
+    }
+    const ts = msg.timestamp;
+    if (ts) {
+      const d = new Date(ts);
+      if (!isNaN(d.getTime())) {
+        if (!firstTime || d < firstTime) firstTime = d;
+        if (!lastTime || d > lastTime) lastTime = d;
+      }
+    }
+  }
+
   // Update info bar
-  if (info.project) document.getElementById("info-project").textContent = info.project;
-  if (info.git_branch) document.getElementById("info-branch").textContent = info.git_branch;
-  if (info.version) document.getElementById("info-version").textContent = info.version;
+  const infoBar = document.getElementById("info-bar");
+  infoBar.innerHTML = "";
+
+  const parts = [];
+
+  // Project
+  parts.push(`<span class="label">Project:</span><span class="value">${escapeHtml(info.project || "—")}</span>`);
+  // Branch
+  if (info.git_branch) {
+    parts.push(`<span class="label">Branch:</span><span class="value">${escapeHtml(info.git_branch)}</span>`);
+  }
+  // Version
+  if (info.version) {
+    parts.push(`<span class="label">Version:</span><span class="value">${escapeHtml(info.version)}</span>`);
+  }
+  // Model
+  if (models.size > 0) {
+    const modelStr = Array.from(models).join(", ");
+    parts.push(`<span class="label">Model:</span><span class="value">${escapeHtml(truncate(modelStr, 40))}</span>`);
+  }
+  // Messages
+  const total = userCount + assistantCount;
+  if (total > 0) {
+    parts.push(`<span class="label">Msgs:</span><span class="value">${total}</span>`);
+  }
+  // Time range
+  if (firstTime && lastTime) {
+    const fmt = (d) => d.toLocaleDateString() + " " + d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+    parts.push(`<span class="label">Time:</span><span class="value">${fmt(firstTime)} – ${fmt(lastTime)}</span>`);
+  }
+  // Session ID
+  if (info.session_id) {
+    parts.push(`<span class="label">ID:</span><span class="value" title="${escapeHtml(info.session_id)}">${escapeHtml(info.session_id.slice(0, 8))}…</span>`);
+  }
+
+  infoBar.innerHTML = parts.join(`<span class="sep">|</span>`);
+
+  // Parent session link (for subagents)
+  if (info.is_subagent && info.parent_file_path) {
+    const parentLink = document.createElement("a");
+    parentLink.className = "parent-link";
+    parentLink.href = "#";
+    parentLink.textContent = "← Parent Session";
+    parentLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      openParentSession(info.parent_file_path);
+    });
+    infoBar.appendChild(document.createTextNode(" "));
+    infoBar.appendChild(parentLink);
+  }
 
   renderConversation(messages);
   renderStats(messages);
+}
+
+function openSubagentSession(filePath) {
+  if (typeof window.lingxi !== "undefined") {
+    window.lingxi.postMessage({ action: "open_subagent", file_path: filePath });
+  }
+}
+
+function openParentSession(filePath) {
+  if (typeof window.lingxi !== "undefined") {
+    window.lingxi.postMessage({ action: "open_parent", file_path: filePath });
+  }
 }
 
 // ── Stats Dashboard ──
@@ -284,15 +366,40 @@ function renderStats(messages) {
 
   toggle.style.display = "";
 
-  // Summary line
+  // Summary line — richer stats
   const parts = [`${totalTurns} turns`];
   if (toolCount > 0) parts.push(`${toolCount} tools`);
+
+  // Token breakdown
   if (inputTokens > 0 || outputTokens > 0) {
-    parts.push(`${(inputTokens + outputTokens).toLocaleString()} tokens`);
+    const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "K" : n.toString();
+    const tokenParts = [];
+    if (inputTokens > 0) tokenParts.push(`${fmt(inputTokens)} in`);
+    if (outputTokens > 0) tokenParts.push(`${fmt(outputTokens)} out`);
+    parts.push(tokenParts.join(" / "));
   }
+
+  // Subagents count
+  if (subagentList.length > 0) {
+    parts.push(`${subagentList.length} subagent${subagentList.length > 1 ? "s" : ""}`);
+  }
+
+  // Models used
+  const models = new Set();
+  for (const msg of messages) {
+    if (msg.type === "assistant") {
+      const model = msg.message?.model || msg.model;
+      if (model) models.add(model);
+    }
+  }
+  if (models.size > 0) {
+    const modelStr = Array.from(models).join(", ");
+    parts.push(truncate(modelStr, 30));
+  }
+
   summary.textContent = parts.join(" · ");
 
-  // Build panel content
+  // Build panel content — all cards in a unified 2-column grid
   let html = '<div class="stats-grid">';
 
   // Messages card
@@ -303,17 +410,13 @@ function renderStats(messages) {
   html += '</div>';
 
   // Tokens card
-  if (inputTokens > 0 || outputTokens > 0) {
-    html += '<div class="stats-card"><h4>Tokens</h4>';
-    html += `<div class="stats-row"><span>Input</span><span class="val">${inputTokens.toLocaleString()}</span></div>`;
-    html += `<div class="stats-row"><span>Output</span><span class="val">${outputTokens.toLocaleString()}</span></div>`;
-    html += `<div class="stats-row"><span>Total</span><span class="val">${(inputTokens + outputTokens).toLocaleString()}</span></div>`;
-    html += '</div>';
-  }
+  html += '<div class="stats-card"><h4>Tokens</h4>';
+  html += `<div class="stats-row"><span>Input</span><span class="val">${inputTokens.toLocaleString()}</span></div>`;
+  html += `<div class="stats-row"><span>Output</span><span class="val">${outputTokens.toLocaleString()}</span></div>`;
+  html += `<div class="stats-row"><span>Total</span><span class="val">${(inputTokens + outputTokens).toLocaleString()}</span></div>`;
+  html += '</div>';
 
-  html += '</div>'; // end stats-grid
-
-  // Tools section
+  // Tool Usage card
   const toolNames = Object.keys(toolUsage).sort((a, b) => toolUsage[b] - toolUsage[a]);
   if (toolNames.length > 0) {
     const maxCount = toolUsage[toolNames[0]];
@@ -322,7 +425,7 @@ function renderStats(messages) {
       Edit: "#ef4444", Bash: "#10b981", Write: "#ec4899", Agent: "#9ca3af",
     };
 
-    html += '<div class="stats-card" style="margin-top:10px"><h4>Tool Usage</h4>';
+    html += '<div class="stats-card"><h4>Tool Usage</h4>';
     for (const name of toolNames) {
       const count = toolUsage[name];
       const pct = Math.round((count / maxCount) * 100);
@@ -336,7 +439,29 @@ function renderStats(messages) {
     html += '</div>';
   }
 
+  // Subagents card
+  if (subagentList.length > 0) {
+    html += '<div class="stats-card"><h4>Subagents</h4>';
+    for (const sa of subagentList) {
+      const modelLabel = sa.model ? `<span class="model">${escapeHtml(truncate(sa.model, 25))}</span>` : "";
+      html += `<div class="stats-list-item">`;
+      html += `<span class="name">${escapeHtml(sa.agent_type || "Agent")}</span>`;
+      html += `<div class="item-right">${modelLabel}<button class="stats-subagent-link" data-path="${escapeHtml(sa.file_path)}">View</button></div>`;
+      html += `</div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '</div>'; // end stats-grid
+
   panel.innerHTML = html;
+
+  // Wire up subagent links in stats panel
+  panel.querySelectorAll(".stats-subagent-link").forEach(btn => {
+    btn.addEventListener("click", () => {
+      openSubagentSession(btn.dataset.path);
+    });
+  });
 
   // Wire up toggle
   toggle.onclick = () => {
@@ -568,7 +693,25 @@ function buildBlocks(parts, globalResultMap) {
   return blocks;
 }
 
-// ── Tool block (simplified: no merging, no subagents) ──
+// ── Extract agentId from tool result text content ──
+function extractAgentId(result) {
+  if (!result) return null;
+  let text = "";
+  const c = result.content;
+  if (typeof c === "string") {
+    text = c;
+  } else if (Array.isArray(c)) {
+    for (const part of c) {
+      if (part && part.type === "text" && part.text) {
+        text += part.text;
+      }
+    }
+  }
+  const match = text.match(/agentId:\s*([a-f0-9]+)/);
+  return match ? match[1] : null;
+}
+
+// ── Tool block (with subagent support) ──
 function createToolSingle(call, result) {
   const meta = getToolMeta(call.name);
   const detail = toolDetail(call.name, call.input);
@@ -597,6 +740,29 @@ function createToolSingle(call, result) {
   }
   body.innerHTML = html;
   block.appendChild(body);
+
+  // Subagent link: if this is an Agent tool and we have a matching subagent
+  if (call.name === "Agent") {
+    const agentId = extractAgentId(result);
+    if (agentId) {
+      const matched = subagentList.find(sa => sa.agent_id === agentId);
+      if (matched) {
+        const subagentTag = document.createElement("div");
+        subagentTag.className = "subagent-tag";
+        const modelLabel = matched.model ? ` · ${escapeHtml(truncate(matched.model, 20))}` : "";
+        subagentTag.innerHTML = `
+          <span class="subagent-model">${escapeHtml(matched.agent_type || "Agent")}${modelLabel}</span>
+          <button class="subagent-link">View Session</button>
+        `;
+        const btn = subagentTag.querySelector(".subagent-link");
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openSubagentSession(matched.file_path);
+        });
+        block.insertBefore(subagentTag, body);
+      }
+    }
+  }
 
   headerEl.addEventListener("click", () => block.classList.toggle("expanded"));
   return block;

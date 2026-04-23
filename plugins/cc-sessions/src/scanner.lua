@@ -245,8 +245,8 @@ function M.scan_all()
     local seen_ids = {}
     local live_paths = {}
 
-    -- TEST: Limit to 3 sessions for testing
-    local max_scans = 3
+    -- TEST: Limit to 4 sessions for testing
+    local max_scans = 4
     local scanned_count = 0
 
     local base_dir = "~/.claude/projects"
@@ -354,6 +354,17 @@ function M.scan_all()
 
     -- 6. Set memory cache
     cache.set_memory_cache(sessions)
+
+    -- Hardcode TongYou session for testing subagent features
+    local tongyou_path = "~/.claude/projects/-Users-fanrenhao-work-TongYou/17184b7b-6f74-428e-ad5d-f1747227b6a5.jsonl"
+    local tongyou_id = "17184b7b-6f74-428e-ad5d-f1747227b6a5"
+    if not seen_ids[tongyou_id] then
+        local tongyou_session = _scan_session_jsonl(tongyou_path, "TongYou")
+        if tongyou_session then
+            seen_ids[tongyou_id] = true
+            table.insert(sessions, tongyou_session)
+        end
+    end
 
     -- 7. Release lock
     cache.set_scanning(false)
