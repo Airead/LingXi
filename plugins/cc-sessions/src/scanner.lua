@@ -172,6 +172,9 @@ local function _scan_session_jsonl(jsonl_path, project_name)
     -- Pre-read detail for preview (cached alongside session in disk cache)
     local detail = reader.read_detail(jsonl_path, 10)
 
+    -- Use filesystem mtime as modified time (reflects actual file change)
+    local fs_mtime = cache.get_mtime(jsonl_path)
+
     return _make_session(
         session_id,
         jsonl_path,
@@ -182,7 +185,7 @@ local function _scan_session_jsonl(jsonl_path, project_name)
             first_prompt = meta.first_user_message or "",
             git_branch = meta.git_branch,
             created = meta.first_timestamp or "",
-            modified = meta.last_timestamp or "",
+            modified = fs_mtime or meta.last_timestamp or "",
             message_count = meta.user_msg_count,
             version = meta.version,
             summary = meta.summary,
@@ -359,6 +362,10 @@ function M.scan_all()
                 end
             else
                 cache_hit = cache_hit + 1
+                -- Ensure session.modified reflects filesystem mtime (migrates old caches)
+                if session and mtime then
+                    session.modified = mtime
+                end
                 -- Log first 3 hits for comparison
                 if cache_hit <= 3 then
                     local entry_info = disk_cache[jsonl_path]
