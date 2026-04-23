@@ -114,6 +114,11 @@ local function _filter_sessions(sessions, project_filter, query)
         result = filtered
     end
 
+    -- Sort by modified time descending (most recent first)
+    table.sort(result, function(a, b)
+        return (a.modified or "") > (b.modified or "")
+    end)
+
     return result
 end
 
