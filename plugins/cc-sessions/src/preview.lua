@@ -31,33 +31,33 @@ local function _time_ago(iso_timestamp)
         return "just now"
     elseif seconds < 3600 then
         local minutes = math.floor(seconds / 60)
-        return minutes .. " min ago"
+        return minutes .. "m"
     elseif seconds < 86400 then
         local hours = math.floor(seconds / 3600)
-        return hours .. " hour" .. (hours ~= 1 and "s" or "") .. " ago"
+        return hours .. "h"
     elseif seconds < 2592000 then
         local days = math.floor(seconds / 86400)
-        return days .. " day" .. (days ~= 1 and "s" or "") .. " ago"
+        return days .. "d"
     else
         local months = math.floor(seconds / 2592000)
-        return months .. " month" .. (months ~= 1 and "s" or "") .. " ago"
+        return months .. "mo"
     end
 end
 
--- Format timestamp to readable date
-local function _format_timestamp(iso_timestamp)
+-- Format timestamp to readable date (compact)
+local function _format_timestamp_compact(iso_timestamp)
     if not iso_timestamp or iso_timestamp == "" then
         return ""
     end
-    local year, month, day, hour, min = iso_timestamp:match("^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d)")
-    if not year then
+    local month, day, hour, min = iso_timestamp:match("^%d%d%d%d%-(%d%d)%-(%d%d)T(%d%d):(%d%d)")
+    if not month then
         return ""
     end
-    return string.format("%s-%s-%s %s:%s", year, month, day, hour, min)
+    return string.format("%s-%s %s:%s", month, day, hour, min)
 end
 
--- Calculate duration between two timestamps
-local function _calculate_duration(created, modified)
+-- Calculate duration between two timestamps (compact)
+local function _calculate_duration_compact(created, modified)
     if not created or not modified or created == "" or modified == "" then
         return ""
     end
@@ -84,7 +84,7 @@ local function _calculate_duration(created, modified)
         local hours = math.floor(seconds / 3600)
         local mins = math.floor((seconds % 3600) / 60)
         if mins > 0 then
-            return hours .. "h " .. mins .. "m"
+            return hours .. "h" .. mins .. "m"
         else
             return hours .. "h"
         end
@@ -107,7 +107,7 @@ end
 function M.build(session)
     local detail = reader.read_detail(session.file_path, 10)
 
-    -- Build metadata pills
+    -- Build metadata pills (compact)
     local pills = {}
     table.insert(pills, '<span class="pill project">' .. _escape_html(session.project) .. '</span>')
     if session.git_branch and session.git_branch ~= "" then
@@ -123,17 +123,17 @@ function M.build(session)
         table.insert(pills, '<span class="pill tokens">' .. detail.total_input_tokens .. ' in / ' .. detail.total_output_tokens .. ' out</span>')
     end
 
-    -- Build time info
-    local time_items = {}
+    -- Build compact time info (single line)
+    local time_info = {}
     if session.created and session.created ~= "" then
-        table.insert(time_items, '<div class="time-item"><span class="time-label">Created:</span> <span class="time-value">' .. _format_timestamp(session.created) .. '</span></div>')
+        table.insert(time_info, 'Created: ' .. _format_timestamp_compact(session.created))
     end
     if session.modified and session.modified ~= "" then
-        table.insert(time_items, '<div class="time-item"><span class="time-label">Modified:</span> <span class="time-value">' .. _format_timestamp(session.modified) .. ' (' .. _time_ago(session.modified) .. ')</span></div>')
+        table.insert(time_info, 'Modified: ' .. _format_timestamp_compact(session.modified) .. ' (' .. _time_ago(session.modified) .. ')')
     end
-    local duration = _calculate_duration(session.created, session.modified)
+    local duration = _calculate_duration_compact(session.created, session.modified)
     if duration ~= "" then
-        table.insert(time_items, '<div class="time-item"><span class="time-label">Duration:</span> <span class="time-value">' .. duration .. '</span></div>')
+        table.insert(time_info, 'Duration: ' .. duration)
     end
 
     -- Build conversation turns
@@ -157,48 +157,50 @@ function M.build(session)
         table.insert(turns_html, '<div class="no-preview">No preview available</div>')
     end
 
-    -- Build full HTML
+    -- Build full HTML (high density layout)
     local html_parts = {
         '<!DOCTYPE html>',
         '<html>',
         '<head>',
         '<meta charset="UTF-8">',
         '<style>',
-        'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 16px; background: #f5f5f5; color: #333; }',
-        '.container { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }',
-        '.title { font-size: 18px; font-weight: 600; margin-bottom: 12px; color: #1a1a1a; }',
-        '.pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }',
-        '.pill { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }',
+        'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background: white; color: #333; font-size: 13px; line-height: 1.4; }',
+        '.container { background: white; padding: 4px; }',
+        '.title { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: #1a1a1a; line-height: 1.3; }',
+        '.pills { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }',
+        '.pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }',
         '.pill.project { background: #e3f2fd; color: #1565c0; }',
         '.pill.branch { background: #f3e5f5; color: #6a1b9a; }',
         '.pill.version { background: #e8f5e9; color: #2e7d32; }',
         '.pill.messages { background: #fff3e0; color: #ef6c00; }',
         '.pill.tokens { background: #fce4ec; color: #c2185b; }',
-        '.time-section { margin-bottom: 16px; padding: 12px; background: #fafafa; border-radius: 6px; }',
-        '.time-item { font-size: 13px; color: #666; margin-bottom: 4px; }',
-        '.time-label { color: #999; }',
-        '.time-value { color: #555; }',
-        '.turns-header { font-size: 14px; font-weight: 600; color: #555; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }',
-        '.turn { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; font-size: 13px; }',
-        '.turn.user { background: #e3f2fd; border-left: 3px solid #2196f3; }',
-        '.turn.assistant { background: #f5f5f5; border-left: 3px solid #9e9e9e; }',
-        '.turn-role { font-size: 11px; font-weight: 600; text-transform: uppercase; margin-bottom: 4px; color: #666; }',
+        '.time-line { font-size: 11px; color: #888; margin-bottom: 10px; }',
+        '.turns-header { font-size: 12px; font-weight: 600; color: #666; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #eee; }',
+        '.turn { margin-bottom: 8px; padding: 8px 10px; border-radius: 4px; font-size: 12px; }',
+        '.turn.user { background: #f0f7ff; border-left: 2px solid #2196f3; }',
+        '.turn.assistant { background: #f8f8f8; border-left: 2px solid #9e9e9e; }',
+        '.turn-role { font-size: 10px; font-weight: 600; text-transform: uppercase; margin-bottom: 2px; color: #888; }',
         '.turn.user .turn-role { color: #1976d2; }',
-        '.turn.assistant .turn-role { color: #616161; }',
-        '.turn-text { line-height: 1.5; color: #333; }',
-        '.no-preview { color: #999; font-style: italic; padding: 20px; text-align: center; }',
+        '.turn.assistant .turn-role { color: #666; }',
+        '.turn-text { line-height: 1.4; color: #333; }',
+        '.no-preview { color: #999; font-style: italic; padding: 16px; text-align: center; font-size: 12px; }',
         '</style>',
         '</head>',
         '<body>',
         '<div class="container">',
         '<div class="title">' .. _escape_html(session.title) .. '</div>',
         '<div class="pills">' .. table.concat(pills, " ") .. '</div>',
-        '<div class="time-section">' .. table.concat(time_items, "") .. '</div>',
-        table.concat(turns_html, ""),
-        '</div>',
-        '</body>',
-        '</html>',
     }
+
+    -- Add time line if we have time info
+    if #time_info > 0 then
+        table.insert(html_parts, '<div class="time-line">' .. table.concat(time_info, " · ") .. '</div>')
+    end
+
+    table.insert(html_parts, table.concat(turns_html, ""))
+    table.insert(html_parts, '</div>')
+    table.insert(html_parts, '</body>')
+    table.insert(html_parts, '</html>')
 
     return table.concat(html_parts, "\n")
 end

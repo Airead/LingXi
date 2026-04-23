@@ -2,6 +2,7 @@ import AppKit
 
 nonisolated enum PreviewData: Sendable {
     case text(String)
+    case html(String)
     case image(path: URL, description: String)
 }
 

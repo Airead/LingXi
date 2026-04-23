@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import WebKit
 
 private enum PanelLayout {
     static let defaultWidth: CGFloat = 680
@@ -372,6 +373,9 @@ private struct PreviewPane: View {
         case .text(let content):
             NativeTextPreview(text: content)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .html(let content):
+            HTMLPreview(htmlContent: content)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let path, let description):
             VStack(spacing: 12) {
                 CachedImageView(url: path, maxPixelSize: 512) {
@@ -418,6 +422,21 @@ private struct NativeTextPreview: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         textView.string = text
+    }
+}
+
+/// A WKWebView wrapped for SwiftUI, used for HTML preview rendering.
+private struct HTMLPreview: NSViewRepresentable {
+    let htmlContent: String
+
+    func makeNSView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        webView.setValue(false, forKey: "drawsBackground")
+        return webView
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        webView.loadHTMLString(htmlContent, baseURL: nil)
     }
 }
 

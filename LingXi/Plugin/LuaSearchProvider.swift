@@ -211,8 +211,7 @@ actor LuaSearchProvider: SearchProvider {
             if previewType == "text" {
                 result.previewData = .text(previewContent)
             } else if previewType == "html" {
-                // HTML preview not yet supported, fall back to text
-                result.previewData = .text(previewContent)
+                result.previewData = .html(previewContent)
             }
         }
 

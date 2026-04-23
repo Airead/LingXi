@@ -481,7 +481,7 @@ struct LuaSearchProviderTests {
         #expect(results[0].previewData == nil)
     }
 
-    @Test func htmlPreviewFallsBackToText() async throws {
+    @Test func htmlPreviewReturnsHtmlData() async throws {
         let (provider, cleanup) = try makeTempPlugin(luaCode: """
             function search(query)
                 return {
@@ -498,11 +498,11 @@ struct LuaSearchProviderTests {
 
         let results = await provider.search(query: "test")
         #expect(results.count == 1)
-        // HTML preview should fall back to text for now
-        if case .text(let content) = results[0].previewData {
+        // HTML preview should return html data
+        if case .html(let content) = results[0].previewData {
             #expect(content == "<h1>HTML Preview</h1>")
         } else {
-            Issue.record("Expected text preview data for HTML fallback")
+            Issue.record("Expected html preview data")
         }
     }
 
