@@ -8,12 +8,11 @@ min_lingxi_version = "1.1.0"
 
 files = [
     "init.lua",
-    "scanner.lua",
-    "reader.lua",
-    "preview.lua",
-    "cache.lua",
-    "identicon.lua",
-    "git_utils.lua",
+    "src/scanner.lua",
+    "src/reader.lua",
+    "src/cache.lua",
+    "src/preview.lua",
+    "src/identicon.lua",
     "viewer.html",
     "viewer.js",
     "vendor/marked.min.js",

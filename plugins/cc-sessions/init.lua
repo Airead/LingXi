@@ -3,6 +3,7 @@
 
 local scanner = require("src.scanner")
 local reader = require("src.reader")
+local preview = require("src.preview")
 
 -- ============================================================================
 -- Query Parsing
@@ -114,52 +115,69 @@ local function _filter_sessions(sessions, project_filter, query)
 end
 
 -- ============================================================================
--- Preview Building
+-- WebView State
 -- ============================================================================
 
-local function _build_preview(session)
-    local lines = {
-        "Session: " .. session.title,
-        "",
-        "Project: " .. session.project,
-    }
+local _current_session = nil
 
-    if session.git_branch and session.git_branch ~= "" then
-        table.insert(lines, "Branch:  " .. session.git_branch)
+-- Register WebView message handler
+lingxi.webview.on_message(function(raw)
+    local ok, data = pcall(function()
+        return lingxi.json.parse(raw)
+    end)
+    if not ok or type(data) ~= "table" then
+        return
     end
 
-    if session.message_count and session.message_count > 0 then
-        table.insert(lines, "Messages: " .. session.message_count)
-    end
+    if data.action == "init" then
+        if not _current_session then
+            return
+        end
 
-    table.insert(lines, "")
+        local content = lingxi.file.read(_current_session.file_path)
+        if not content then
+            return
+        end
 
-    -- Read detail for recent turns
-    local detail = reader.read_detail(session.file_path, 5)
-    if detail and #detail.turns > 0 then
-        table.insert(lines, "Recent conversation:")
-        table.insert(lines, "")
-        for _, turn in ipairs(detail.turns) do
-            local prefix = turn.role == "user" and "You: " or "AI:  "
-            local text = turn.text
-            if #text > 120 then
-                text = text:sub(1, 117) .. "..."
+        -- Parse JSONL into structured messages
+        local messages = {}
+        for line in content:gmatch("[^\r\n]+") do
+            local trimmed = line:match("^%s*(.-)%s*$")
+            if trimmed ~= "" then
+                local parse_ok, obj = pcall(function()
+                    return lingxi.json.parse(trimmed)
+                end)
+                if parse_ok and type(obj) == "table" then
+                    table.insert(messages, obj)
+                end
             end
-            -- Escape newlines
-            text = text:gsub("\n", " ")
-            table.insert(lines, prefix .. text)
         end
 
-        if detail.total_input_tokens > 0 or detail.total_output_tokens > 0 then
-            table.insert(lines, "")
-            table.insert(lines, "Tokens: " .. detail.total_input_tokens .. " in / " .. detail.total_output_tokens .. " out")
+        -- Send structured data to JS
+        local payload = {
+            action = "session_data",
+            info = {
+                title = _current_session.title,
+                project = _current_session.project,
+                git_branch = _current_session.git_branch or "",
+                version = _current_session.version or "",
+                cwd = _current_session.cwd or "",
+                session_id = _current_session.session_id or "",
+            },
+            messages = messages,
+        }
+
+        lingxi.webview.send(lingxi.json.encode(payload))
+
+    elseif data.action == "copy" then
+        if data.text and data.text ~= "" then
+            lingxi.clipboard.write(data.text)
         end
-    else
-        table.insert(lines, "No preview available")
+
+    elseif data.action == "close" then
+        lingxi.webview.close()
     end
-
-    return table.concat(lines, "\n")
-end
+end)
 
 -- ============================================================================
 -- Result Building
@@ -183,10 +201,14 @@ local function _build_result_item(session)
         subtitle = table.concat(subtitle_parts, " · "),
         item_id = item_id,
         preview_type = "text",
-        preview = _build_preview(session),
+        preview = preview.build(session),
         action = function()
-            -- TODO: Open WebView viewer (Phase 3)
-            lingxi.alert.show("Viewer coming in Phase 3!", 2.0)
+            _current_session = session
+            lingxi.webview.open("viewer.html", {
+                title = session.title,
+                width = 900,
+                height = 700
+            })
         end,
         cmd_action = function()
             lingxi.clipboard.write(session.file_path)
