@@ -101,7 +101,7 @@ local function _filter_sessions(sessions, project_filter, query)
 
         local fuzzy_input = {}
         for i, item in ipairs(search_items) do
-            fuzzy_input[i] = { text = item.text }
+            fuzzy_input[i] = { text = item.text, session = item.session }
         end
 
         local scored = lingxi.fuzzy.search(query, fuzzy_input, { "text" })
