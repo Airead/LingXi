@@ -31,6 +31,15 @@ xcodebuild test -scheme LingXi -destination 'platform=macOS' -parallel-testing-e
 
 Use `DebugLog.log()` for all logging in the main app. Do not use `print()`, `NSLog()`, or `OSLog` directly.
 
+## Cache Directory
+
+All app caches are stored in `~/.cache/LingXi/`:
+
+- `~/.cache/LingXi/registry.toml` — Plugin registry cache
+- `~/.cache/LingXi/<plugin-id>/` — Per-plugin isolated cache directory
+
+Use `RegistryManager.cacheDirectory` as the root for all cache operations.
+
 ## Reference
 
 - Review [docs/ai-swift-macos-best-practices.md](docs/ai-swift-macos-best-practices.md) for AI-assisted Swift macOS development best practices including Swift 6.2 concurrency, SwiftUI architecture, and testing strategy.

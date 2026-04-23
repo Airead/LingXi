@@ -69,6 +69,17 @@ nonisolated enum LuaAPI {
         } else {
             registerDisabledWebView(state: state)
         }
+        registerEnv(state: state)
+        
+        // Debug: verify lingxi.env was set
+        state.getField("env", at: -1)
+        if state.isNil(at: -1) {
+            DebugLog.log("[LuaAPI] WARNING: lingxi.env is nil after registerEnv")
+        } else {
+            DebugLog.log("[LuaAPI] OK: lingxi.env is set (type: \(state.type(at: -1)))")
+        }
+        state.pop()
+        
         registerAlert(state: state)
         registerLog(state: state)
         registerJSON(state: state)
@@ -186,6 +197,15 @@ nonisolated enum LuaAPI {
 
     // MARK: - File C Functions
 
+    /// Expand `~` to the user's home directory.
+    private static func expandTilde(_ path: String) -> String {
+        if path.hasPrefix("~/") {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            return home + String(path.dropFirst(1))
+        }
+        return path
+    }
+
     /// `lingxi.file.read(path) -> string | nil`
     private static let fileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
@@ -193,6 +213,9 @@ nonisolated enum LuaAPI {
             lua_pushnil(L)
             return 1
         }
+
+        // Expand tilde before checking for absolute/relative path.
+        path = expandTilde(path)
 
         // Resolve relative paths against the plugin's directory.
         if !path.hasPrefix("/") {
@@ -220,11 +243,14 @@ nonisolated enum LuaAPI {
     /// `lingxi.file.write(path, content) -> boolean`
     private static let fileWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        guard let path = lua_swift_tostring(L, 1).map({ String(cString: $0) }),
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }),
               let content = lua_swift_tostring(L, 2).map({ String(cString: $0) }) else {
             lua_pushboolean(L, 0)
             return 1
         }
+
+        // Expand tilde before validation.
+        path = expandTilde(path)
 
         let validator = PathValidator(allowedPaths: filePaths(from: L))
         guard let canonicalPath = validator.validate(path) else {
@@ -1211,6 +1237,66 @@ nonisolated enum LuaAPI {
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.webview.on_message denied: webview permission not granted")
         lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // MARK: - lingxi.env
+
+    /// Whitelist of environment variables accessible to plugins.
+    private static let allowedEnvVars: Set<String> = [
+        "HOME", "USER", "SHELL", "LANG", "TMPDIR", "PATH",
+    ]
+
+    private static func registerEnv(state: LuaState) {
+        DebugLog.log("[LuaAPI] registerEnv called")
+        state.createTable(nrec: 1)
+        state.pushFunction(envGet)
+        state.setField("get", at: -2)
+        state.setField("env", at: -2)
+        DebugLog.log("[LuaAPI] registerEnv done")
+    }
+
+    private static func registerDisabledEnv(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(disabledEnvGet)
+        state.setField("get", at: -2)
+        state.setField("env", at: -2)
+    }
+
+    /// `lingxi.env.get(key) -> string | nil`
+    /// Returns the value of a whitelisted environment variable.
+    private static let envGet: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let key = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+        // Check whitelist using direct string comparison to avoid Set capture issues
+        var isAllowed = false
+        let whitelist = ["HOME", "USER", "SHELL", "LANG", "TMPDIR", "PATH"]
+        for allowed in whitelist {
+            if allowed == key {
+                isAllowed = true
+                break
+            }
+        }
+        guard isAllowed else {
+            lua_pushnil(L)
+            return 1
+        }
+        // Use getenv C function instead of ProcessInfo to avoid reference capture
+        if let value = getenv(key) {
+            lua_pushstring(L, value)
+        } else {
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    private static let disabledEnvGet: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.env.get denied: env permission not granted")
+        lua_pushnil(L)
         return 1
     }
 }

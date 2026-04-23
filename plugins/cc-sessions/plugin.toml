@@ -1,0 +1,40 @@
+[plugin]
+id = "io.github.airead.lingxi.cc-sessions"
+name = "Claude Code Sessions"
+version = "1.0.0"
+author = "LingXi Team"
+description = "Browse and view Claude Code session history"
+min_lingxi_version = "1.1.0"
+
+files = [
+    "init.lua",
+    "scanner.lua",
+    "reader.lua",
+    "preview.lua",
+    "cache.lua",
+    "identicon.lua",
+    "git_utils.lua",
+    "viewer.html",
+    "viewer.js",
+    "vendor/marked.min.js",
+    "vendor/highlight.min.js",
+    "vendor/github-dark.min.css",
+]
+
+[search]
+prefix = "cc"
+debounce = 100
+timeout = 10000
+
+[permissions]
+clipboard = true
+filesystem = ["~/.claude", "~/.claude/projects"]
+shell = ["git"]
+store = true
+webview = true
+
+[[commands]]
+name = "cc-sessions:clear-cache"
+title = "Clear CC Sessions Cache"
+subtitle = "Clear the session scan cache"
+action = "cmd_clear_cache"
