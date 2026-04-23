@@ -105,7 +105,7 @@ end
 
 -- Build an HTML preview for a session
 function M.build(session)
-    local detail = reader.read_detail(session.file_path, 10)
+    local detail = session.detail or reader.read_detail(session.file_path, 10)
 
     -- Build metadata pills (compact)
     local pills = {}

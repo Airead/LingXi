@@ -141,6 +141,7 @@ local function _make_session(session_id, file_path, project, opts)
         version = opts.version or "",
         summary = opts.summary or "",
         custom_title = opts.custom_title or "",
+        detail = opts.detail or nil,
     }
 end
 
@@ -168,6 +169,9 @@ local function _scan_session_jsonl(jsonl_path, project_name)
         meta.first_user_message
     )
 
+    -- Pre-read detail for preview (cached alongside session in disk cache)
+    local detail = reader.read_detail(jsonl_path, 10)
+
     return _make_session(
         session_id,
         jsonl_path,
@@ -183,6 +187,7 @@ local function _scan_session_jsonl(jsonl_path, project_name)
             version = meta.version,
             summary = meta.summary,
             custom_title = custom_title,
+            detail = detail,
         }
     )
 end
