@@ -37,13 +37,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // ── Tool metadata ──
 const TOOL_META = {
-  Read:       { icon: "📄", css: "tool-read" },
-  Glob:       { icon: "📄", css: "tool-read" },
-  Grep:       { icon: "🔍", css: "tool-grep" },
-  Edit:       { icon: "✏️",  css: "tool-edit" },
-  Bash:       { icon: "▶️",  css: "tool-bash" },
-  Write:      { icon: "📝", css: "tool-write" },
-  Agent:      { icon: "🤖", css: "tool-other" },
+  Read:       { icon: "📄", css: "tool-read",  mergeable: true },
+  Glob:       { icon: "📄", css: "tool-read",  mergeable: true },
+  Grep:       { icon: "🔍", css: "tool-grep",  mergeable: true },
+  Edit:       { icon: "✏️",  css: "tool-edit",  mergeable: true },
+  Bash:       { icon: "▶️",  css: "tool-bash",  mergeable: false },
+  Write:      { icon: "📝", css: "tool-write", mergeable: false },
+  Agent:      { icon: "🤖", css: "tool-other", mergeable: false },
 };
 
 function getToolMeta(name) {
@@ -96,6 +96,91 @@ function escapeHtml(s) {
   const el = document.createElement("div");
   el.textContent = s;
   return el.innerHTML;
+}
+
+// ── Copy helpers ──
+function copyToClipboard(text) {
+  if (typeof window.lingxi !== "undefined") {
+    window.lingxi.postMessage({ action: "copy", text });
+  }
+}
+
+const _copyIconTpl = document.createElement("template");
+_copyIconTpl.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M3 11V3a1.5 1.5 0 0 1 1.5-1.5H11"/></svg>`;
+const _checkIconTpl = document.createElement("template");
+_checkIconTpl.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5"/></svg>`;
+
+const _copyTimers = new Set();
+function _clearCopyTimers() {
+  for (const id of _copyTimers) clearTimeout(id);
+  _copyTimers.clear();
+}
+
+function createCopyMsgBtn(textFn) {
+  const btn = document.createElement("button");
+  btn.className = "copy-msg-btn";
+  btn.title = "Copy message";
+  btn.appendChild(_copyIconTpl.content.cloneNode(true));
+  let resetTimer = 0;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const text = typeof textFn === "function" ? textFn() : textFn;
+    copyToClipboard(text);
+    _copyTimers.delete(resetTimer);
+    clearTimeout(resetTimer);
+    btn.replaceChildren(_checkIconTpl.content.cloneNode(true));
+    btn.classList.add("copied");
+    resetTimer = setTimeout(() => {
+      _copyTimers.delete(resetTimer);
+      if (!btn.isConnected) return;
+      btn.replaceChildren(_copyIconTpl.content.cloneNode(true));
+      btn.classList.remove("copied");
+    }, 1500);
+    _copyTimers.add(resetTimer);
+  });
+  return btn;
+}
+
+function setupCollapsibles(container) {
+  const maxH = 13 * 1.6 * 8; // ~166px for 8 lines
+
+  container.querySelectorAll(".user-content, .assistant-text").forEach(el => {
+    if (el.scrollHeight <= maxH + 4) return; // +4px tolerance
+
+    el.classList.add("collapsible");
+
+    const btn = document.createElement("button");
+    btn.className = "show-more-btn";
+    btn.textContent = "\u25BC Show more";
+    btn.addEventListener("click", () => {
+      const expanded = el.classList.toggle("expanded");
+      btn.textContent = expanded ? "\u25B2 Show less" : "\u25BC Show more";
+    });
+    el.parentNode.insertBefore(btn, el.nextSibling);
+  });
+}
+
+function addCodeCopyButtons(container) {
+  container.querySelectorAll("pre").forEach(pre => {
+    if (pre.querySelector(".copy-code-btn")) return;
+    const code = pre.querySelector("code");
+    if (!code) return;
+    const btn = document.createElement("button");
+    btn.className = "copy-code-btn";
+    btn.textContent = "Copy";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      copyToClipboard(code.textContent);
+      btn.textContent = "Copied!";
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.textContent = "Copy";
+        btn.classList.remove("copied");
+      }, 1500);
+    });
+    pre.style.position = "relative";
+    pre.appendChild(btn);
+  });
 }
 
 // ── Extract text from user/assistant content ──
@@ -155,6 +240,109 @@ function renderSession(info, messages) {
   if (info.version) document.getElementById("info-version").textContent = info.version;
 
   renderConversation(messages);
+  renderStats(messages);
+}
+
+// ── Stats Dashboard ──
+function renderStats(messages) {
+  const toggle = document.getElementById("stats-toggle");
+  const panel = document.getElementById("stats-panel");
+  const summary = document.getElementById("stats-summary");
+
+  // Calculate stats
+  let userCount = 0, assistantCount = 0, toolCount = 0;
+  const toolUsage = {};
+  let inputTokens = 0, outputTokens = 0;
+
+  for (const msg of messages) {
+    if (msg.type === "user") {
+      userCount++;
+      const usage = msg.message?.usage || msg.usage;
+      if (usage?.input_tokens) inputTokens += usage.input_tokens;
+    } else if (msg.type === "assistant") {
+      assistantCount++;
+      const usage = msg.message?.usage || msg.usage;
+      if (usage?.output_tokens) outputTokens += usage.output_tokens;
+
+      const content = msg.message?.content || msg.content;
+      if (Array.isArray(content)) {
+        for (const part of content) {
+          if (part.type === "tool_use") {
+            toolCount++;
+            toolUsage[part.name] = (toolUsage[part.name] || 0) + 1;
+          }
+        }
+      }
+    }
+  }
+
+  const totalTurns = userCount + assistantCount;
+  if (totalTurns === 0) {
+    toggle.style.display = "none";
+    return;
+  }
+
+  toggle.style.display = "";
+
+  // Summary line
+  const parts = [`${totalTurns} turns`];
+  if (toolCount > 0) parts.push(`${toolCount} tools`);
+  if (inputTokens > 0 || outputTokens > 0) {
+    parts.push(`${(inputTokens + outputTokens).toLocaleString()} tokens`);
+  }
+  summary.textContent = parts.join(" · ");
+
+  // Build panel content
+  let html = '<div class="stats-grid">';
+
+  // Messages card
+  html += '<div class="stats-card"><h4>Messages</h4>';
+  html += `<div class="stats-row"><span>User</span><span class="val">${userCount}</span></div>`;
+  html += `<div class="stats-row"><span>Assistant</span><span class="val">${assistantCount}</span></div>`;
+  html += `<div class="stats-row"><span>Total</span><span class="val">${totalTurns}</span></div>`;
+  html += '</div>';
+
+  // Tokens card
+  if (inputTokens > 0 || outputTokens > 0) {
+    html += '<div class="stats-card"><h4>Tokens</h4>';
+    html += `<div class="stats-row"><span>Input</span><span class="val">${inputTokens.toLocaleString()}</span></div>`;
+    html += `<div class="stats-row"><span>Output</span><span class="val">${outputTokens.toLocaleString()}</span></div>`;
+    html += `<div class="stats-row"><span>Total</span><span class="val">${(inputTokens + outputTokens).toLocaleString()}</span></div>`;
+    html += '</div>';
+  }
+
+  html += '</div>'; // end stats-grid
+
+  // Tools section
+  const toolNames = Object.keys(toolUsage).sort((a, b) => toolUsage[b] - toolUsage[a]);
+  if (toolNames.length > 0) {
+    const maxCount = toolUsage[toolNames[0]];
+    const colors = {
+      Read: "#f59e0b", Glob: "#f59e0b", Grep: "#6366f1",
+      Edit: "#ef4444", Bash: "#10b981", Write: "#ec4899", Agent: "#9ca3af",
+    };
+
+    html += '<div class="stats-card" style="margin-top:10px"><h4>Tool Usage</h4>';
+    for (const name of toolNames) {
+      const count = toolUsage[name];
+      const pct = Math.round((count / maxCount) * 100);
+      const color = colors[name] || "#9ca3af";
+      html += `<div class="stats-bar-row">`;
+      html += `<span class="stats-bar-label">${escapeHtml(name)}</span>`;
+      html += `<span class="stats-bar-track"><span class="stats-bar-fill" style="width:${pct}%;background:${color}"></span></span>`;
+      html += `<span class="stats-bar-count">${count}</span>`;
+      html += `</div>`;
+    }
+    html += '</div>';
+  }
+
+  panel.innerHTML = html;
+
+  // Wire up toggle
+  toggle.onclick = () => {
+    const isOpen = panel.classList.toggle("open");
+    document.getElementById("stats-arrow").classList.toggle("open", isOpen);
+  };
 }
 
 // ── Render conversation ──
@@ -218,6 +406,7 @@ function renderConversation(messages) {
       turnEl.appendChild(header);
 
       const assistantTexts = [];
+      turnEl.appendChild(createCopyMsgBtn(() => assistantTexts.join("\n\n").trim()));
 
       // Collect consecutive assistant messages (and tool_result-only user msgs in between)
       while (i < turns.length && (turns[i].type === "assistant" || (turns[i].type === "user" && _isToolResultOnly(turns[i])))) {
@@ -239,6 +428,8 @@ function renderConversation(messages) {
   }
 
   setupOutlineObserver();
+  setupCollapsibles(conv);
+  addCodeCopyButtons(conv);
   conv.scrollTop = conv.scrollHeight;
 }
 
@@ -278,6 +469,8 @@ function renderUserTurn(conv, msg) {
   contentEl.textContent = text;
   turnEl.appendChild(contentEl);
 
+  turnEl.appendChild(createCopyMsgBtn(text));
+
   conv.appendChild(turnEl);
   addOutlineItem(text, turnEl, "user");
 }
@@ -287,18 +480,20 @@ function renderAssistantContent(turnEl, msg, textCollector, resultMap) {
   const content = msg.message?.content || msg.content;
 
   if (Array.isArray(content)) {
-    for (const part of content) {
-      if (part.type === "text" && part.text && part.text.trim()) {
+    const blocks = buildBlocks(content, resultMap);
+    for (const block of blocks) {
+      if (block.kind === "text") {
         const textEl = document.createElement("div");
         textEl.className = "assistant-text";
-        textEl.innerHTML = renderMarkdown(part.text);
+        textEl.innerHTML = renderMarkdown(block.text);
         turnEl.appendChild(textEl);
-        textCollector.push(part.text.trim());
-      } else if (part.type === "thinking" && part.thinking) {
-        turnEl.appendChild(createThinkingBlock(part.thinking));
-      } else if (part.type === "tool_use") {
-        const result = resultMap[part.id];
-        turnEl.appendChild(createToolBlock(part, result));
+        textCollector.push(block.text.trim());
+      } else if (block.kind === "thinking") {
+        turnEl.appendChild(createThinkingBlock(block.text));
+      } else if (block.kind === "tool_group") {
+        turnEl.appendChild(createToolGroup(block));
+      } else if (block.kind === "tool_single") {
+        turnEl.appendChild(createToolSingle(block.call, block.result));
       }
     }
   } else if (typeof content === "string" && content.trim()) {
@@ -328,8 +523,53 @@ function createThinkingBlock(text) {
   return wrapper;
 }
 
+// ── Build blocks with tool merging ──
+function buildBlocks(parts, globalResultMap) {
+  const blocks = [];
+  const resultMap = Object.assign({}, globalResultMap || {});
+  for (const p of parts) {
+    if (p.type === "tool_result") {
+      resultMap[p.tool_use_id] = p;
+    }
+  }
+
+  let i = 0;
+  while (i < parts.length) {
+    const p = parts[i];
+
+    if (p.type === "text" && p.text && p.text.trim()) {
+      blocks.push({ kind: "text", text: p.text });
+      i++;
+    } else if (p.type === "thinking" && p.thinking) {
+      blocks.push({ kind: "thinking", text: p.thinking });
+      i++;
+    } else if (p.type === "tool_use") {
+      const meta = getToolMeta(p.name);
+
+      if (meta.mergeable) {
+        const group = [];
+        while (i < parts.length && parts[i].type === "tool_use" && parts[i].name === p.name) {
+          group.push({ call: parts[i], result: resultMap[parts[i].id] });
+          i++;
+        }
+        if (group.length === 1) {
+          blocks.push({ kind: "tool_single", call: group[0].call, result: group[0].result });
+        } else {
+          blocks.push({ kind: "tool_group", name: p.name, items: group });
+        }
+      } else {
+        blocks.push({ kind: "tool_single", call: p, result: resultMap[p.id] });
+        i++;
+      }
+    } else {
+      i++;
+    }
+  }
+  return blocks;
+}
+
 // ── Tool block (simplified: no merging, no subagents) ──
-function createToolBlock(call, result) {
+function createToolSingle(call, result) {
   const meta = getToolMeta(call.name);
   const detail = toolDetail(call.name, call.input);
 
@@ -356,6 +596,47 @@ function createToolBlock(call, result) {
     html += `<pre>${escapeHtml(formatToolResult(result))}</pre>`;
   }
   body.innerHTML = html;
+  block.appendChild(body);
+
+  headerEl.addEventListener("click", () => block.classList.toggle("expanded"));
+  return block;
+}
+
+// ── Merged tool group ──
+function createToolGroup(group) {
+  const meta = getToolMeta(group.name);
+  const count = group.items.length;
+  const details = group.items.map(it => toolDetail(group.name, it.call.input)).join(", ");
+
+  const block = document.createElement("div");
+  block.className = `tool-block ${meta.css}`;
+
+  const headerEl = document.createElement("div");
+  headerEl.className = "tool-header";
+  headerEl.innerHTML = `
+    <span class="tool-icon">${meta.icon}</span>
+    <code class="tool-label">${escapeHtml(group.name)} ${count} files</code>
+    <span class="tool-detail">${escapeHtml(truncate(details, 80))}</span>
+    <span class="tool-arrow">▶</span>
+  `;
+  block.appendChild(headerEl);
+
+  const body = document.createElement("div");
+  body.className = "tool-body";
+  for (const it of group.items) {
+    const detail = toolDetail(group.name, it.call.input);
+    const itemDiv = document.createElement("div");
+    itemDiv.style.marginBottom = "8px";
+
+    let html = `<div class="tool-section-label">${escapeHtml(group.name)}: ${escapeHtml(detail)}</div>`;
+    html += `<pre>${escapeHtml(formatToolInput(it.call))}</pre>`;
+    if (it.result) {
+      html += `<div class="tool-section-label">Output</div>`;
+      html += `<pre>${escapeHtml(formatToolResult(it.result))}</pre>`;
+    }
+    itemDiv.innerHTML = html;
+    body.appendChild(itemDiv);
+  }
   block.appendChild(body);
 
   headerEl.addEventListener("click", () => block.classList.toggle("expanded"));
