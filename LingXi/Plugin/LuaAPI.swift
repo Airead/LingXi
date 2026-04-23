@@ -1170,29 +1170,35 @@ nonisolated enum LuaAPI {
             }
         }
 
+        let capturedPath = fullPath
+        let capturedTitle = title
+        let capturedWidth = width
+        let capturedHeight = height
         let messageRef = webviewMessageRef
-        let messageState = webviewMessageState
 
         Task { @MainActor in
             PluginWebViewManager.shared.open(
-                htmlPath: fullPath,
-                title: title,
-                width: width,
-                height: height
+                htmlPath: capturedPath,
+                title: capturedTitle,
+                width: capturedWidth,
+                height: capturedHeight
             ) { message in
-                guard let msgL = messageState, messageRef != 0 else { return }
-                lua_rawgeti(msgL, lua_swift_registry_index(), lua_Integer(messageRef))
-                if lua_type(msgL, -1) == lua_swift_type_function() {
-                    lua_pushstring(msgL, message)
-                    let result = lua_swift_pcall(msgL, 1, 0, 0)
-                    if result != 0 {
-                        if let err = lua_swift_tostring(msgL, -1) {
-                            DebugLog.log("[LuaAPI] webview.on_message callback error: \(String(cString: err))")
+                // Execute on main actor since Lua calls are not thread-safe
+                MainActor.assumeIsolated {
+                    guard let msgL = webviewMessageState, messageRef != 0 else { return }
+                    lua_rawgeti(msgL, lua_swift_registry_index(), lua_Integer(messageRef))
+                    if lua_type(msgL, -1) == lua_swift_type_function() {
+                        lua_pushstring(msgL, message)
+                        let result = lua_swift_pcall(msgL, 1, 0, 0)
+                        if result != 0 {
+                            if let err = lua_swift_tostring(msgL, -1) {
+                                DebugLog.log("[LuaAPI] webview.on_message callback error: \(String(cString: err))")
+                            }
+                            lua_swift_pop(msgL, 1)
                         }
+                    } else {
                         lua_swift_pop(msgL, 1)
                     }
-                } else {
-                    lua_swift_pop(msgL, 1)
                 }
             }
         }
