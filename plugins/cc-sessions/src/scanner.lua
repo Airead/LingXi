@@ -174,6 +174,10 @@ local function _scan_session_jsonl(jsonl_path, project_name)
 
     -- Use filesystem mtime as modified time (reflects actual file change)
     local fs_mtime = cache.get_mtime(jsonl_path)
+    -- Convert numeric Unix timestamp to ISO string for time formatting functions
+    if type(fs_mtime) == "number" then
+        fs_mtime = os.date("!%Y-%m-%dT%H:%M:%S", math.floor(fs_mtime))
+    end
 
     return _make_session(
         session_id,
@@ -364,7 +368,11 @@ function M.scan_all()
                 cache_hit = cache_hit + 1
                 -- Ensure session.modified reflects filesystem mtime (migrates old caches)
                 if session and mtime then
-                    session.modified = mtime
+                    if type(mtime) == "number" then
+                        session.modified = os.date("!%Y-%m-%dT%H:%M:%S", math.floor(mtime))
+                    else
+                        session.modified = mtime
+                    end
                 end
                 -- Log first 3 hits for comparison
                 if cache_hit <= 3 then
