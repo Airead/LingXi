@@ -18,3 +18,12 @@ description = "Search and paste emoji via the launcher (prefix: e)"
 author = "LingXi Team"
 source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/emoji-search/plugin.toml"
 min_lingxi_version = "1.0.0"
+
+[[plugins]]
+id = "io.github.airead.lingxi.cc-sessions"
+name = "Claude Code Sessions"
+version = "1.0.0"
+description = "Browse and view Claude Code session history (prefix: cc)"
+author = "LingXi Team"
+source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/cc-sessions/plugin.toml"
+min_lingxi_version = "1.1.0"

@@ -387,11 +387,16 @@ local function _build_result_item(session)
         preview = preview.build(session),
         action = function()
             _current_session = session
-            lingxi.webview.open("viewer.html", {
+            local ok = lingxi.webview.open("viewer.html", {
                 title = session.title,
                 width = 900,
                 height = 700
             })
+            if not ok then
+                -- Fallback: open with default application
+                lingxi.alert.show("Opening with default app...", 1.5)
+                lingxi.shell.exec("open " .. session.file_path)
+            end
         end,
         cmd_action = function()
             lingxi.clipboard.write(session.file_path)
