@@ -1029,9 +1029,11 @@ nonisolated enum LuaAPI {
     // MARK: - lingxi.json
 
     private static func registerJSON(state: LuaState) {
-        state.createTable(nrec: 1)
+        state.createTable(nrec: 2)
         state.pushFunction(jsonParse)
         state.setField("parse", at: -2)
+        state.pushFunction(jsonEncode)
+        state.setField("encode", at: -2)
         state.setField("json", at: -2)
     }
 
@@ -1054,6 +1056,34 @@ nonisolated enum LuaAPI {
             pushSwiftValue(L, value: jsonObject)
         } catch {
             DebugLog.log("[LuaAPI] lingxi.json.parse error: \(error)")
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    /// `lingxi.json.encode(table) -> string | nil`
+    /// Serializes a Lua table into a JSON string.
+    private static let jsonEncode: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+
+        // Convert Lua value at index 1 to Swift JSON-compatible value
+        let value = luaValueToSwift(L, index: 1)
+
+        // Check for unsupported types (functions, threads, userdata)
+        if let str = value as? String, str.hasPrefix("unsupported Lua type") {
+            lua_pushnil(L)
+            return 1
+        }
+
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted])
+            if let jsonString = String(data: jsonData, encoding: .utf8) {
+                lua_pushstring(L, jsonString)
+            } else {
+                lua_pushnil(L)
+            }
+        } catch {
+            DebugLog.log("[LuaAPI] lingxi.json.encode error: \(error)")
             lua_pushnil(L)
         }
         return 1
