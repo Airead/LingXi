@@ -175,9 +175,11 @@ nonisolated enum LuaAPI {
     // MARK: - lingxi.file
 
     private static func registerFile(state: LuaState) {
-        state.createTable(nrec: 9)
+        state.createTable(nrec: 10)
         state.pushFunction(fileRead)
         state.setField("read", at: -2)
+        state.pushFunction(fileReadLines)
+        state.setField("read_lines", at: -2)
         state.pushFunction(fileWrite)
         state.setField("write", at: -2)
         state.pushFunction(fileList)
@@ -198,9 +200,11 @@ nonisolated enum LuaAPI {
     }
 
     private static func registerDisabledFile(state: LuaState) {
-        state.createTable(nrec: 9)
+        state.createTable(nrec: 10)
         state.pushFunction(disabledFileRead)
         state.setField("read", at: -2)
+        state.pushFunction(disabledFileReadLines)
+        state.setField("read_lines", at: -2)
         state.pushFunction(disabledFileWrite)
         state.setField("write", at: -2)
         state.pushFunction(disabledFileList)
@@ -268,6 +272,78 @@ nonisolated enum LuaAPI {
         } catch {
             lua_pushnil(L)
         }
+        return 1
+    }
+
+    /// `lingxi.file.read_lines(path, max_lines) -> string | nil`
+    /// Reads up to max_lines from a file, returning them as a single string.
+    private static let fileReadLines: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+        let maxLines = Int(lua_swift_tointeger(L, 2))
+        guard maxLines > 0 else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        // Expand tilde before checking for absolute/relative path.
+        path = expandTilde(path)
+
+        // Resolve relative paths against the plugin's directory.
+        if !path.hasPrefix("/") {
+            let pid = pluginId(from: L)
+            if let pluginDir = pluginDirs[pid] {
+                path = pluginDir + "/" + path
+            }
+        }
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        guard let handle = FileHandle(forReadingAtPath: canonicalPath) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        defer { handle.closeFile() }
+
+        var lines: [String] = []
+        var buffer = Data()
+        let chunkSize = 4096
+        let newline = Data([0x0A]) // '\n'
+
+        while lines.count < maxLines {
+            let chunk = handle.readData(ofLength: chunkSize)
+            if chunk.isEmpty {
+                // EOF: append any remaining buffer as the last line
+                if !buffer.isEmpty, let line = String(data: buffer, encoding: .utf8) {
+                    lines.append(line)
+                }
+                break
+            }
+            buffer.append(chunk)
+
+            // Split buffer on newlines
+            while lines.count < maxLines {
+                guard let range = buffer.range(of: newline) else {
+                    break
+                }
+                let lineData = buffer.prefix(upTo: range.lowerBound)
+                if let line = String(data: lineData, encoding: .utf8) {
+                    lines.append(line)
+                }
+                buffer = Data(buffer.suffix(from: range.upperBound))
+            }
+        }
+
+        let result = lines.joined(separator: "\n")
+        lua_pushstring(L, result)
         return 1
     }
 
@@ -512,6 +588,13 @@ nonisolated enum LuaAPI {
     private static let disabledFileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.file.read denied: filesystem permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledFileReadLines: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.read_lines denied: filesystem permission not granted")
         lua_pushnil(L)
         return 1
     }
