@@ -48,13 +48,15 @@ nonisolated enum ManifestParser {
         let shell = doc.stringArray("permissions", "shell") ?? []
         let notify = doc.bool("permissions", "notify") ?? false
         let store = doc.bool("permissions", "store") ?? false
+        let webview = doc.bool("permissions", "webview") ?? false
         let permissions = PermissionConfig(
             network: network,
             clipboard: clipboard,
             filesystem: filesystem,
             shell: shell,
             notify: notify,
-            store: store
+            store: store,
+            webview: webview
         )
 
         // Commands

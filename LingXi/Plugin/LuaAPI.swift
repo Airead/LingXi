@@ -64,6 +64,11 @@ nonisolated enum LuaAPI {
         } else {
             registerDisabledNotify(state: state)
         }
+        if permissions.webview {
+            registerWebView(state: state)
+        } else {
+            registerDisabledWebView(state: state)
+        }
         registerAlert(state: state)
         registerLog(state: state)
         registerJSON(state: state)
@@ -1032,5 +1037,180 @@ nonisolated enum LuaAPI {
 
     private static func registerFuzzy(state: LuaState) {
         LuaFuzzyAPI.register(state: state)
+    }
+
+    // MARK: - lingxi.webview
+
+    /// Reference to the registered Lua message callback function.
+    private static var webviewMessageRef: Int32 = 0
+    /// The Lua state that owns the webview message callback.
+    private static var webviewMessageState: OpaquePointer?
+
+    private static func registerWebView(state: LuaState) {
+        state.createTable(nrec: 4)
+        state.pushFunction(webviewOpen)
+        state.setField("open", at: -2)
+        state.pushFunction(webviewClose)
+        state.setField("close", at: -2)
+        state.pushFunction(webviewSend)
+        state.setField("send", at: -2)
+        state.pushFunction(webviewOnMessage)
+        state.setField("on_message", at: -2)
+        state.setField("webview", at: -2)
+    }
+
+    private static func registerDisabledWebView(state: LuaState) {
+        state.createTable(nrec: 4)
+        state.pushFunction(disabledWebViewOpen)
+        state.setField("open", at: -2)
+        state.pushFunction(disabledWebViewClose)
+        state.setField("close", at: -2)
+        state.pushFunction(disabledWebViewSend)
+        state.setField("send", at: -2)
+        state.pushFunction(disabledWebViewOnMessage)
+        state.setField("on_message", at: -2)
+        state.setField("webview", at: -2)
+    }
+
+    /// `lingxi.webview.open(htmlPath, opts?) -> boolean`
+    private static let webviewOpen: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let htmlPath = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            DebugLog.log("[LuaAPI] lingxi.webview.open: first argument must be a string (html path)")
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        var title: String?
+        var width: CGFloat = 900
+        var height: CGFloat = 700
+
+        if lua_type(L, 2) == lua_swift_type_table() {
+            lua_getfield(L, 2, "title")
+            if let t = lua_swift_tostring(L, -1) {
+                title = String(cString: t)
+            }
+            lua_swift_pop(L, 1)
+
+            lua_getfield(L, 2, "width")
+            if lua_type(L, -1) == lua_swift_type_number() {
+                width = CGFloat(lua_swift_tonumber(L, -1))
+            }
+            lua_swift_pop(L, 1)
+
+            lua_getfield(L, 2, "height")
+            if lua_type(L, -1) == lua_swift_type_number() {
+                height = CGFloat(lua_swift_tonumber(L, -1))
+            }
+            lua_swift_pop(L, 1)
+        }
+
+        // Resolve relative paths against the plugin directory.
+        var fullPath = htmlPath
+        if !fullPath.hasPrefix("/") {
+            let pid = pluginId(from: L)
+            if let pluginDir = pluginDirs[pid] {
+                fullPath = pluginDir + "/" + fullPath
+            }
+        }
+
+        let messageRef = webviewMessageRef
+        let messageState = webviewMessageState
+
+        Task { @MainActor in
+            PluginWebViewManager.shared.open(
+                htmlPath: fullPath,
+                title: title,
+                width: width,
+                height: height
+            ) { message in
+                guard let msgL = messageState, messageRef != 0 else { return }
+                lua_rawgeti(msgL, lua_swift_registry_index(), lua_Integer(messageRef))
+                if lua_type(msgL, -1) == lua_swift_type_function() {
+                    lua_pushstring(msgL, message)
+                    let result = lua_swift_pcall(msgL, 1, 0, 0)
+                    if result != 0 {
+                        if let err = lua_swift_tostring(msgL, -1) {
+                            DebugLog.log("[LuaAPI] webview.on_message callback error: \(String(cString: err))")
+                        }
+                        lua_swift_pop(msgL, 1)
+                    }
+                } else {
+                    lua_swift_pop(msgL, 1)
+                }
+            }
+        }
+
+        lua_pushboolean(L, 1)
+        return 1
+    }
+
+    /// `lingxi.webview.close() -> void`
+    private static let webviewClose: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        Task { @MainActor in
+            PluginWebViewManager.shared.close()
+        }
+        return 0
+    }
+
+    /// `lingxi.webview.send(jsonString) -> void`
+    private static let webviewSend: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let jsonString = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            return 0
+        }
+        Task { @MainActor in
+            PluginWebViewManager.shared.sendMessage(jsonString)
+        }
+        return 0
+    }
+
+    /// `lingxi.webview.on_message(callback) -> boolean`
+    private static let webviewOnMessage: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard lua_type(L, 1) == lua_swift_type_function() else {
+            DebugLog.log("[LuaAPI] lingxi.webview.on_message: argument must be a function")
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        // Release previous reference if any.
+        if webviewMessageRef != 0, let oldL = webviewMessageState {
+            luaL_unref(oldL, lua_swift_registry_index(), webviewMessageRef)
+        }
+
+        webviewMessageState = L
+        webviewMessageRef = luaL_ref(L, lua_swift_registry_index())
+
+        lua_pushboolean(L, 1)
+        return 1
+    }
+
+    // MARK: - Disabled WebView Stubs
+
+    private static let disabledWebViewOpen: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.webview.open denied: webview permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledWebViewClose: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.webview.close denied: webview permission not granted")
+        return 0
+    }
+
+    private static let disabledWebViewSend: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.webview.send denied: webview permission not granted")
+        return 0
+    }
+
+    private static let disabledWebViewOnMessage: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.webview.on_message denied: webview permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
     }
 }
