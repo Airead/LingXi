@@ -189,8 +189,8 @@ end
 -- }
 function M.read_detail(file_path, max_turns)
     max_turns = max_turns or 10
-    -- Read first 200 lines only (10 conversation turns typically within first 100-200 lines)
-    local content = lingxi.file.read_lines(file_path, 200)
+    -- Read first 80 lines only (10 conversation turns + overhead typically within 60-80 lines)
+    local content = lingxi.file.read_lines(file_path, 80)
     if not content then
         return { turns = {}, total_input_tokens = 0, total_output_tokens = 0 }
     end
