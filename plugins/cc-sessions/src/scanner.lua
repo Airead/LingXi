@@ -100,7 +100,7 @@ local function _clean_first_prompt(raw)
         return raw
     end
     -- Strip XML-like tags
-    local cleaned = raw:gsub("<[^%u003e]+>", ""):match("^%s*(.-)%s*$")
+    local cleaned = raw:gsub("<[^%>]+", ""):match("^%s*(.-)%s*$")
     return cleaned or ""
 end
 
@@ -179,9 +179,16 @@ local function _scan_session_jsonl(jsonl_path, project_name)
     )
 end
 
--- Load index supplements (summary/customTitle) from sessions-index.json
+-- Load index supplements (summary/customTitle) from sessions-index.json with mtime caching
 local function _load_index_supplements(proj_dir)
     local index_path = proj_dir .. "/sessions-index.json"
+    
+    -- Check cache first
+    local cached = cache.get_index_cache(index_path)
+    if cached then
+        return cached
+    end
+    
     local exists = lingxi.file.exists(index_path)
     if not exists then
         return {}
@@ -217,15 +224,21 @@ local function _load_index_supplements(proj_dir)
         end
     end
 
+    -- Cache the result with mtime
+    local mtime = cache.get_mtime(index_path)
+    if mtime then
+        cache.set_index_cache(index_path, mtime, lookup)
+    end
+
     return lookup
 end
 
 -- Scan all sessions with incremental caching
 function M.scan_all()
-    -- 1. Memory cache hit
+    -- 1. Memory cache hit with TTL (30 seconds)
     local mem = cache.get_memory_cache()
     if mem then
-        lingxi.log.write("[cc-sessions] scan_all: returning " .. #mem .. " sessions from memory cache")
+        lingxi.log.write("[cc-sessions] scan_all: returning " .. #mem .. " sessions from TTL memory cache")
         return mem
     end
 
@@ -245,10 +258,6 @@ function M.scan_all()
     local seen_ids = {}
     local live_paths = {}
 
-    -- TEST: Limit to 4 sessions for testing
-    local max_scans = 4
-    local scanned_count = 0
-
     local base_dir = "~/.claude/projects"
     local exists = lingxi.file.exists(base_dir)
     if not exists then
@@ -263,11 +272,6 @@ function M.scan_all()
     end
 
     for _, entry in ipairs(entries) do
-        -- TEST: Check limit before each project
-        if scanned_count >= max_scans then
-            break
-        end
-
         if not entry.isDir then
             goto continue
         end
@@ -275,7 +279,7 @@ function M.scan_all()
         local proj_dir = base_dir .. "/" .. entry.name
         local dir_fallback = _project_name_from_dir(entry.name)
 
-        -- Load index supplements (always fresh)
+        -- Load index supplements with mtime caching
         local index_lookup = _load_index_supplements(proj_dir)
 
         -- Scan all JSONL files
@@ -285,18 +289,12 @@ function M.scan_all()
         end
 
         for _, file in ipairs(files) do
-            -- TEST: Limit scan count
-            if scanned_count >= max_scans then
-                break
-            end
-
             if not file.name:match("%.jsonl$") then
                 goto next_file
             end
 
             local jsonl_path = proj_dir .. "/" .. file.name
             live_paths[jsonl_path] = true
-            scanned_count = scanned_count + 1
 
             local mtime = cache.get_mtime(jsonl_path)
             local session = nil
@@ -349,22 +347,11 @@ function M.scan_all()
     -- 4. Prune deleted files from cache
     cache.prune(new_cache, live_paths)
 
-    -- 5. Save disk cache
+    -- 5. Save disk cache (only if dirty)
     cache.save_disk_cache(new_cache)
 
-    -- 6. Set memory cache
+    -- 6. Set memory cache with TTL
     cache.set_memory_cache(sessions)
-
-    -- Hardcode TongYou session for testing subagent features
-    local tongyou_path = "~/.claude/projects/-Users-fanrenhao-work-TongYou/17184b7b-6f74-428e-ad5d-f1747227b6a5.jsonl"
-    local tongyou_id = "17184b7b-6f74-428e-ad5d-f1747227b6a5"
-    if not seen_ids[tongyou_id] then
-        local tongyou_session = _scan_session_jsonl(tongyou_path, "TongYou")
-        if tongyou_session then
-            seen_ids[tongyou_id] = true
-            table.insert(sessions, tongyou_session)
-        end
-    end
 
     -- 7. Release lock
     cache.set_scanning(false)

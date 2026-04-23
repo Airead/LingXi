@@ -175,7 +175,7 @@ nonisolated enum LuaAPI {
     // MARK: - lingxi.file
 
     private static func registerFile(state: LuaState) {
-        state.createTable(nrec: 8)
+        state.createTable(nrec: 9)
         state.pushFunction(fileRead)
         state.setField("read", at: -2)
         state.pushFunction(fileWrite)
@@ -192,11 +192,13 @@ nonisolated enum LuaAPI {
         state.setField("rmdir", at: -2)
         state.pushFunction(fileRm)
         state.setField("rm", at: -2)
+        state.pushFunction(fileMove)
+        state.setField("move", at: -2)
         state.setField("file", at: -2)
     }
 
     private static func registerDisabledFile(state: LuaState) {
-        state.createTable(nrec: 8)
+        state.createTable(nrec: 9)
         state.pushFunction(disabledFileRead)
         state.setField("read", at: -2)
         state.pushFunction(disabledFileWrite)
@@ -213,6 +215,8 @@ nonisolated enum LuaAPI {
         state.setField("rmdir", at: -2)
         state.pushFunction(disabledFileRm)
         state.setField("rm", at: -2)
+        state.pushFunction(disabledFileMove)
+        state.setField("move", at: -2)
         state.setField("file", at: -2)
     }
 
@@ -466,6 +470,34 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    /// `lingxi.file.move(src, dst) -> boolean`
+    private static let fileMove: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var srcPath = lua_swift_tostring(L, 1).map({ String(cString: $0) }),
+              var dstPath = lua_swift_tostring(L, 2).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        srcPath = expandTilde(srcPath)
+        dstPath = expandTilde(dstPath)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalSrc = validator.validate(srcPath),
+              let canonicalDst = validator.validate(dstPath) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            try FileManager.default.moveItem(atPath: canonicalSrc, toPath: canonicalDst)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
     // MARK: - Disabled File Stubs
 
     private static let disabledFileStat: @convention(c) (OpaquePointer?) -> Int32 = { L in
@@ -520,6 +552,13 @@ nonisolated enum LuaAPI {
     private static let disabledFileRm: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.file.rm denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileMove: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.move denied: filesystem permission not granted")
         lua_pushboolean(L, 0)
         return 1
     }
