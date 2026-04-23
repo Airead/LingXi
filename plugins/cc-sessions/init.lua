@@ -4,6 +4,7 @@
 local scanner = require("src.scanner")
 local reader = require("src.reader")
 local preview = require("src.preview")
+local identicon = require("src.identicon")
 
 -- ============================================================================
 -- Query Parsing
@@ -375,9 +376,12 @@ local function _build_result_item(session)
     local msg_count = session.message_count or 0
     local item_id = "cc-" .. session.session_id
 
+    local icon = identicon.generate(session.project)
+
     return {
         title = session.title,
         subtitle = table.concat(subtitle_parts, " · "),
+        icon = icon,
         item_id = item_id,
         preview_type = "html",
         preview = preview.build(session),
