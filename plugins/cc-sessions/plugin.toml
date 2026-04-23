@@ -28,9 +28,10 @@ timeout = 10000
 [permissions]
 clipboard = true
 filesystem = ["~/.claude", "~/.claude/projects"]
-shell = ["git", "stat"]
+shell = ["git"]
 store = true
 webview = true
+cache = true
 
 [[commands]]
 name = "cc-sessions:clear-cache"

@@ -293,7 +293,8 @@ final class PluginManager: PluginService {
             shell: manifest.permissions.shell,
             notify: manifest.permissions.notify,
             store: manifest.permissions.store,
-            webview: manifest.permissions.webview
+            webview: manifest.permissions.webview,
+            cache: manifest.permissions.cache
         )
 
         LuaAPI.registerAll(state: state, permissions: permissions, pluginId: manifest.id, pluginDir: pluginDir.path)

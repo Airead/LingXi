@@ -42,10 +42,15 @@ nonisolated enum LuaAPI {
             registerDisabledClipboard(state: state)
             registerDisabledPaste(state: state)
         }
-        if permissions.filesystem.isEmpty {
+        if permissions.filesystem.isEmpty && !permissions.cache {
             registerDisabledFile(state: state)
         } else {
-            filePermissions[pluginId] = permissions.filesystem
+            var allowedPaths = permissions.filesystem
+            if permissions.cache, !pluginId.isEmpty {
+                let cachePath = RegistryManager.cacheDirectory.appendingPathComponent(pluginId).path
+                allowedPaths.append(cachePath)
+            }
+            filePermissions[pluginId] = allowedPaths
             registerFile(state: state)
         }
         if permissions.shell.isEmpty {
@@ -68,6 +73,11 @@ nonisolated enum LuaAPI {
             registerWebView(state: state)
         } else {
             registerDisabledWebView(state: state)
+        }
+        if permissions.cache {
+            registerCache(state: state)
+        } else {
+            registerDisabledCache(state: state)
         }
         registerEnv(state: state)
         
@@ -164,7 +174,7 @@ nonisolated enum LuaAPI {
     // MARK: - lingxi.file
 
     private static func registerFile(state: LuaState) {
-        state.createTable(nrec: 4)
+        state.createTable(nrec: 5)
         state.pushFunction(fileRead)
         state.setField("read", at: -2)
         state.pushFunction(fileWrite)
@@ -173,11 +183,13 @@ nonisolated enum LuaAPI {
         state.setField("list", at: -2)
         state.pushFunction(fileExists)
         state.setField("exists", at: -2)
+        state.pushFunction(fileStat)
+        state.setField("stat", at: -2)
         state.setField("file", at: -2)
     }
 
     private static func registerDisabledFile(state: LuaState) {
-        state.createTable(nrec: 4)
+        state.createTable(nrec: 5)
         state.pushFunction(disabledFileRead)
         state.setField("read", at: -2)
         state.pushFunction(disabledFileWrite)
@@ -186,6 +198,8 @@ nonisolated enum LuaAPI {
         state.setField("list", at: -2)
         state.pushFunction(disabledFileExists)
         state.setField("exists", at: -2)
+        state.pushFunction(disabledFileStat)
+        state.setField("stat", at: -2)
         state.setField("file", at: -2)
     }
 
@@ -323,7 +337,55 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    /// `lingxi.file.stat(path) -> {mtime, size, isDir} | nil`
+    private static let fileStat: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: canonicalPath, isDirectory: &isDir) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        do {
+            let attrs = try fm.attributesOfItem(atPath: canonicalPath)
+            let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            let size = (attrs[.size] as? Int64) ?? 0
+
+            lua_createtable(L, 0, 3)
+            lua_pushnumber(L, mtime)
+            lua_setfield(L, -2, "mtime")
+            lua_pushinteger(L, lua_Integer(size))
+            lua_setfield(L, -2, "size")
+            lua_pushboolean(L, isDir.boolValue ? 1 : 0)
+            lua_setfield(L, -2, "isDir")
+        } catch {
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
     // MARK: - Disabled File Stubs
+
+    private static let disabledFileStat: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.stat denied: filesystem permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
 
     private static let disabledFileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
@@ -1280,6 +1342,45 @@ nonisolated enum LuaAPI {
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.webview.on_message denied: webview permission not granted")
         lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // MARK: - lingxi.cache
+
+    private static func registerCache(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(cacheGetPath)
+        state.setField("getPath", at: -2)
+        state.setField("cache", at: -2)
+    }
+
+    private static func registerDisabledCache(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(disabledCacheGetPath)
+        state.setField("getPath", at: -2)
+        state.setField("cache", at: -2)
+    }
+
+    /// `lingxi.cache.getPath() -> string | nil`
+    /// Returns the plugin-specific cache directory path.
+    private static let cacheGetPath: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        let pid = pluginId(from: L)
+        if pid.isEmpty {
+            lua_pushnil(L)
+            return 1
+        }
+        let cachePath = RegistryManager.cacheDirectory
+            .appendingPathComponent(pid)
+            .path
+        lua_pushstring(L, cachePath)
+        return 1
+    }
+
+    private static let disabledCacheGetPath: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.cache.getPath denied: cache permission not granted")
+        lua_pushnil(L)
         return 1
     }
 

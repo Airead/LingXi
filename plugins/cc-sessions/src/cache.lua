@@ -1,5 +1,5 @@
 -- cache.lua - Incremental persistent cache for session scanning
--- Uses lingxi.store as backend (lingxi.store accepts Lua tables directly).
+-- Uses file system cache in plugin-specific cache directory.
 
 local M = {}
 
@@ -7,13 +7,14 @@ local M = {}
 -- Constants
 -- ============================================================================
 
-local DISK_CACHE_KEY = "cc_sessions:scan_cache_v1"
+local CACHE_FILE_NAME = "sessions.json"
 
 -- ============================================================================
 -- Memory Cache
 -- ============================================================================
 
 local _sessions = nil
+local _scanning = false
 
 function M.get_memory_cache()
     return _sessions
@@ -24,27 +25,56 @@ function M.set_memory_cache(sessions)
 end
 
 -- ============================================================================
--- Disk Cache
+-- Disk Cache Helpers
 -- ============================================================================
 
+local function _cache_file_path()
+    local cache_dir = lingxi.cache.getPath()
+    if not cache_dir then
+        return nil
+    end
+    return cache_dir .. "/" .. CACHE_FILE_NAME
+end
+
 function M.load_disk_cache()
-    local data = lingxi.store.get(DISK_CACHE_KEY)
-    if not data then
+    local path = _cache_file_path()
+    if not path then
         return {}
     end
-    -- lingxi.store returns the value as-is (Swift converts it back)
-    if type(data) == "table" and data.version == 1 then
+    
+    local content = lingxi.file.read(path)
+    if not content then
+        return {}
+    end
+    
+    local ok, data = pcall(function()
+        return lingxi.json.parse(content)
+    end)
+    
+    if ok and type(data) == "table" and data.version == 1 then
         return data.sessions or {}
     end
     return {}
 end
 
 function M.save_disk_cache(sessions_map)
+    local path = _cache_file_path()
+    if not path then
+        return
+    end
+    
     local data = {
         version = 1,
         sessions = sessions_map or {}
     }
-    lingxi.store.set(DISK_CACHE_KEY, data)
+    
+    local ok, encoded = pcall(function()
+        return lingxi.json.encode(data)
+    end)
+    
+    if ok and encoded then
+        lingxi.file.write(path, encoded)
+    end
 end
 
 -- ============================================================================
@@ -75,14 +105,13 @@ function M.prune(cache_map, live_paths_set)
 end
 
 -- ============================================================================
--- File Metadata (fallback until lingxi.file.stat() in Phase 4)
+-- File Metadata using lingxi.file.stat()
 -- ============================================================================
 
 function M.get_mtime(path)
-    local result = lingxi.shell.exec("stat -f %m " .. path .. " 2>/dev/null")
-    if result.exitCode == 0 then
-        local mtime = tonumber(result.stdout:match("^%s*(%d+)%s*$"))
-        return mtime
+    local stat = lingxi.file.stat(path)
+    if stat and stat.mtime then
+        return stat.mtime
     end
     return nil
 end
@@ -90,8 +119,6 @@ end
 -- ============================================================================
 -- Scanning Lock
 -- ============================================================================
-
-local _scanning = false
 
 function M.is_scanning()
     return _scanning
@@ -108,7 +135,11 @@ end
 function M.clear()
     _sessions = nil
     _scanning = false
-    lingxi.store.delete(DISK_CACHE_KEY)
+    local path = _cache_file_path()
+    if path then
+        -- Write empty cache
+        lingxi.file.write(path, lingxi.json.encode({ version = 1, sessions = {} }))
+    end
 end
 
 return M
