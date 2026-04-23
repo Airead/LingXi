@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebView API Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            line-height: 1.6;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #4fc3f7;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+
+        .subtitle {
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .section {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #3a3a3a;
+        }
+
+        .section h2 {
+            color: #81c784;
+            font-size: 16px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status.ok {
+            background: #2e7d32;
+            color: #a5d6a7;
+        }
+
+        .status.error {
+            background: #c62828;
+            color: #ef9a9a;
+        }
+
+        .status.pending {
+            background: #f57c00;
+            color: #ffcc80;
+        }
+
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        button {
+            background: #0d47a1;
+            color: white;
+            border: none;
+            padding: 12px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+            text-align: left;
+        }
+
+        button:hover {
+            background: #1565c0;
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button.secondary {
+            background: #37474f;
+        }
+
+        button.secondary:hover {
+            background: #455a64;
+        }
+
+        button.danger {
+            background: #c62828;
+        }
+
+        button.danger:hover {
+            background: #d32f2f;
+        }
+
+        .log-container {
+            background: #1a1a1a;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            padding: 6px 0;
+            border-bottom: 1px solid #2a2a2a;
+            word-break: break-all;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: #757575;
+            margin-right: 8px;
+        }
+
+        .log-direction {
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .log-direction.js-to-lua {
+            color: #4fc3f7;
+        }
+
+        .log-direction.lua-to-js {
+            color: #81c784;
+        }
+
+        .log-direction.error {
+            color: #ef5350;
+        }
+
+        .message-preview {
+            background: #1a1a1a;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 15px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .info-box {
+            background: #1a237e;
+            border-left: 4px solid #3949ab;
+            padding: 12px 15px;
+            border-radius: 0 6px 6px 0;
+            margin-top: 15px;
+            font-size: 13px;
+        }
+
+        .feature-list {
+            list-style: none;
+            margin-top: 10px;
+        }
+
+        .feature-list li {
+            padding: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .feature-list li::before {
+            content: "✓";
+            color: #66bb6a;
+            font-weight: bold;
+        }
+
+        input[type="text"] {
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            color: #e0e0e0;
+            padding: 10px;
+            border-radius: 6px;
+            width: 100%;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #4fc3f7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebView API Test</h1>
+        <div class="subtitle">
+            Verify bidirectional communication between Lua plugin and JavaScript
+            <span id="bridge-status" class="status pending">Checking bridge...</span>
+        </div>
+
+        <!-- Bridge Status -->
+        <div class="section">
+            <h2>Bridge Status</h2>
+            <ul class="feature-list">
+                <li>window.lingxi object: <span id="lingxi-obj">checking...</span></li>
+                <li>window.lingxi.postMessage: <span id="post-msg">checking...</span></li>
+                <li>window.onLingXiMessage handler: <span id="on-msg">checking...</span></li>
+                <li>Initial data received: <span id="init-data">waiting...</span></li>
+            </ul>
+        </div>
+
+        <!-- JS to Lua Tests -->
+        <div class="section">
+            <h2>JavaScript → Lua Tests</h2>
+            <div class="button-grid">
+                <button onclick="sendInit()">
+                    <strong>Send "init"</strong><br>
+                    <small>Simulate viewer initialization</small>
+                </button>
+                <button onclick="sendCopy()" class="secondary">
+                    <strong>Send "copy"</strong><br>
+                    <small>Copy text to clipboard via Lua</small>
+                </button>
+                <button onclick="sendCustom()" class="secondary">
+                    <strong>Send "custom"</strong><br>
+                    <small>Send custom message to Lua</small>
+                </button>
+                <button onclick="sendClose()" class="danger">
+                    <strong>Send "close"</strong><br>
+                    <small>Close window from JS</small>
+                </button>
+            </div>
+            <div style="margin-top: 15px;">
+                <input type="text" id="custom-message" placeholder="Enter custom message to send to Lua...">
+            </div>
+        </div>
+
+        <!-- Lua to JS Tests -->
+        <div class="section">
+            <h2>Lua → JavaScript Display</h2>
+            <div class="info-box">
+                Use the LingXi search panel (type "wv") and select "Send Test Message" to send a message from Lua to this WebView.
+            </div>
+            <div id="last-message" class="message-preview">
+                No messages received from Lua yet...
+            </div>
+        </div>
+
+        <!-- Communication Log -->
+        <div class="section">
+            <h2>Communication Log</h2>
+            <button onclick="clearLog()" class="secondary" style="margin-bottom: 10px;">Clear Log</button>
+            <div id="log" class="log-container">
+                <div class="log-entry">
+                    <span class="log-time" id="init-time"></span>
+                    <span class="log-direction">Waiting for first message...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Session Data Display -->
+        <div class="section">
+            <h2>Session Data (from Lua)</h2>
+            <div id="session-data" class="message-preview">
+                No session data received yet. Click "Send init" to request data from Lua.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let messageLog = [];
+        let initReceived = false;
+
+        // Check bridge availability
+        function checkBridge() {
+            const status = document.getElementById('bridge-status');
+            const lingxiObj = document.getElementById('lingxi-obj');
+            const postMsg = document.getElementById('post-msg');
+            const onMsg = document.getElementById('on-msg');
+
+            if (typeof window.lingxi === 'object' && window.lingxi !== null) {
+                lingxiObj.textContent = 'available';
+                lingxiObj.style.color = '#66bb6a';
+            } else {
+                lingxiObj.textContent = 'not found';
+                lingxiObj.style.color = '#ef5350';
+            }
+
+            if (typeof window.lingxi?.postMessage === 'function') {
+                postMsg.textContent = 'available';
+                postMsg.style.color = '#66bb6a';
+            } else {
+                postMsg.textContent = 'not found';
+                postMsg.style.color = '#ef5350';
+            }
+
+            if (typeof window.onLingXiMessage === 'function') {
+                onMsg.textContent = 'registered';
+                onMsg.style.color = '#66bb6a';
+            } else {
+                onMsg.textContent = 'not set';
+                onMsg.style.color = '#ef5350';
+            }
+
+            if (window.lingxi && window.lingxi.postMessage) {
+                status.textContent = 'Bridge Ready';
+                status.className = 'status ok';
+            } else {
+                status.textContent = 'Bridge Missing';
+                status.className = 'status error';
+            }
+        }
+
+        // Logging
+        function log(direction, message) {
+            const time = new Date().toLocaleTimeString();
+            messageLog.push({ time, direction, message });
+
+            const logContainer = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+
+            let directionClass = '';
+            let directionText = '';
+            if (direction === 'JS→Lua') {
+                directionClass = 'js-to-lua';
+                directionText = 'JS→Lua';
+            } else if (direction === 'Lua→JS') {
+                directionClass = 'lua-to-js';
+                directionText = 'Lua→JS';
+            } else {
+                directionClass = 'error';
+                directionText = direction;
+            }
+
+            const msgStr = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
+            entry.innerHTML = `<span class="log-time">${time}</span><span class="log-direction ${directionClass}">${directionText}</span>${msgStr.substring(0, 200)}${msgStr.length > 200 ? '...' : ''}`;
+
+            // Remove initial placeholder if exists
+            if (logContainer.children.length === 1 && logContainer.children[0].textContent.includes('Waiting')) {
+                logContainer.innerHTML = '';
+            }
+
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function clearLog() {
+            messageLog = [];
+            document.getElementById('log').innerHTML = '<div class="log-entry"><span class="log-direction">Log cleared</span></div>';
+        }
+
+        // Message handlers
+        function sendInit() {
+            const msg = { action: 'init', filePath: 'test.html' };
+            log('JS→Lua', msg);
+            window.lingxi.postMessage(msg);
+        }
+
+        function sendCopy() {
+            const msg = { action: 'copy', text: 'Hello from WebView! Copied at ' + new Date().toLocaleString() };
+            log('JS→Lua', msg);
+            window.lingxi.postMessage(msg);
+        }
+
+        function sendCustom() {
+            const text = document.getElementById('custom-message').value || 'Empty message';
+            const msg = { action: 'custom', payload: { message: text, timestamp: Date.now() } };
+            log('JS→Lua', msg);
+            window.lingxi.postMessage(msg);
+        }
+
+        function sendClose() {
+            const msg = { action: 'close' };
+            log('JS→Lua', msg);
+            window.lingxi.postMessage(msg);
+        }
+
+        // Receive messages from Lua
+        window.onLingXiMessage = function(data) {
+            log('Lua→JS', data);
+
+            try {
+                const parsed = JSON.parse(data);
+
+                // Update last message display
+                document.getElementById('last-message').textContent = JSON.stringify(parsed, null, 2);
+
+                // Handle session data
+                if (parsed.action === 'session_data') {
+                    initReceived = true;
+                    document.getElementById('init-data').textContent = 'received';
+                    document.getElementById('init-data').style.color = '#66bb6a';
+                    document.getElementById('session-data').textContent = JSON.stringify(parsed, null, 2);
+                }
+
+                // Handle echo messages
+                if (parsed.action === 'lua_message') {
+                    const echoDiv = document.createElement('div');
+                    echoDiv.style.marginTop = '10px';
+                    echoDiv.style.padding = '10px';
+                    echoDiv.style.background = '#1a237e';
+                    echoDiv.style.borderRadius = '4px';
+                    echoDiv.innerHTML = `<strong>Echo from Lua:</strong><br>${parsed.data || JSON.stringify(parsed)}`;
+                    document.getElementById('session-data').appendChild(echoDiv);
+                }
+            } catch (e) {
+                log('Error', 'Failed to parse message: ' + e.message);
+                document.getElementById('last-message').textContent = 'Raw: ' + data;
+            }
+        };
+
+        // Initialize
+        document.getElementById('init-time').textContent = new Date().toLocaleTimeString();
+        checkBridge();
+
+        // Auto-send init after a short delay
+        setTimeout(function() {
+            if (window.lingxi && window.lingxi.postMessage) {
+                sendInit();
+            }
+        }, 500);
+    </script>
+</body>
+</html>
