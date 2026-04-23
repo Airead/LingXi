@@ -152,10 +152,14 @@ local function _scan_session_jsonl(jsonl_path, project_name)
         return nil
     end
 
-    local meta = reader.read_metadata(jsonl_path)
-    if not meta then
+    -- Read metadata + detail in a single pass
+    local session_data = reader.read_session(jsonl_path)
+    if not session_data then
         return nil
     end
+
+    local meta = session_data.metadata
+    local detail = session_data.detail
 
     local project = _resolve_project_name(meta.cwd, project_name)
     local custom_title = meta.custom_title
@@ -168,9 +172,6 @@ local function _scan_session_jsonl(jsonl_path, project_name)
         meta.summary ~= "" and meta.summary or nil,
         meta.first_user_message
     )
-
-    -- Pre-read detail for preview (cached alongside session in disk cache)
-    local detail = reader.read_detail(jsonl_path, 10)
 
     -- Use filesystem mtime as modified time (reflects actual file change)
     local fs_mtime = cache.get_mtime(jsonl_path)

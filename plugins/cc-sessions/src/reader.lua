@@ -277,4 +277,195 @@ function M.read_detail(file_path, max_turns)
     return result
 end
 
+-- Read both metadata and detail in a single pass
+-- Returns: { metadata = {...}, detail = {...} } or nil
+function M.read_session(file_path)
+    -- Read first 80 lines (covers metadata within first 30 + detail turns)
+    local content = lingxi.file.read_lines(file_path, 80)
+    if not content then
+        return nil
+    end
+
+    local metadata = {
+        session_id = "",
+        cwd = "",
+        version = "",
+        git_branch = "",
+        first_timestamp = nil,
+        last_timestamp = nil,
+        custom_title = "",
+        summary = "",
+        first_user_message = nil,
+    }
+
+    local detail = {
+        turns = {},
+        total_input_tokens = 0,
+        total_output_tokens = 0,
+    }
+
+    local line_count = 0
+    local metadata_lines = 30
+    local turns_collected = 0
+    local max_turns = 10
+    local ASSISTANT_TRUNCATE = 200
+
+    for line in content:gmatch("[^\r\n]+") do
+        local trimmed = line:match("^%s*(.-)%s*$")
+        if trimmed == "" then
+            goto continue
+        end
+
+        line_count = line_count + 1
+
+        -- Detect custom-title entries (anywhere in the file)
+        if trimmed:find('"type":"custom-title"', 1, true) then
+            local ok, ct_obj = pcall(function()
+                return lingxi.json.parse(trimmed)
+            end)
+            if ok and type(ct_obj) == "table" then
+                metadata.custom_title = ct_obj.customTitle or ""
+            end
+        end
+
+        -- Extract plan title as summary via string matching
+        if metadata.summary == "" and trimmed:find('"planContent"', 1, true) and trimmed:find('"# ', 1, true) then
+            local pc_idx = trimmed:find('"planContent"', 1, true)
+            local heading_idx = trimmed:find('"# ', pc_idx, true)
+            if heading_idx then
+                local start = heading_idx + 3
+                local heading_text = trimmed:sub(start)
+                local end_pos = #heading_text + 1
+                for _, stop in ipairs({"\\n", '"'}) do
+                    local pos = heading_text:find(stop, 1, true)
+                    if pos and pos < end_pos then
+                        end_pos = pos
+                    end
+                end
+                metadata.summary = heading_text:sub(1, end_pos - 1):match("^%s*(.-)%s*$")
+            end
+        end
+
+        -- Extract metadata from early lines only
+        if line_count <= metadata_lines then
+            local ok, obj = pcall(function()
+                return lingxi.json.parse(trimmed)
+            end)
+            if ok and type(obj) == "table" then
+                local ts = obj.timestamp
+                if ts then
+                    if not metadata.first_timestamp then
+                        metadata.first_timestamp = ts
+                    end
+                    metadata.last_timestamp = ts
+                end
+
+                if metadata.cwd == "" and obj.cwd then
+                    metadata.cwd = obj.cwd
+                end
+                if metadata.version == "" and obj.version then
+                    metadata.version = obj.version
+                end
+                if metadata.git_branch == "" and obj.gitBranch then
+                    metadata.git_branch = obj.gitBranch
+                end
+
+                if metadata.first_user_message == nil and obj.type == "user" then
+                    local msg = obj.message or {}
+                    if type(msg) == "table" then
+                        local text = M.extract_user_text(msg.content or "")
+                        if text and text ~= "" then
+                            local is_noise = false
+                            local noise_patterns = {
+                                "^<local-command-caveat",
+                                "^<command-name",
+                                "^<command-message",
+                                "^<command-args",
+                                "^<system-reminder",
+                                "^<user-prompt-submit-hook",
+                            }
+                            for _, pattern in ipairs(noise_patterns) do
+                                if text:match(pattern) then
+                                    is_noise = true
+                                    break
+                                end
+                            end
+                            if not is_noise then
+                                metadata.first_user_message = text
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Extract detail (conversation turns + token usage)
+        do
+            local ok, obj = pcall(function()
+                return lingxi.json.parse(trimmed)
+            end)
+            if ok and type(obj) == "table" then
+                local msg_type = obj.type
+                local message = obj.message or {}
+                if type(message) == "table" then
+                    -- Sum token usage from all assistant messages
+                    if msg_type == "assistant" then
+                        local usage = message.usage or {}
+                        if type(usage) == "table" then
+                            detail.total_input_tokens = detail.total_input_tokens + (usage.input_tokens or 0)
+                            detail.total_output_tokens = detail.total_output_tokens + (usage.output_tokens or 0)
+                        end
+                    end
+
+                    -- Collect conversation turns (up to max_turns)
+                    if turns_collected < max_turns then
+                        if msg_type == "user" then
+                            local text = M.extract_user_text(message.content or "")
+                            if text and text ~= "" then
+                                local is_noise = false
+                                local noise_patterns = {
+                                    "^<local-command-caveat",
+                                    "^<command-name",
+                                    "^<command-message",
+                                    "^<command-args",
+                                    "^<system-reminder",
+                                    "^<user-prompt-submit-hook",
+                                }
+                                for _, pattern in ipairs(noise_patterns) do
+                                    if text:match(pattern) then
+                                        is_noise = true
+                                        break
+                                    end
+                                end
+                                if not is_noise then
+                                    table.insert(detail.turns, { role = "user", text = text })
+                                    turns_collected = turns_collected + 1
+                                end
+                            end
+                        elseif msg_type == "assistant" then
+                            local text = M.extract_assistant_text(message.content or "")
+                            if text and text ~= "" then
+                                if #text > ASSISTANT_TRUNCATE then
+                                    text = text:sub(1, ASSISTANT_TRUNCATE) .. "..."
+                                end
+                                table.insert(detail.turns, { role = "assistant", text = text })
+                                turns_collected = turns_collected + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        ::continue::
+    end
+
+    if metadata.first_timestamp == nil and metadata.first_user_message == nil then
+        lingxi.log.write("[reader] read_session: returning nil - no timestamp or user message found")
+        return nil
+    end
+
+    return { metadata = metadata, detail = detail }
+end
+
 return M
