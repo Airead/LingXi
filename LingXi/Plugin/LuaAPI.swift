@@ -490,8 +490,10 @@ nonisolated enum LuaAPI {
         }
 
         do {
-            try FileManager.default.moveItem(atPath: canonicalSrc, toPath: canonicalDst)
-            lua_pushboolean(L, 1)
+            let srcURL = URL(fileURLWithPath: canonicalSrc)
+            let dstURL = URL(fileURLWithPath: canonicalDst)
+            let result = try FileManager.default.replaceItemAt(dstURL, withItemAt: srcURL)
+            lua_pushboolean(L, result != nil ? 1 : 0)
         } catch {
             lua_pushboolean(L, 0)
         }

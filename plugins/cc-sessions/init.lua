@@ -107,7 +107,9 @@ local function _filter_sessions(sessions, project_filter, query)
         local scored = lingxi.fuzzy.search(query, fuzzy_input, { "text" })
         local filtered = {}
         for _, match in ipairs(scored) do
-            table.insert(filtered, search_items[match.index].session)
+            if match.item and match.item.session then
+                table.insert(filtered, match.item.session)
+            end
         end
         result = filtered
     end
@@ -477,11 +479,12 @@ function search(query)
                 local scored = lingxi.fuzzy.search(search_term, project_items, { "name" })
                 local items = {}
                 for _, match in ipairs(scored) do
-                    local project = project_items[match.index].original
-                    table.insert(items, {
-                        title = project,
-                        subtitle = "Filter sessions by project",
-                    })
+                    if match.item and match.item.original then
+                        table.insert(items, {
+                            title = match.item.original,
+                            subtitle = "Filter sessions by project",
+                        })
+                    end
                 end
                 return items
             end

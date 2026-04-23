@@ -6,6 +6,14 @@ local cache = require("src.cache")
 
 local M = {}
 
+-- ============================================================================
+-- Timing helper
+-- ============================================================================
+
+local function _elapsed(start)
+    return string.format("%.3f", os.clock() - start)
+end
+
 -- Derive project name from directory name (fallback)
 -- e.g. "-Users-fanrenhao-work-VoiceText" -> "VoiceText"
 local function _project_name_from_dir(dirname)
@@ -235,6 +243,8 @@ end
 
 -- Scan all sessions with incremental caching
 function M.scan_all()
+    local total_start = os.clock()
+
     -- 1. Memory cache hit with TTL (60 seconds)
     local mem = cache.get_memory_cache()
     if mem then
@@ -252,7 +262,10 @@ function M.scan_all()
     lingxi.log.write("[cc-sessions] scan_all: starting incremental scan")
 
     -- 3. Load disk cache (incremental: modify in-place)
+    local disk_start = os.clock()
     local disk_cache = cache.load_disk_cache()
+    lingxi.log.write("[cc-sessions]   load_disk_cache: " .. _elapsed(disk_start) .. "s")
+
     local sessions = {}
     local seen_ids = {}
     local live_paths = {}
@@ -270,6 +283,14 @@ function M.scan_all()
         return sessions
     end
 
+    local file_count = 0
+    local cache_hit = 0
+    local cache_miss = 0
+    local parse_time = 0
+    local stat_time = 0
+    local max_parse = 20  -- Limit fresh parsing to avoid long scans
+    local parsed_count = 0
+
     for _, entry in ipairs(entries) do
         if not entry.isDir then
             goto continue
@@ -279,7 +300,12 @@ function M.scan_all()
         local dir_fallback = _project_name_from_dir(entry.name)
 
         -- Load index supplements with mtime caching
+        local idx_start = os.clock()
         local index_lookup = _load_index_supplements(proj_dir)
+        local idx_elapsed = _elapsed(idx_start)
+        if idx_elapsed ~= "0.000" then
+            lingxi.log.write("[cc-sessions]   index_load (miss): " .. idx_elapsed .. "s")
+        end
 
         -- Scan all JSONL files
         local files = lingxi.file.list(proj_dir)
@@ -294,8 +320,11 @@ function M.scan_all()
 
             local jsonl_path = proj_dir .. "/" .. file.name
             live_paths[jsonl_path] = true
+            file_count = file_count + 1
 
+            local stat_start = os.clock()
             local mtime = cache.get_mtime(jsonl_path)
+            stat_time = stat_time + (os.clock() - stat_start)
             local session = nil
 
             -- Try disk cache first (incremental: modify disk_cache in-place)
@@ -305,9 +334,37 @@ function M.scan_all()
 
             -- Cache miss or no mtime: parse fresh and update disk_cache
             if not session then
-                session = _scan_session_jsonl(jsonl_path, dir_fallback)
-                if session and mtime then
-                    cache.put(disk_cache, jsonl_path, mtime, session)
+                cache_miss = cache_miss + 1
+                
+                -- Log detailed mtime comparison for debugging (first 5 misses)
+                if cache_miss <= 5 then
+                    local entry_info = disk_cache[jsonl_path]
+                    if entry_info then
+                        lingxi.log.write("[cc-sessions]   CACHE_MISS #" .. cache_miss .. " " .. jsonl_path)
+                        lingxi.log.write("[cc-sessions]     cached_mtime=" .. tostring(entry_info.mtime) .. " current_mtime=" .. tostring(mtime))
+                        lingxi.log.write("[cc-sessions]     cached_type=" .. type(entry_info.mtime) .. " current_type=" .. type(mtime))
+                    else
+                        lingxi.log.write("[cc-sessions]   CACHE_MISS #" .. cache_miss .. " (not in cache) mtime=" .. tostring(mtime) .. " " .. jsonl_path)
+                    end
+                end
+                
+                -- Limit fresh parsing
+                if parsed_count < max_parse then
+                    parsed_count = parsed_count + 1
+                    local parse_start = os.clock()
+                    session = _scan_session_jsonl(jsonl_path, dir_fallback)
+                    parse_time = parse_time + (os.clock() - parse_start)
+                    if session and mtime then
+                        cache.put(disk_cache, jsonl_path, mtime, session)
+                    end
+                end
+            else
+                cache_hit = cache_hit + 1
+                -- Log first 3 hits for comparison
+                if cache_hit <= 3 then
+                    local entry_info = disk_cache[jsonl_path]
+                    lingxi.log.write("[cc-sessions]   CACHE_HIT #" .. cache_hit .. " " .. jsonl_path)
+                    lingxi.log.write("[cc-sessions]     cached_mtime=" .. tostring(entry_info and entry_info.mtime))
                 end
             end
 
@@ -342,11 +399,19 @@ function M.scan_all()
         ::continue::
     end
 
+    lingxi.log.write("[cc-sessions]   files=" .. file_count .. " hit=" .. cache_hit .. " miss=" .. cache_miss .. " parsed=" .. parsed_count)
+    lingxi.log.write("[cc-sessions]   stat_time: " .. string.format("%.3f", stat_time) .. "s")
+    lingxi.log.write("[cc-sessions]   parse_time: " .. string.format("%.3f", parse_time) .. "s")
+
     -- 4. Prune deleted files from disk_cache (incremental)
+    local prune_start = os.clock()
     cache.prune(disk_cache, live_paths)
+    lingxi.log.write("[cc-sessions]   prune: " .. _elapsed(prune_start) .. "s")
 
     -- 5. Save disk cache (only if dirty)
+    local save_start = os.clock()
     cache.save_disk_cache()
+    lingxi.log.write("[cc-sessions]   save_disk: " .. _elapsed(save_start) .. "s")
 
     -- 6. Set memory cache with TTL
     cache.set_memory_cache(sessions)
@@ -355,11 +420,13 @@ function M.scan_all()
     cache.set_scanning(false)
 
     -- Sort by modified descending
+    local sort_start = os.clock()
     table.sort(sessions, function(a, b)
         return (a.modified or "") > (b.modified or "")
     end)
+    lingxi.log.write("[cc-sessions]   sort: " .. _elapsed(sort_start) .. "s")
 
-    lingxi.log.write("[cc-sessions] scan_all: returning " .. #sessions .. " sessions (scan complete)")
+    lingxi.log.write("[cc-sessions] scan_all: returning " .. #sessions .. " sessions (total=" .. _elapsed(total_start) .. "s)")
     return sessions
 end
 

@@ -8,7 +8,7 @@ local M = {}
 -- ============================================================================
 
 local CACHE_FILE_NAME = "sessions.json"
-local CACHE_VERSION = 2
+local CACHE_VERSION = 1
 
 -- ============================================================================
 -- Memory Cache with TTL
@@ -88,6 +88,15 @@ local function _ensure_cache_loaded()
     
     local path = _cache_file_path()
     if not path then
+        lingxi.log.write("[cc-sessions]   disk_cache: no cache path")
+        _disk_cache = {}
+        _disk_cache_loaded = true
+        return
+    end
+    
+    local exists = lingxi.file.exists(path)
+    if not exists then
+        lingxi.log.write("[cc-sessions]   disk_cache: file not exists: " .. path)
         _disk_cache = {}
         _disk_cache_loaded = true
         return
@@ -95,18 +104,38 @@ local function _ensure_cache_loaded()
     
     local content = lingxi.file.read(path)
     if not content then
+        lingxi.log.write("[cc-sessions]   disk_cache: read failed: " .. path)
         _disk_cache = {}
         _disk_cache_loaded = true
         return
     end
     
+    lingxi.log.write("[cc-sessions]   disk_cache: file exists, size=" .. #content)
+    
     local ok, data = pcall(function()
         return lingxi.json.parse(content)
     end)
     
-    if ok and type(data) == "table" and data.version == CACHE_VERSION then
-        _disk_cache = data.sessions or {}
+    if ok and type(data) == "table" then
+        lingxi.log.write("[cc-sessions]   disk_cache: parsed ok, version=" .. tostring(data.version) .. " expected=" .. CACHE_VERSION)
+        if data.version == CACHE_VERSION then
+            _disk_cache = data.sessions or {}
+            local count = 0
+            for _ in pairs(_disk_cache) do count = count + 1 end
+            lingxi.log.write("[cc-sessions]   disk_cache: loaded " .. count .. " entries")
+            -- Migrate old numeric mtime values to strings
+            for path, entry in pairs(_disk_cache) do
+                if type(entry) == "table" and type(entry.mtime) == "number" then
+                    entry.mtime = tostring(entry.mtime)
+                    _dirty = true
+                end
+            end
+        else
+            lingxi.log.write("[cc-sessions]   disk_cache: version mismatch, discarding")
+            _disk_cache = {}
+        end
     else
+        lingxi.log.write("[cc-sessions]   disk_cache: parse error: " .. tostring(data))
         _disk_cache = {}
     end
     _disk_cache_loaded = true
@@ -120,8 +149,11 @@ end
 function M.save_disk_cache(sessions_map)
     local path = _cache_file_path()
     if not path then
+        lingxi.log.write("[cc-sessions]   save_disk: no cache path")
         return
     end
+    
+    lingxi.log.write("[cc-sessions]   save_disk: dirty=" .. tostring(_dirty))
     
     if not _dirty then
         return
@@ -131,6 +163,10 @@ function M.save_disk_cache(sessions_map)
         version = CACHE_VERSION,
         sessions = sessions_map or _disk_cache or {}
     }
+    
+    local count = 0
+    for _ in pairs(data.sessions) do count = count + 1 end
+    lingxi.log.write("[cc-sessions]   save_disk: saving " .. count .. " entries")
     
     local ok, encoded = pcall(function()
         return lingxi.json.encode(data)
@@ -143,7 +179,12 @@ function M.save_disk_cache(sessions_map)
         if write_ok then
             lingxi.file.move(tmp_path, path)
             _dirty = false
+            lingxi.log.write("[cc-sessions]   save_disk: saved successfully")
+        else
+            lingxi.log.write("[cc-sessions]   save_disk: write failed")
         end
+    else
+        lingxi.log.write("[cc-sessions]   save_disk: encode error")
     end
 end
 
@@ -157,15 +198,21 @@ end
 
 function M.get(cache_map, file_path, mtime)
     local entry = cache_map[file_path]
-    if entry and entry.mtime == mtime then
-        return entry.data
+    if entry and entry.mtime then
+        local cached = tonumber(entry.mtime)
+        local current = tonumber(tostring(mtime))
+        -- Only re-parse if file is newer than cache (current > cached)
+        if cached and current and cached >= current then
+            return entry.data
+        end
     end
     return nil
 end
 
 function M.put(cache_map, file_path, mtime, data)
+    -- Store mtime as string to avoid JSON float precision issues on load
     cache_map[file_path] = {
-        mtime = mtime,
+        mtime = tostring(mtime),
         data = data
     }
     _dirty = true
