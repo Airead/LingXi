@@ -103,7 +103,7 @@ local function test_file_stat()
         _assert_type(stat, "table", "stat should return a table for existing file")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_path)
+        lingxi.file.rm(test_path)
     end)
 
     _run_test("returns correct mtime", function()
@@ -118,7 +118,7 @@ local function test_file_stat()
         _assert_near(stat.mtime, now, 5, "mtime should be close to current time")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_path)
+        lingxi.file.rm(test_path)
     end)
 
     _run_test("returns correct size", function()
@@ -130,7 +130,7 @@ local function test_file_stat()
         _assert_eq(stat.size, #content, "size should match content length")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_path)
+        lingxi.file.rm(test_path)
     end)
 
     _run_test("returns isDir=false for file", function()
@@ -141,18 +141,18 @@ local function test_file_stat()
         _assert_eq(stat.isDir, false, "isDir should be false for file")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_path)
+        lingxi.file.rm(test_path)
     end)
 
     _run_test("returns isDir=true for directory", function()
         local test_dir = "/tmp/lingxi-test-stat-dir"
-        lingxi.shell.exec("mkdir -p " .. test_dir)
+        lingxi.file.mkdir(test_dir)
         
         local stat = lingxi.file.stat(test_dir)
         _assert_eq(stat.isDir, true, "isDir should be true for directory")
         
         -- Clean up
-        lingxi.shell.exec("rmdir " .. test_dir)
+        lingxi.file.rmdir(test_dir)
     end)
 
     _run_test("returns nil for path outside whitelist", function()
@@ -173,7 +173,7 @@ local function test_cache_filesystem_integration()
         _assert_eq(ok, true, "should be able to write to cache directory")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_file)
+        lingxi.file.rm(test_file)
     end)
 
     _run_test("can read from cache directory", function()
@@ -187,7 +187,7 @@ local function test_cache_filesystem_integration()
         _assert_eq(read_back, content, "should read back same content from cache")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_file)
+        lingxi.file.rm(test_file)
     end)
 
     _run_test("can stat files in cache directory", function()
@@ -202,7 +202,7 @@ local function test_cache_filesystem_integration()
         _assert_eq(stat.size, 9, "size should be 9 bytes")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_file)
+        lingxi.file.rm(test_file)
     end)
 
     _run_test("can list cache directory", function()
@@ -216,7 +216,7 @@ local function test_cache_filesystem_integration()
         _assert(#entries >= 1, "cache directory should contain at least one entry")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_file)
+        lingxi.file.rm(test_file)
     end)
 
     _run_test("can use cache without filesystem permission", function()
@@ -264,9 +264,6 @@ local function test_stat_edge_cases()
         lingxi.file.write(test_path, "version 1")
         local stat1 = lingxi.file.stat(test_path)
         
-        -- Wait a bit to ensure different mtime
-        os.execute("sleep 1")
-        
         -- Modify file
         lingxi.file.write(test_path, "version 2 - longer content here")
         local stat2 = lingxi.file.stat(test_path)
@@ -274,7 +271,7 @@ local function test_stat_edge_cases()
         _assert(stat2.mtime >= stat1.mtime, "mtime should not decrease after modification")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_path)
+        lingxi.file.rm(test_path)
     end)
 end
 
@@ -299,7 +296,7 @@ local function test_cache_persistence()
         _assert_type(stat, "table", "file should exist on disk")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_file)
+        lingxi.file.rm(test_file)
     end)
 
     _run_test("can store JSON in cache", function()
@@ -335,7 +332,7 @@ local function test_cache_persistence()
         _assert_eq(decoded.version, 1, "version should match")
         
         -- Clean up
-        lingxi.shell.exec("rm " .. test_file)
+        lingxi.file.rm(test_file)
     end)
 end
 

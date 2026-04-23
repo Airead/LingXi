@@ -47,8 +47,9 @@ nonisolated enum LuaAPI {
         } else {
             var allowedPaths = permissions.filesystem
             if permissions.cache, !pluginId.isEmpty {
-                let cachePath = RegistryManager.cacheDirectory.appendingPathComponent(pluginId).path
-                allowedPaths.append(cachePath)
+                let cachePath = RegistryManager.cacheDirectory.appendingPathComponent(pluginId)
+                try? FileManager.default.createDirectory(at: cachePath, withIntermediateDirectories: true)
+                allowedPaths.append(cachePath.path)
             }
             filePermissions[pluginId] = allowedPaths
             registerFile(state: state)
@@ -174,7 +175,7 @@ nonisolated enum LuaAPI {
     // MARK: - lingxi.file
 
     private static func registerFile(state: LuaState) {
-        state.createTable(nrec: 5)
+        state.createTable(nrec: 8)
         state.pushFunction(fileRead)
         state.setField("read", at: -2)
         state.pushFunction(fileWrite)
@@ -185,11 +186,17 @@ nonisolated enum LuaAPI {
         state.setField("exists", at: -2)
         state.pushFunction(fileStat)
         state.setField("stat", at: -2)
+        state.pushFunction(fileMkdir)
+        state.setField("mkdir", at: -2)
+        state.pushFunction(fileRmdir)
+        state.setField("rmdir", at: -2)
+        state.pushFunction(fileRm)
+        state.setField("rm", at: -2)
         state.setField("file", at: -2)
     }
 
     private static func registerDisabledFile(state: LuaState) {
-        state.createTable(nrec: 5)
+        state.createTable(nrec: 8)
         state.pushFunction(disabledFileRead)
         state.setField("read", at: -2)
         state.pushFunction(disabledFileWrite)
@@ -200,6 +207,12 @@ nonisolated enum LuaAPI {
         state.setField("exists", at: -2)
         state.pushFunction(disabledFileStat)
         state.setField("stat", at: -2)
+        state.pushFunction(disabledFileMkdir)
+        state.setField("mkdir", at: -2)
+        state.pushFunction(disabledFileRmdir)
+        state.setField("rmdir", at: -2)
+        state.pushFunction(disabledFileRm)
+        state.setField("rm", at: -2)
         state.setField("file", at: -2)
     }
 
@@ -378,6 +391,81 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    /// `lingxi.file.mkdir(path) -> boolean`
+    private static let fileMkdir: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            try FileManager.default.createDirectory(atPath: canonicalPath, withIntermediateDirectories: true)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.rmdir(path) -> boolean`
+    private static let fileRmdir: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            try FileManager.default.removeItem(atPath: canonicalPath)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.rm(path) -> boolean`
+    private static let fileRm: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            try FileManager.default.removeItem(atPath: canonicalPath)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
     // MARK: - Disabled File Stubs
 
     private static let disabledFileStat: @convention(c) (OpaquePointer?) -> Int32 = { L in
@@ -411,6 +499,27 @@ nonisolated enum LuaAPI {
     private static let disabledFileExists: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.file.exists denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileMkdir: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.mkdir denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileRmdir: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.rmdir denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileRm: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.rm denied: filesystem permission not granted")
         lua_pushboolean(L, 0)
         return 1
     }
