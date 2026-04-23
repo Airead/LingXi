@@ -1,8 +1,8 @@
 -- scanner.lua - Session scanner for Claude Code sessions
 -- Discovers JSONL session files under ~/.claude/projects/
 
-local reader = require("reader")
-local cache = require("cache")
+local reader = require("src.reader")
+local cache = require("src.cache")
 
 local M = {}
 

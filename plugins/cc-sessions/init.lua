@@ -1,8 +1,8 @@
 -- init.lua - Claude Code Sessions plugin entry point
 -- Browse and search Claude Code session history.
 
-local scanner = require("scanner")
-local reader = require("reader")
+local scanner = require("src.scanner")
+local reader = require("src.reader")
 
 -- ============================================================================
 -- Query Parsing
@@ -285,7 +285,7 @@ end
 -- ============================================================================
 
 function cmd_clear_cache(args)
-    local cache = require("cache")
+    local cache = require("src.cache")
     cache.clear()
     lingxi.alert.show("Cache cleared!", 2.0)
     return { { title = "Cache cleared", subtitle = "Session scan cache has been cleared" } }
