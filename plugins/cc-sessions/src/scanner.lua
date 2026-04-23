@@ -293,8 +293,6 @@ function M.scan_all()
     local cache_miss = 0
     local parse_time = 0
     local stat_time = 0
-    local max_parse = 20  -- Limit fresh parsing to avoid long scans
-    local parsed_count = 0
 
     for _, entry in ipairs(entries) do
         if not entry.isDir then
@@ -353,15 +351,11 @@ function M.scan_all()
                     end
                 end
                 
-                -- Limit fresh parsing
-                if parsed_count < max_parse then
-                    parsed_count = parsed_count + 1
-                    local parse_start = os.clock()
-                    session = _scan_session_jsonl(jsonl_path, dir_fallback)
-                    parse_time = parse_time + (os.clock() - parse_start)
-                    if session and mtime then
-                        cache.put(disk_cache, jsonl_path, mtime, session)
-                    end
+                local parse_start = os.clock()
+                session = _scan_session_jsonl(jsonl_path, dir_fallback)
+                parse_time = parse_time + (os.clock() - parse_start)
+                if session and mtime then
+                    cache.put(disk_cache, jsonl_path, mtime, session)
                 end
             else
                 cache_hit = cache_hit + 1
@@ -404,7 +398,7 @@ function M.scan_all()
         ::continue::
     end
 
-    lingxi.log.write("[cc-sessions]   files=" .. file_count .. " hit=" .. cache_hit .. " miss=" .. cache_miss .. " parsed=" .. parsed_count)
+    lingxi.log.write("[cc-sessions]   files=" .. file_count .. " hit=" .. cache_hit .. " miss=" .. cache_miss)
     lingxi.log.write("[cc-sessions]   stat_time: " .. string.format("%.3f", stat_time) .. "s")
     lingxi.log.write("[cc-sessions]   parse_time: " .. string.format("%.3f", parse_time) .. "s")
 
