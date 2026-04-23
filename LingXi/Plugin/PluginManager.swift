@@ -62,6 +62,10 @@ final class PluginManager: PluginService {
 
     /// Reload all plugins: unregister old ones, re-scan, register new ones.
     func reload() async {
+        // Reset webview callback reference before unloading plugins.
+        // Otherwise luaL_unref in the next plugin load would access a
+        // Lua state that has already been closed.
+        LuaAPI.resetWebViewMessageState()
         for plugin in plugins {
             router.unregister(id: plugin.routerId)
         }

@@ -1102,6 +1102,13 @@ nonisolated enum LuaAPI {
     /// The Lua state that owns the webview message callback.
     private static var webviewMessageState: OpaquePointer?
 
+    /// Reset the webview message callback reference. Called by PluginManager before reload
+    /// to prevent accessing a Lua state that has already been closed.
+    static func resetWebViewMessageState() {
+        webviewMessageRef = 0
+        webviewMessageState = nil
+    }
+
     private static func registerWebView(state: LuaState) {
         state.createTable(nrec: 4)
         state.pushFunction(webviewOpen)
