@@ -52,10 +52,10 @@ end
 --   custom_title = string,
 --   summary = string,
 --   first_user_message = string,
---   user_msg_count = number,
 -- }
 function M.read_metadata(file_path)
-    local content = lingxi.file.read(file_path)
+    -- Read first 50 lines only (metadata is typically within first 30 lines)
+    local content = lingxi.file.read_lines(file_path, 50)
     if not content then
         lingxi.log.write("[reader] read_metadata: failed to read file " .. file_path)
         return nil
@@ -71,7 +71,6 @@ function M.read_metadata(file_path)
         custom_title = "",
         summary = "",
         first_user_message = nil,
-        user_msg_count = 0,
     }
 
     local metadata_lines = 30
@@ -84,16 +83,6 @@ function M.read_metadata(file_path)
         end
 
         line_count = line_count + 1
-
-        -- Count real user messages via string matching (entire file)
-        if trimmed:find('"type":"user"', 1, true) then
-            if not trimmed:find("tool_result", 1, true)
-               and not trimmed:find("toolUseResult", 1, true)
-               and not trimmed:find("<local-command-caveat>", 1, true)
-               and not trimmed:find("<command-name>", 1, true) then
-                result.user_msg_count = result.user_msg_count + 1
-            end
-        end
 
         -- Detect custom-title entries
         if trimmed:find('"type":"custom-title"', 1, true) then
@@ -200,7 +189,8 @@ end
 -- }
 function M.read_detail(file_path, max_turns)
     max_turns = max_turns or 10
-    local content = lingxi.file.read(file_path)
+    -- Read first 200 lines only (10 conversation turns typically within first 100-200 lines)
+    local content = lingxi.file.read_lines(file_path, 200)
     if not content then
         return { turns = {}, total_input_tokens = 0, total_output_tokens = 0 }
     end

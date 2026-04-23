@@ -190,7 +190,7 @@ local function _scan_session_jsonl(jsonl_path, project_name)
             git_branch = meta.git_branch,
             created = meta.first_timestamp or "",
             modified = fs_mtime or meta.last_timestamp or "",
-            message_count = meta.user_msg_count,
+            message_count = 0,
             version = meta.version,
             summary = meta.summary,
             custom_title = custom_title,
