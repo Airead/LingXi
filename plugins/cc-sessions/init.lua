@@ -202,7 +202,29 @@ local function _extract_subagent_model(jsonl_path)
     return ""
 end
 
-local function _list_subagents(file_path)
+local function _list_subagents(session)
+    if not session then
+        return {}
+    end
+
+    -- OpenCode: children live in the same SQLite table, keyed by parent_id.
+    if session.source == opencode_store.SOURCE then
+        local raw_list = opencode_store.list_subagents(session.session_id or "")
+        local subagents = {}
+        for _, a in ipairs(raw_list) do
+            table.insert(subagents, {
+                agent_id = a.agent_id,
+                agent_type = a.agent_type,
+                description = a.description,
+                file_path = "opencode://" .. a.agent_id,
+                model = a.model,
+            })
+        end
+        return subagents
+    end
+
+    -- CC: children are sibling JSONL files under <session>/subagents/.
+    local file_path = session.file_path
     if not file_path or file_path == "" then
         return {}
     end
@@ -281,6 +303,36 @@ local function _find_parent_session(file_path)
     return parent_dir .. ".jsonl"
 end
 
+-- Does a pseudo path like "opencode://<sid>" point to an opencode session?
+local function _is_opencode_path(s)
+    return type(s) == "string" and s:find("^opencode://") ~= nil
+end
+
+local function _opencode_sid_from_path(s)
+    if not _is_opencode_path(s) then
+        return nil
+    end
+    return s:sub(#"opencode://" + 1)
+end
+
+-- Build a session table for the webview from opencode metadata.
+local function _opencode_session_from_meta(meta, agent_id)
+    if not meta then
+        return nil
+    end
+    return {
+        file_path = "opencode://" .. agent_id,
+        title = meta.title,
+        project = meta.project,
+        git_branch = meta.git_branch or "",
+        version = meta.version or "",
+        cwd = meta.cwd or "",
+        session_id = agent_id,
+        source = opencode_store.SOURCE,
+        parent_session_id = meta.parent_id or "",
+    }
+end
+
 -- ============================================================================
 -- WebView State
 -- ============================================================================
@@ -326,19 +378,24 @@ lingxi.webview.on_message(function(raw)
             end
         end
 
-        -- Subagent detection is filesystem-based (only meaningful for cc
-        -- sessions). OpenCode subagent wiring lands in phase 4.
-        local is_cc = _current_session.source ~= opencode_store.SOURCE
-        local is_subagent = is_cc and _is_subagent(_current_session.file_path) or false
+        -- Subagent + parent link: cc uses filesystem layout, opencode uses
+        -- the parent_id column tracked on _current_session.
+        local is_subagent = false
         local parent_file_path = nil
-        if is_subagent then
-            parent_file_path = _find_parent_session(_current_session.file_path)
+        if _current_session.source == opencode_store.SOURCE then
+            local pid = _current_session.parent_session_id
+            if pid and pid ~= "" then
+                is_subagent = true
+                parent_file_path = "opencode://" .. pid
+            end
+        else
+            is_subagent = _is_subagent(_current_session.file_path)
+            if is_subagent then
+                parent_file_path = _find_parent_session(_current_session.file_path)
+            end
         end
 
-        local subagents = {}
-        if is_cc then
-            subagents = _list_subagents(_current_session.file_path)
-        end
+        local subagents = _list_subagents(_current_session)
 
         -- Send structured data to JS
         local payload = {
@@ -370,23 +427,32 @@ lingxi.webview.on_message(function(raw)
 
     elseif data.action == "open_subagent" then
         if data.file_path and data.file_path ~= "" then
-            local meta = reader.read_metadata(data.file_path)
-            if meta then
-                local session_id = data.file_path:match("([^/]+)%.jsonl$") or ""
-                local project = ""
-                if _current_session then
-                    project = _current_session.project
+            local session
+            if _is_opencode_path(data.file_path) then
+                local agent_id = _opencode_sid_from_path(data.file_path)
+                local meta = opencode_store.get_session_meta(agent_id)
+                session = _opencode_session_from_meta(meta, agent_id)
+            else
+                local meta = reader.read_metadata(data.file_path)
+                if meta then
+                    local session_id = data.file_path:match("([^/]+)%.jsonl$") or ""
+                    local project = ""
+                    if _current_session then
+                        project = _current_session.project
+                    end
+                    session = {
+                        file_path = data.file_path,
+                        title = meta.summary ~= "" and meta.summary or meta.custom_title ~= "" and meta.custom_title or "Subagent Session",
+                        project = project,
+                        git_branch = meta.git_branch or "",
+                        version = meta.version or "",
+                        cwd = meta.cwd or "",
+                        session_id = session_id,
+                        source = opencode_store.SOURCE_CC,
+                    }
                 end
-
-                local session = {
-                    file_path = data.file_path,
-                    title = meta.summary ~= "" and meta.summary or meta.custom_title ~= "" and meta.custom_title or "Subagent Session",
-                    project = project,
-                    git_branch = meta.git_branch or "",
-                    version = meta.version or "",
-                    cwd = meta.cwd or "",
-                    session_id = session_id,
-                }
+            end
+            if session then
                 _current_session = session
                 lingxi.webview.open("viewer.html", {
                     title = session.title,
@@ -398,23 +464,32 @@ lingxi.webview.on_message(function(raw)
 
     elseif data.action == "open_parent" then
         if data.file_path and data.file_path ~= "" then
-            local meta = reader.read_metadata(data.file_path)
-            if meta then
-                local session_id = data.file_path:match("([^/]+)%.jsonl$") or ""
-                local project = ""
-                if _current_session then
-                    project = _current_session.project
+            local session
+            if _is_opencode_path(data.file_path) then
+                local parent_id = _opencode_sid_from_path(data.file_path)
+                local meta = opencode_store.get_session_meta(parent_id)
+                session = _opencode_session_from_meta(meta, parent_id)
+            else
+                local meta = reader.read_metadata(data.file_path)
+                if meta then
+                    local session_id = data.file_path:match("([^/]+)%.jsonl$") or ""
+                    local project = ""
+                    if _current_session then
+                        project = _current_session.project
+                    end
+                    session = {
+                        file_path = data.file_path,
+                        title = meta.summary ~= "" and meta.summary or meta.custom_title ~= "" and meta.custom_title or "Parent Session",
+                        project = project,
+                        git_branch = meta.git_branch or "",
+                        version = meta.version or "",
+                        cwd = meta.cwd or "",
+                        session_id = session_id,
+                        source = opencode_store.SOURCE_CC,
+                    }
                 end
-
-                local session = {
-                    file_path = data.file_path,
-                    title = meta.summary ~= "" and meta.summary or meta.custom_title ~= "" and meta.custom_title or "Parent Session",
-                    project = project,
-                    git_branch = meta.git_branch or "",
-                    version = meta.version or "",
-                    cwd = meta.cwd or "",
-                    session_id = session_id,
-                }
+            end
+            if session then
                 _current_session = session
                 lingxi.webview.open("viewer.html", {
                     title = session.title,

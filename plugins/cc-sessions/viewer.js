@@ -212,6 +212,12 @@ let subagentList = [];
 const outlineItems = [];
 let activeOutlineIdx = -1;
 
+// Label for the assistant bubble. Defaults to "Claude" for cc sessions;
+// switches to "OpenCode" when the Lua side reports source === "opencode".
+function getAssistantLabel() {
+  return (sessionInfo && sessionInfo.source === "opencode") ? "OpenCode" : "Claude";
+}
+
 // ── Main entry: receive data from Lua ──
 window.onLingXiMessage = function(raw) {
   let data;
@@ -525,7 +531,7 @@ function renderConversation(messages) {
       const header = document.createElement("div");
       header.className = "turn-header";
       header.innerHTML = `
-        <span class="badge badge-assistant">Claude</span>
+        <span class="badge badge-assistant">${escapeHtml(getAssistantLabel())}</span>
         ${showTime ? `<span class="timestamp">${escapeHtml(firstTime)}</span>` : ""}
       `;
       turnEl.appendChild(header);

@@ -417,6 +417,52 @@ function M.list_sessions()
     return sessions
 end
 
+-- Return lightweight metadata for a single session (parent or subagent).
+-- Used when opening a session via a pseudo path and only the session id is
+-- known. Returns nil when the session doesn't exist or the db is unavailable.
+function M.get_session_meta(sid)
+    if not sid or sid == "" then
+        return nil
+    end
+    local db, err = _open_db()
+    if not db then
+        lingxi.log.write("[opencode_store] get_session_meta: db unavailable (" .. tostring(err) .. ")")
+        return nil
+    end
+    local row = db:queryOne([[
+        SELECT id, parent_id, slug, directory, title, version,
+               time_created, time_updated
+        FROM session
+        WHERE id = ?
+    ]], { sid })
+    db:close()
+    if not row then
+        return nil
+    end
+
+    local cwd = row.directory or ""
+    local project = _project_from_cwd(cwd, row.slug or "")
+    local title = row.title
+    if not title or title == "" then
+        title = row.slug or "Untitled"
+    end
+
+    return {
+        session_id = row.id,
+        parent_id = row.parent_id,
+        project = project,
+        cwd = cwd,
+        title = title,
+        git_branch = "",
+        version = row.version or "",
+        created = _ms_to_iso(row.time_created),
+        modified = _ms_to_iso(row.time_updated),
+        summary = "",
+        custom_title = "",
+        source = M.SOURCE,
+    }
+end
+
 -- Return the modelID of the first assistant message in a session.
 -- `db` must be an open handle owned by the caller (not closed here).
 local function _first_assistant_model(db, sid)
