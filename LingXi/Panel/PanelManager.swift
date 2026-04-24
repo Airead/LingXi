@@ -349,7 +349,8 @@ private struct PanelContentView: View {
                             result: result,
                             isSelected: index == viewModel.selectedIndex,
                             activeModifiers: viewModel.activeModifiers,
-                            shortcutNumber: index < PanelLayout.maxShortcutKeys ? index + 1 : nil
+                            shortcutNumber: index < PanelLayout.maxShortcutKeys ? index + 1 : nil,
+                            isPendingDelete: index == viewModel.pendingDeleteIndex
                         )
                         .id(result.id)
                     }
@@ -480,6 +481,14 @@ private struct SearchResultRow: View {
     var isSelected: Bool = false
     var activeModifiers: Set<ActionModifier> = []
     var shortcutNumber: Int?
+    var isPendingDelete: Bool = false
+
+    private var subtitleText: String {
+        if isPendingDelete {
+            return "\(result.deleteSubtitle)?"
+        }
+        return isSelected ? result.displaySubtitle(for: activeModifiers) : result.subtitle
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -504,9 +513,9 @@ private struct SearchResultRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.name)
                     .font(.system(size: 15))
-                Text(isSelected ? result.displaySubtitle(for: activeModifiers) : result.subtitle)
+                Text(subtitleText)
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isPendingDelete ? AnyShapeStyle(Color.red) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
             }
             Spacer()
             if let shortcutNumber {

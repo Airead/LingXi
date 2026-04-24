@@ -7,9 +7,21 @@ final class SearchViewModel: ObservableObject {
         didSet { onQueryChanged() }
     }
     @Published private(set) var results: [SearchResult] = []
-    @Published var selectedIndex: Int = 0
-    @Published var activeModifiers: Set<ActionModifier> = []
+    @Published var selectedIndex: Int = 0 {
+        didSet {
+            if oldValue != selectedIndex { pendingDeleteIndex = nil }
+        }
+    }
+    @Published var activeModifiers: Set<ActionModifier> = [] {
+        didSet {
+            // Releasing Command cancels any pending delete confirmation.
+            if oldValue.contains(.command) && !activeModifiers.contains(.command) {
+                pendingDeleteIndex = nil
+            }
+        }
+    }
     @Published private(set) var hasPreview: Bool = false
+    @Published private(set) var pendingDeleteIndex: Int?
 
     private struct HistoryBrowsing {
         let entries: [String]
@@ -88,6 +100,7 @@ final class SearchViewModel: ObservableObject {
 
         let currentQuery = query
         exitHistoryMode()
+        pendingDeleteIndex = nil
 
         // Check modifier actions first when modifiers are pressed
         if !modifiers.isEmpty, let modifierAction = selected.resolveModifierAction(for: modifiers) {
@@ -138,6 +151,26 @@ final class SearchViewModel: ObservableObject {
     func deleteSelected() {
         guard results.indices.contains(selectedIndex) else { return }
         let selected = results[selectedIndex]
+
+        // Plugin items with a delete_action use a two-press confirmation:
+        // first press sets pendingDeleteIndex (UI shows "Delete?"),
+        // second press on the same row executes the delete_action.
+        if let pluginDelete = selected.deleteAction {
+            if pendingDeleteIndex == selectedIndex {
+                pendingDeleteIndex = nil
+                let removedIndex = selectedIndex
+                let executed = pluginDelete(selected)
+                if executed, results.indices.contains(removedIndex) {
+                    results.remove(at: removedIndex)
+                    clampSelectedIndex()
+                }
+            } else {
+                pendingDeleteIndex = selectedIndex
+            }
+            return
+        }
+
+        // Legacy single-press delete for clipboard items.
         guard selected.resultType == .clipboard else { return }
         onDeleteItem?(selected.itemId)
         results.remove(at: selectedIndex)
@@ -223,6 +256,7 @@ final class SearchViewModel: ObservableObject {
     private func filterResults() {
         searchTask?.cancel()
         generation += 1
+        pendingDeleteIndex = nil
 
         guard !query.isEmpty else {
             results = []

@@ -205,6 +205,24 @@ actor LuaSearchProvider: SearchProvider {
         // Parse modifier actions
         result.modifierActions = parseModifierActions(at: index)
 
+        // Parse delete_action / delete_subtitle (cmd+delete, host handles 2-press confirm)
+        state.getField("delete_action", at: index)
+        if state.isFunction(at: -1) {
+            let ref = state.ref(at: -1)
+            result.deleteAction = { [weak self] _ in
+                guard let self else { return false }
+                Task {
+                    await self.executeAction(ref: ref)
+                }
+                return true
+            }
+            if let subtitle = state.stringField("delete_subtitle", at: index), !subtitle.isEmpty {
+                result.deleteSubtitle = subtitle
+            }
+        } else {
+            state.pop()
+        }
+
         // Parse preview data
         if let previewType = state.stringField("preview_type", at: index),
            let previewContent = state.stringField("preview", at: index) {

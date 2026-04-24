@@ -378,6 +378,63 @@ struct LuaSearchProviderTests {
         #expect(results[0].modifierActions[.option]?.subtitle == "Show details")
     }
 
+    @Test func deleteActionParsed() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Deletable",
+                        subtitle = "sub",
+                        delete_action = function() end,
+                        delete_subtitle = "Move to Trash"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "x")
+        #expect(results.count == 1)
+        #expect(results[0].deleteAction != nil)
+        #expect(results[0].deleteSubtitle == "Move to Trash")
+    }
+
+    @Test func deleteActionMissingLeavesNilAndDefaultSubtitle() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "NoDelete", subtitle = "sub" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "x")
+        #expect(results.count == 1)
+        #expect(results[0].deleteAction == nil)
+        #expect(results[0].deleteSubtitle == "Delete")
+    }
+
+    @Test func deleteActionWithoutSubtitleUsesDefault() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "NoSubtitle",
+                        subtitle = "sub",
+                        delete_action = function() end
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "x")
+        #expect(results.count == 1)
+        #expect(results[0].deleteAction != nil)
+        #expect(results[0].deleteSubtitle == "Delete")
+    }
+
     @Test func allModifierActions() async throws {
         let (provider, cleanup) = try makeTempPlugin(luaCode: """
             function search(query)
