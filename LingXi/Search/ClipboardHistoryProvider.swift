@@ -4,7 +4,7 @@ actor ClipboardHistoryProvider: SearchProvider {
     nonisolated let supportsPreview = true
     nonisolated static let itemIdPrefix = "clipboard:"
     nonisolated static let appItemIdPrefix = "clipboard:app:"
-    private static let appPreviewRowLimit = 20
+    nonisolated private static let appPreviewRowLimit = 20
 
     nonisolated static func extractId(from itemId: String) -> Int? {
         guard itemId.hasPrefix(itemIdPrefix), !itemId.hasPrefix(appItemIdPrefix) else {
