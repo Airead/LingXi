@@ -205,8 +205,8 @@ final class PanelManager {
                 self?.hide()
             }
         }
-        newPanel.onTab = { [weak self, weak viewModel] in
-            guard let self, let viewModel else { return }
+        newPanel.onTab = { [weak viewModel] in
+            guard let viewModel else { return }
             Task {
                 if let newQuery = await viewModel.tabComplete() {
                     viewModel.query = newQuery

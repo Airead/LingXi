@@ -101,14 +101,10 @@ final class PluginWebViewWindow: NSWindow {
 // MARK: - WKScriptMessageHandler
 
 extension PluginWebViewWindow: WKScriptMessageHandler {
-    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        let name = message.name
-        guard name == "lingxi" else { return }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "lingxi" else { return }
         guard let body = message.body as? String else { return }
-        
-        Task { @MainActor in
-            self.onMessageReceived?(body)
-        }
+        onMessageReceived?(body)
     }
 }
 

@@ -6,7 +6,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     nonisolated static let shared = NotificationManager()
 
     /// Injectable handler for testing notify API without sending real system notifications.
-    internal static var testingNotifyHandler: ((String, String) -> Bool)? = nil
+    internal nonisolated(unsafe) static var testingNotifyHandler: ((String, String) -> Bool)? = nil
 
     private nonisolated(unsafe) var hasRequestedAuthorization = false
 

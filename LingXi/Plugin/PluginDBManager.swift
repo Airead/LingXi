@@ -547,7 +547,7 @@ actor PluginDBManager {
 
 /// Internal connection wrapper. The `db` pointer is only touched while holding
 /// actor isolation on `PluginDBManager`, which serializes access.
-private final class Connection: @unchecked Sendable {
+private nonisolated final class Connection: @unchecked Sendable {
     let db: OpaquePointer
     let isReadOnly: Bool
 
