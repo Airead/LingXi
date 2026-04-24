@@ -1452,4 +1452,59 @@ struct LuaAPITests {
             assert(stat.size == 10, "expected size 10, got " .. tostring(stat.size))
         """)
     }
+
+    // MARK: - lingxi.crypto
+
+    @Test func cryptoSubtableExists() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.crypto) == 'table')")
+    }
+
+    @Test func cryptoMD5IsFunction() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.crypto.md5) == 'function')")
+    }
+
+    @Test func cryptoMD5EmptyString() throws {
+        let state = makeState()
+        try state.doString("""
+            local h = lingxi.crypto.md5("")
+            assert(h == 'd41d8cd98f00b204e9800998ecf8427e', "expected md5 of empty, got " .. tostring(h))
+        """)
+    }
+
+    @Test func cryptoMD5KnownVectors() throws {
+        let state = makeState()
+        try state.doString("""
+            assert(lingxi.crypto.md5("abc") == '900150983cd24fb0d6963f7d28e17f72')
+            assert(lingxi.crypto.md5("The quick brown fox jumps over the lazy dog") == '9e107d9d372bb6826bd81d3542a419d6')
+        """)
+    }
+
+    @Test func cryptoMD5MatchesKimiSessionHash() throws {
+        // Kimi Code CLI names each session directory after md5(cwd). Guard the
+        // invariant so the cc-sessions plugin's path mapping keeps working.
+        let state = makeState()
+        try state.doString("""
+            local h = lingxi.crypto.md5("/Users/fanrenhao/work/TongYou")
+            assert(h == '6150952528d797583537779afdcc6645', "got " .. tostring(h))
+        """)
+    }
+
+    @Test func cryptoMD5NilInput() throws {
+        let state = makeState()
+        try state.doString("""
+            local h = lingxi.crypto.md5(nil)
+            assert(h == nil, "expected nil, got " .. tostring(h))
+        """)
+    }
+
+    @Test func cryptoMD5Unicode() throws {
+        // Verify UTF-8 bytes (not the Swift scalar count) feed the digest.
+        let state = makeState()
+        try state.doString("""
+            local h = lingxi.crypto.md5("中文")
+            assert(h == 'a7bac2239fcdcb3a067903d8077c4a07', "got " .. tostring(h))
+        """)
+    }
 }

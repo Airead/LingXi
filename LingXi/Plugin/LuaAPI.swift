@@ -1,5 +1,6 @@
 import AppKit
 import CLua
+import CryptoKit
 import Foundation
 
 /// Registers `lingxi.*` APIs into a Lua state based on plugin permissions.
@@ -99,6 +100,7 @@ nonisolated enum LuaAPI {
         registerAlert(state: state)
         registerLog(state: state)
         registerJSON(state: state)
+        registerCrypto(state: state)
         registerFuzzy(state: state)
         state.setGlobal("lingxi")
     }
@@ -1564,6 +1566,33 @@ nonisolated enum LuaAPI {
 
     private static func registerFuzzy(state: LuaState) {
         LuaFuzzyAPI.register(state: state)
+    }
+
+    // MARK: - lingxi.crypto
+
+    private static func registerCrypto(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(cryptoMD5)
+        state.setField("md5", at: -2)
+        state.setField("crypto", at: -2)
+    }
+
+    /// `lingxi.crypto.md5(string) -> string | nil`
+    /// Returns the lowercase 32-char hex MD5 digest of the input.
+    /// MD5 is cryptographically broken — use this only for content addressing
+    /// or matching third-party tools (e.g. Kimi's session directory scheme),
+    /// never for authentication or integrity.
+    private static let cryptoMD5: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let cStr = lua_swift_tostring(L, 1) else {
+            lua_pushnil(L)
+            return 1
+        }
+        let input = String(cString: cStr)
+        let digest = Insecure.MD5.hash(data: Data(input.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        lua_pushstring(L, hex)
+        return 1
     }
 
     // MARK: - lingxi.webview
