@@ -417,6 +417,113 @@ function M.list_sessions()
     return sessions
 end
 
+-- Build a preview-grade detail table for a session: first N conversational
+-- turns + total token usage. Mirrors reader.read_detail's shape so the
+-- preview renderer can consume both sources uniformly.
+--
+-- Lazy (called when a row is previewed, not during scan) so it doesn't slow
+-- the launcher loop even on large databases. A session with no text turns
+-- returns an empty turns array.
+local _ASSISTANT_TRUNCATE = 200
+
+function M.get_session_detail(sid, max_turns)
+    max_turns = max_turns or 10
+    local result = { turns = {}, total_input_tokens = 0, total_output_tokens = 0 }
+    if not sid or sid == "" then
+        return result
+    end
+
+    local db, err = _open_db()
+    if not db then
+        lingxi.log.write("[opencode_store] get_session_detail: db unavailable (" .. tostring(err) .. ")")
+        return result
+    end
+
+    -- Totals across all assistant messages (one row).
+    local trow = db:queryOne([[
+        SELECT
+            COALESCE(SUM(CAST(json_extract(data, '$.tokens.input') AS INTEGER)), 0) AS inp,
+            COALESCE(SUM(CAST(json_extract(data, '$.tokens.output') AS INTEGER)), 0) AS outp
+        FROM message
+        WHERE session_id = ?
+          AND json_extract(data, '$.role') = 'assistant'
+    ]], { sid })
+    if trow then
+        result.total_input_tokens = trow.inp or 0
+        result.total_output_tokens = trow.outp or 0
+    end
+
+    -- Over-fetch a little so empty-text messages don't starve the turn list.
+    local fetch_n = max_turns * 3
+    if fetch_n < 20 then fetch_n = 20 end
+    local mrows = db:query([[
+        SELECT id, data, time_created
+        FROM message
+        WHERE session_id = ?
+        ORDER BY time_created
+        LIMIT ?
+    ]], { sid, fetch_n })
+    if not mrows or #mrows == 0 then
+        db:close()
+        return result
+    end
+
+    local msg_ids = {}
+    for _, m in ipairs(mrows) do
+        table.insert(msg_ids, m.id)
+    end
+    local mph = _placeholders(#msg_ids)
+    local prows = db:query(
+        "SELECT message_id, data FROM part WHERE message_id IN (" .. mph .. ") "
+        .. "ORDER BY time_created",
+        msg_ids
+    )
+
+    db:close()
+
+    local parts_by_msg = {}
+    if prows then
+        for _, pr in ipairs(prows) do
+            local pdata = _json_parse(pr.data)
+            if pdata then
+                if not parts_by_msg[pr.message_id] then
+                    parts_by_msg[pr.message_id] = {}
+                end
+                table.insert(parts_by_msg[pr.message_id], pdata)
+            end
+        end
+    end
+
+    for _, m in ipairs(mrows) do
+        if #result.turns >= max_turns then
+            break
+        end
+        local mdata = _json_parse(m.data)
+        if mdata then
+            local parts = parts_by_msg[m.id] or {}
+            local texts = {}
+            for _, p in ipairs(parts) do
+                if p.type == "text" and type(p.text) == "string" and p.text ~= "" and not p.synthetic then
+                    table.insert(texts, p.text)
+                end
+            end
+            local text = table.concat(texts, " ")
+            if text ~= "" then
+                if mdata.role == "user" then
+                    table.insert(result.turns, { role = "user", text = text })
+                elseif mdata.role == "assistant" then
+                    if #text > _ASSISTANT_TRUNCATE then
+                        text = text:sub(1, _ASSISTANT_TRUNCATE) .. "..."
+                    end
+                    table.insert(result.turns, { role = "assistant", text = text })
+                end
+            end
+        end
+    end
+
+    return result
+end
+
 -- Return lightweight metadata for a single session (parent or subagent).
 -- Used when opening a session via a pseudo path and only the session id is
 -- known. Returns nil when the session doesn't exist or the db is unavailable.

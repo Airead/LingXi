@@ -2,6 +2,7 @@
 -- Generates rich HTML preview with metadata pills, timestamps, and conversation turns.
 
 local reader = require("src.reader")
+local opencode_store = require("src.opencode_store")
 
 local M = {}
 
@@ -105,7 +106,16 @@ end
 
 -- Build an HTML preview for a session
 function M.build(session)
-    local detail = session.detail or reader.read_detail(session.file_path, 10)
+    -- cc sessions cache `detail` on the session record during scan; opencode
+    -- does not (lazy to keep scan snappy), so resolve it here per source.
+    local detail
+    if session.detail then
+        detail = session.detail
+    elseif session.source == opencode_store.SOURCE then
+        detail = opencode_store.get_session_detail(session.session_id, 10)
+    else
+        detail = reader.read_detail(session.file_path, 10)
+    end
 
     -- Build metadata pills (compact)
     local pills = {}
