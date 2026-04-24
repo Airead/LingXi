@@ -27,24 +27,31 @@ nonisolated enum LuaDBAPI {
             externalPermissions[pluginId] = externalPaths
         }
 
-        state.createTable(nrec: 3)
+        state.createTable(nrec: 4)
         state.pushFunction(dbOpen)
         state.setField("open", at: -2)
         state.pushFunction(dbOpenExternal)
         state.setField("openExternal", at: -2)
         state.pushFunction(dbSnapshot)
         state.setField("snapshot", at: -2)
+        state.pushFunction(dbBlob)
+        state.setField("blob", at: -2)
         state.setField("db", at: -2)
     }
 
     static func registerDisabled(state: LuaState) {
-        state.createTable(nrec: 3)
+        state.createTable(nrec: 4)
         state.pushFunction(disabledOpen)
         state.setField("open", at: -2)
         state.pushFunction(disabledOpen)
         state.setField("openExternal", at: -2)
         state.pushFunction(disabledSnapshot)
         state.setField("snapshot", at: -2)
+        // `blob` is a pure constructor — safe to register even without db
+        // permission. Plugins that never open a db won't have anywhere to
+        // send the wrapper, but calling it is harmless.
+        state.pushFunction(dbBlob)
+        state.setField("blob", at: -2)
         state.setField("db", at: -2)
     }
 
@@ -170,13 +177,18 @@ nonisolated enum LuaDBAPI {
                     params.append(.real(lua_swift_tonumber(L, -1)))
                 }
             case lua_swift_type_string():
-                if let c = lua_swift_tostring(L, -1) {
-                    params.append(.text(String(cString: c)))
-                } else {
-                    params.append(.null)
-                }
+                params.append(.text(readLuaString(L: L, at: -1)))
             case lua_swift_type_boolean():
                 params.append(.integer(lua_toboolean(L, -1) != 0 ? 1 : 0))
+            case lua_swift_type_table():
+                // Only recognized table shape is the BLOB marker produced by
+                // `lingxi.db.blob(str)`: { __blob = true, data = <string> }.
+                if let blob = readBlobMarker(L: L, at: -1) {
+                    params.append(.blob(blob))
+                } else {
+                    lua_swift_pop(L, 1)
+                    return (nil, "unsupported table at param \(i) (use lingxi.db.blob for binary)")
+                }
             default:
                 lua_swift_pop(L, 1)
                 return (nil, "unsupported param type at index \(i)")
@@ -186,7 +198,39 @@ nonisolated enum LuaDBAPI {
         return (params, nil)
     }
 
-    /// Push a PluginDBValue onto the Lua stack.
+    /// Read a Lua string at `index` as `String` — safe for binary bytes, uses
+    /// `lua_rawlen` so embedded NULs survive round-trips through Swift.
+    private static func readLuaString(L: OpaquePointer, at index: Int32) -> String {
+        guard let cstr = lua_swift_tostring(L, index) else { return "" }
+        let len = Int(lua_rawlen(L, index))
+        let data = Data(bytes: cstr, count: len)
+        return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+    }
+
+    /// Read raw bytes from a Lua string at `index` (binary-safe).
+    private static func readLuaBytes(L: OpaquePointer, at index: Int32) -> Data {
+        guard let cstr = lua_swift_tostring(L, index) else { return Data() }
+        let len = Int(lua_rawlen(L, index))
+        return Data(bytes: cstr, count: len)
+    }
+
+    /// If the table at `index` is `{ __blob = true, data = <string> }`,
+    /// return the raw bytes. Otherwise nil.
+    private static func readBlobMarker(L: OpaquePointer, at index: Int32) -> Data? {
+        let absIdx = lua_absindex(L, index)
+        lua_getfield(L, absIdx, "__blob")
+        let isBlob = lua_toboolean(L, -1) != 0
+        lua_swift_pop(L, 1)
+        guard isBlob else { return nil }
+        lua_getfield(L, absIdx, "data")
+        defer { lua_swift_pop(L, 1) }
+        guard lua_type(L, -1) == lua_swift_type_string() else { return nil }
+        return readLuaBytes(L: L, at: -1)
+    }
+
+    /// Push a PluginDBValue onto the Lua stack. BLOB columns are pushed as
+    /// raw Lua strings (Lua strings are byte-safe) so plugins can treat them
+    /// directly with string ops like `#b` for length.
     private static func pushValue(_ L: OpaquePointer, _ v: PluginDBValue) {
         switch v {
         case .null:
@@ -197,6 +241,14 @@ nonisolated enum LuaDBAPI {
             lua_pushnumber(L, d)
         case .text(let s):
             lua_pushstring(L, s)
+        case .blob(let d):
+            d.withUnsafeBytes { raw in
+                if let base = raw.baseAddress, d.count > 0 {
+                    _ = lua_pushlstring(L, base.assumingMemoryBound(to: CChar.self), d.count)
+                } else {
+                    _ = lua_pushlstring(L, "", 0)
+                }
+            }
         }
     }
 
@@ -529,6 +581,30 @@ nonisolated enum LuaDBAPI {
             luaL_setmetatable(L, externalMetatableName)
             return 1
         }
+    }
+
+    // MARK: - blob constructor
+
+    /// `lingxi.db.blob(str) -> { __blob = true, data = str }`
+    ///
+    /// A stable marker table that `db:exec`/`db:query` parameter readers
+    /// recognize and bind as SQLite BLOB. The string can contain embedded
+    /// NULs since Lua strings are byte-safe and `readLuaBytes` uses
+    /// `lua_rawlen` instead of C string conventions.
+    private static let dbBlob: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard lua_type(L, 1) == lua_swift_type_string() else {
+            lua_pushnil(L)
+            lua_pushstring(L, "lingxi.db.blob(str) requires a string argument")
+            return 2
+        }
+        // Build the marker table: { __blob = true, data = <string at 1> }
+        lua_createtable(L, 0, 2)
+        lua_pushboolean(L, 1)
+        lua_setfield(L, -2, "__blob")
+        lua_pushvalue(L, 1)
+        lua_setfield(L, -2, "data")
+        return 1
     }
 
     // MARK: - snapshot implementation

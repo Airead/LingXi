@@ -10,6 +10,7 @@ enum PluginDBValue: Sendable, Equatable {
     case integer(Int64)
     case real(Double)
     case text(String)
+    case blob(Data)
 }
 
 /// Row returned from a plugin query: column name -> value.
@@ -135,10 +136,8 @@ actor PluginDBManager {
             } else {
                 msg = "sqlite3_open_v2 rc=\(rc)"
             }
-            // Hint at TCC: readable file that SQLite cannot open often means
-            // the app is missing Full Disk Access for that location.
             if rc == SQLITE_CANTOPEN {
-                msg += " (may need Full Disk Access)"
+                msg += " — \(Self.cantOpenHint(path: canonicalPath))"
             }
             return .failure(.openFailed(msg))
         }
@@ -218,16 +217,17 @@ actor PluginDBManager {
         var srcDB: OpaquePointer?
         let srcRC = sqlite3_open_v2(srcURI, &srcDB, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil)
         if srcRC != SQLITE_OK {
-            let msg: String
+            var msg: String
             if let srcDB {
                 msg = String(cString: sqlite3_errmsg(srcDB))
                 sqlite3_close_v2(srcDB)
             } else {
                 msg = "sqlite3_open_v2 rc=\(srcRC)"
             }
-            var hinted = msg
-            if srcRC == SQLITE_CANTOPEN { hinted += " (may need Full Disk Access)" }
-            return .failure(.snapshotFailed("open source: \(hinted)"))
+            if srcRC == SQLITE_CANTOPEN {
+                msg += " — \(Self.cantOpenHint(path: canonicalSourcePath))"
+            }
+            return .failure(.snapshotFailed("open source: \(msg)"))
         }
         guard let srcDB else {
             return .failure(.snapshotFailed("null source handle"))
@@ -471,6 +471,13 @@ actor PluginDBManager {
                 rc = s.withCString { c in
                     sqlite3_bind_text(stmt, pos, c, -1, sqliteTransient)
                 }
+            case .blob(let d):
+                rc = d.withUnsafeBytes { raw in
+                    if let base = raw.baseAddress, d.count > 0 {
+                        return sqlite3_bind_blob(stmt, pos, base, Int32(d.count), sqliteTransient)
+                    }
+                    return sqlite3_bind_zeroblob(stmt, pos, 0)
+                }
             }
             if rc != SQLITE_OK {
                 let msg = String(cString: sqlite3_errmsg(db))
@@ -494,13 +501,36 @@ actor PluginDBManager {
         case SQLITE_NULL:
             return .null
         case SQLITE_BLOB:
-            // BLOB support is deferred to a later phase (see plan P5).
-            // For now, return text representation length so callers see non-null.
-            let bytes = sqlite3_column_bytes(stmt, index)
-            return .text("<blob:\(bytes) bytes>")
+            let count = Int(sqlite3_column_bytes(stmt, index))
+            if count == 0 { return .blob(Data()) }
+            if let ptr = sqlite3_column_blob(stmt, index) {
+                return .blob(Data(bytes: ptr, count: count))
+            }
+            return .blob(Data())
         default:
             return .null
         }
+    }
+
+    /// Diagnose why SQLite returned `SQLITE_CANTOPEN` by probing the path with
+    /// a POSIX `open()`. Distinguishes TCC / filesystem permissions from
+    /// missing files and other failures so plugins get actionable error text.
+    private static func cantOpenHint(path: String) -> String {
+        if !FileManager.default.fileExists(atPath: path) {
+            return "file not found"
+        }
+        let fd = Darwin.open(path, O_RDONLY)
+        if fd < 0 {
+            let e = errno
+            switch e {
+            case EACCES, EPERM:
+                return "permission denied (may need Full Disk Access)"
+            default:
+                return "open errno=\(e)"
+            }
+        }
+        Darwin.close(fd)
+        return "file readable but SQLite could not open (WAL/lock or header issue?)"
     }
 
     private static func applyDefaultPragmas(_ db: OpaquePointer) {

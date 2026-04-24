@@ -668,6 +668,60 @@ local function test_external_demo()
     end)
 end
 
+local function test_snapshot_demo()
+    _current_suite = "snapshot.demo"
+    -- Like external.demo: snapshot is gated by db_external_paths which this
+    -- plugin does not declare, so every call should be rejected.
+
+    _run_test("snapshot is a function", function()
+        _assert_type(lingxi.db.snapshot, "function", "snapshot must exist")
+    end)
+
+    _run_test("snapshot denied (no db_external_paths)", function()
+        local path, err = lingxi.db.snapshot("/tmp/anything.sqlite")
+        _assert_eq(path, nil, "expected nil path without whitelist")
+        _assert_type(err, "string", "expected error string")
+    end)
+end
+
+local function test_blob()
+    _current_suite = "blob"
+
+    _run_test("lingxi.db.blob is a function", function()
+        _assert_type(lingxi.db.blob, "function", "blob must exist")
+    end)
+
+    _run_test("blob round-trips binary bytes", function()
+        local db = _open_clean("blob_test")
+        db:exec("CREATE TABLE bin (id INTEGER PRIMARY KEY, payload BLOB)")
+        -- Bytes with NUL and 0xFF — proves binary-safety end-to-end.
+        local payload = string.char(72, 73, 0, 255, 254, 65, 0, 1)
+        _assert_eq(db:exec("INSERT INTO bin(payload) VALUES (?)",
+                           { lingxi.db.blob(payload) }), 1)
+        local row = assert(db:queryOne("SELECT payload FROM bin"))
+        _assert_eq(#row.payload, #payload, "blob length must match")
+        _assert_eq(row.payload, payload, "blob bytes must match")
+        local t = assert(db:queryOne("SELECT typeof(payload) AS t FROM bin"))
+        _assert_eq(t.t, "blob", "column should be stored as blob")
+        db:close()
+    end)
+
+    _run_test("blob rejects non-string arg", function()
+        local v, err = lingxi.db.blob(123)
+        _assert_eq(v, nil)
+        _assert_type(err, "string")
+    end)
+
+    _run_test("unrecognized table param is rejected", function()
+        local db = _open_clean("blob_bad_param")
+        db:exec("CREATE TABLE t (v BLOB)")
+        local ok, err = db:exec("INSERT INTO t(v) VALUES (?)", { { foo = 1 } })
+        _assert_eq(ok, nil, "expected bind failure on random table")
+        _assert_type(err, "string")
+        db:close()
+    end)
+end
+
 -- ============================================================================
 -- Result Reporting
 -- ============================================================================
@@ -782,6 +836,8 @@ local function run_all()
     test_transactions_manual()
     test_transaction()
     test_external_demo()
+    test_snapshot_demo()
+    test_blob()
     return _build_result_items()
 end
 
@@ -799,6 +855,8 @@ local _subsuites = {
     manualtx       = test_transactions_manual,
     transaction    = test_transaction,
     external       = test_external_demo,
+    snapshot       = test_snapshot_demo,
+    blob           = test_blob,
 }
 
 local function run_subsuite(key)
@@ -831,6 +889,8 @@ function search(query)
             { title = "test-db transaction", subtitle = "Test db:transaction(fn) commit/rollback semantics" },
             { title = "test-db manualtx",    subtitle = "Test manual BEGIN/COMMIT/ROLLBACK via exec" },
             { title = "test-db external",    subtitle = "Demo: openExternal permission gate (no whitelist)" },
+            { title = "test-db snapshot",    subtitle = "Demo: snapshot permission gate (no whitelist)" },
+            { title = "test-db blob",        subtitle = "Test BLOB round-trip via lingxi.db.blob()" },
             { title = "test-db:run-all",     subtitle = "Command: Run full test suite (copies to clipboard)" },
             { title = "test-db:clear-results", subtitle = "Command: Clear all test results" },
         }

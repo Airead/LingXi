@@ -716,4 +716,106 @@ struct LuaDBAPITests {
             assert(type(err) == 'string' and err:find("string") ~= nil)
         """)
     }
+
+    // MARK: - BLOB support (phase 5)
+
+    @Test func blobRoundTripPreservesBytes() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("blob_db"))
+            assert(db:exec("CREATE TABLE bin (id INTEGER PRIMARY KEY, payload BLOB)") == 0)
+            -- Bytes including embedded NUL and 0xFF to prove binary-safety.
+            local payload = string.char(72, 73, 0, 255, 254, 65, 0, 1)
+            assert(db:exec("INSERT INTO bin(payload) VALUES (?)", { lingxi.db.blob(payload) }) == 1)
+
+            local row = assert(db:queryOne("SELECT payload FROM bin WHERE id = 1"))
+            assert(#row.payload == #payload, "length mismatch: got " .. #row.payload)
+            assert(row.payload == payload, "byte payload mismatch")
+
+            -- Confirm the column was stored as BLOB, not TEXT.
+            local t = assert(db:queryOne("SELECT typeof(payload) AS t FROM bin"))
+            assert(t.t == "blob", "column typeof should be blob, got " .. tostring(t.t))
+            db:close()
+        """)
+    }
+
+    @Test func blobEmptyRoundTrip() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("blob_empty"))
+            db:exec("CREATE TABLE t (v BLOB)")
+            assert(db:exec("INSERT INTO t(v) VALUES (?)", { lingxi.db.blob("") }) == 1)
+            local row = assert(db:queryOne("SELECT v FROM t"))
+            assert(#row.v == 0, "empty blob should survive round trip")
+            db:close()
+        """)
+    }
+
+    @Test func blobRejectsNonStringArgument() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local v, err = lingxi.db.blob(123)
+            assert(v == nil)
+            assert(type(err) == 'string' and err:find("string") ~= nil,
+                   "expected string-arg error, got: " .. tostring(err))
+        """)
+    }
+
+    @Test func paramTableWithoutBlobMarkerIsRejected() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("bad_table"))
+            db:exec("CREATE TABLE t (v BLOB)")
+            local ok, err = db:exec("INSERT INTO t(v) VALUES (?)", { { foo = "bar" } })
+            assert(ok == nil)
+            assert(type(err) == 'string' and err:find("blob") ~= nil,
+                   "expected blob-related error, got: " .. tostring(err))
+            db:close()
+        """)
+    }
+
+    // MARK: - TCC / permission hint (phase 5)
+
+    @Test func openExternalHintsPermissionOnEACCES() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("locked.sqlite").path
+        seedExternalDB(at: extPath)
+        // Strip all permissions to simulate an OS-level denial (TCC analog).
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: extPath)
+        defer {
+            // Restore permission so cleanup can remove the file.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: extPath)
+        }
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(EXT)
+            assert(db == nil, "expected open to fail under chmod 0")
+            assert(type(err) == 'string', "err should be string")
+            local lower = err:lower()
+            assert(lower:find("permission") ~= nil or lower:find("full disk access") ~= nil,
+                   "expected permission hint, got: " .. tostring(err))
+        """)
+    }
 }
