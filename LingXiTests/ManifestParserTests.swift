@@ -18,6 +18,7 @@ struct ManifestParserTests {
             prefix = "tp"
             debounce = 150
             timeout = 3000
+            usage_boost = false
 
             [permissions]
             network = true
@@ -44,6 +45,7 @@ struct ManifestParserTests {
         #expect(manifest.prefix == "tp")
         #expect(manifest.debounce == 150)
         #expect(manifest.timeout == 3000)
+        #expect(manifest.usageBoost == false)
         #expect(manifest.permissions.network == true)
         #expect(manifest.permissions.clipboard == false)
         #expect(manifest.permissions.filesystem == ["/tmp", "~/.config"])
@@ -69,6 +71,7 @@ struct ManifestParserTests {
         #expect(manifest.prefix == "minimal")
         #expect(manifest.debounce == 100)
         #expect(manifest.timeout == 5000)
+        #expect(manifest.usageBoost == true)
         #expect(manifest.permissions.network == false)
         #expect(manifest.permissions.clipboard == false)
         #expect(manifest.permissions.filesystem == [])

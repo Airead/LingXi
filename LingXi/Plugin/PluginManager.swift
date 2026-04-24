@@ -306,7 +306,8 @@ final class PluginManager: PluginService {
             pluginDir: pluginDir,
             state: state,
             debounce: manifest.debounce,
-            timeout: manifest.timeout
+            timeout: manifest.timeout,
+            usageBoost: manifest.usageBoost
         )
 
         return LoadedPlugin(manifest: manifest, provider: provider)

@@ -11,16 +11,18 @@ actor LuaSearchProvider: SearchProvider {
 
     nonisolated let debounceMilliseconds: Int
     nonisolated let timeoutMilliseconds: Int
+    nonisolated let usageBoostEnabled: Bool
     nonisolated var supportsPreview: Bool { true }
 
     private let state: LuaState
     private weak var panelContext: PanelContext?
 
-    init(name: String, pluginDir: URL, state: LuaState, debounce: Int = 100, timeout: Int = 5000, panelContext: PanelContext? = nil) {
+    init(name: String, pluginDir: URL, state: LuaState, debounce: Int = 100, timeout: Int = 5000, usageBoost: Bool = true, panelContext: PanelContext? = nil) {
         self.name = name
         self.pluginDir = pluginDir
         self.debounceMilliseconds = debounce
         self.timeoutMilliseconds = timeout
+        self.usageBoostEnabled = usageBoost
         self.state = state
         self.panelContext = panelContext
     }
@@ -187,6 +189,7 @@ actor LuaSearchProvider: SearchProvider {
             url: url,
             score: score
         )
+        result.usageBoostEnabled = usageBoostEnabled
 
         state.getField("action", at: index)
         if state.isFunction(at: -1) {

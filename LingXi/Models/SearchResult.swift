@@ -63,6 +63,7 @@ nonisolated struct SearchResult: Identifiable, Sendable {
     var action: (@MainActor @Sendable (SearchResult) -> Bool)?
     var deleteAction: (@MainActor @Sendable (SearchResult) -> Bool)?
     var deleteSubtitle: String = "Delete"
+    var usageBoostEnabled: Bool = true
 
     private static let modifierPriority: [ActionModifier] = [.command, .option, .control]
 

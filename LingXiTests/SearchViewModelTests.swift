@@ -202,6 +202,27 @@ struct SearchViewModelTests {
         #expect(vm.results.first?.itemId == "app.second")
     }
 
+    @Test func usageBoostSkippedWhenItemOptsOut() async {
+        var first = SearchResult(itemId: "app.first", icon: nil, name: "First", subtitle: "",
+                                 resultType: .application, url: nil, score: 80.0)
+        first.usageBoostEnabled = false
+        var second = SearchResult(itemId: "app.second", icon: nil, name: "Second", subtitle: "",
+                                  resultType: .application, url: nil, score: 50.0)
+        second.usageBoostEnabled = false
+        let provider = StubSearchProvider(results: [first, second])
+        let db = await DatabaseManager()
+        let tracker = UsageTracker(database: db)
+        // Heavy usage on "Second" would normally flip the order; with boost disabled it shouldn't.
+        for _ in 0..<60 {
+            await tracker.record(query: "test", itemId: "app.second")
+        }
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, database: db, debounceMilliseconds: 0)
+        vm.query = "test"
+        await waitUntil { vm.results.count == 2 }
+        #expect(vm.results.first?.itemId == "app.first")
+    }
+
     @Test func noUsageDataPreservesOriginalOrder() async {
         let provider = StubSearchProvider(results: [
             SearchResult(itemId: "app.first", icon: nil, name: "First", subtitle: "",

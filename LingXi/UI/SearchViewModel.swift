@@ -318,6 +318,7 @@ final class SearchViewModel: ObservableObject {
         if let usageCounts = cachedUsageCounts, !usageCounts.isEmpty {
             for i in boosted.indices {
                 if boosted[i].itemId.hasPrefix(ClipboardHistoryProvider.itemIdPrefix) { continue }
+                if !boosted[i].usageBoostEnabled { continue }
                 let original = originalScores[boosted[i].itemId] ?? boosted[i].score
                 let count = usageCounts[boosted[i].itemId] ?? 0
                 boosted[i].score = original + Double(min(count, usageBoostCap)) * usageBoostPerUse

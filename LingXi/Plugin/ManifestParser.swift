@@ -37,9 +37,11 @@ nonisolated enum ManifestParser {
         let searchPrefix = doc.string("search", "prefix")
         let searchDebounce = doc.int("search", "debounce")
         let searchTimeout = doc.int("search", "timeout")
+        let searchUsageBoost = doc.bool("search", "usage_boost")
         let prefix = searchPrefix ?? id
         let debounce = searchDebounce ?? 100
         let timeout = searchTimeout ?? 5000
+        let usageBoost = searchUsageBoost ?? true
 
         // Permissions
         let network = doc.bool("permissions", "network") ?? false
@@ -74,6 +76,7 @@ nonisolated enum ManifestParser {
             minLingXiVersion: minLingXiVersion,
             debounce: debounce,
             timeout: timeout,
+            usageBoost: usageBoost,
             permissions: permissions,
             commands: commands,
             files: files
