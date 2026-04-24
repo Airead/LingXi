@@ -13,6 +13,7 @@ files = [
     "src/cache.lua",
     "src/preview.lua",
     "src/identicon.lua",
+    "src/opencode_store.lua",
     "viewer.html",
     "viewer.js",
     "vendor/marked.min.js",
@@ -33,6 +34,8 @@ shell = ["git"]
 store = true
 webview = true
 cache = true
+db = true
+db_external_paths = ["~/.local/share/opencode"]
 
 [[commands]]
 name = "cc-sessions:clear-cache"

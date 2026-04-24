@@ -3,6 +3,7 @@
 
 local reader = require("src.reader")
 local cache = require("src.cache")
+local opencode_store = require("src.opencode_store")
 
 local M = {}
 
@@ -441,6 +442,26 @@ function M.scan_all()
     local save_start = os.clock()
     cache.save_disk_cache()
     lingxi.log.write("[cc-sessions]   save_disk: " .. _elapsed(save_start) .. "s")
+
+    -- 5a. Tag every cc session with source (covers disk-cache entries written
+    --     before the source field existed) and merge OpenCode sessions.
+    --     OpenCode entries use a pseudo file_path `opencode://<sid>` so they
+    --     never collide with real JSONL paths and are not persisted to disk.
+    for _, s in ipairs(sessions) do
+        if not s.source then
+            s.source = opencode_store.SOURCE_CC
+        end
+    end
+    local oc_start = os.clock()
+    local oc_added = 0
+    for _, oc in ipairs(opencode_store.list_sessions()) do
+        if not seen_ids[oc.session_id] then
+            seen_ids[oc.session_id] = true
+            table.insert(sessions, oc)
+            oc_added = oc_added + 1
+        end
+    end
+    lingxi.log.write("[cc-sessions]   opencode: +" .. oc_added .. " sessions in " .. _elapsed(oc_start) .. "s")
 
     -- 6. Set memory cache with TTL
     cache.set_memory_cache(sessions)
