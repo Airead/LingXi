@@ -511,6 +511,125 @@ struct LuaAPITests {
         """)
     }
 
+    @Test func fileTailReturnsLastLines() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let filePath = tempDir.appendingPathComponent("tail.txt").path
+        try "a\nb\nc\nd\ne\n".write(toFile: filePath, atomically: true, encoding: .utf8)
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false, webview: false, cache: false),
+            pluginId: "test.file.tail"
+        )
+        try state.doString("""
+            local content = lingxi.file.tail("\(filePath)", 2)
+            assert(content == "d\\ne", "expected 'd\\\\ne', got '" .. tostring(content) .. "'")
+        """)
+    }
+
+    @Test func fileTailReturnsAllWhenFileShorter() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let filePath = tempDir.appendingPathComponent("short.txt").path
+        try "only\ntwo\n".write(toFile: filePath, atomically: true, encoding: .utf8)
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false, webview: false, cache: false),
+            pluginId: "test.file.tail-short"
+        )
+        try state.doString("""
+            local content = lingxi.file.tail("\(filePath)", 10)
+            assert(content == "only\\ntwo", "expected 'only\\\\ntwo', got '" .. tostring(content) .. "'")
+        """)
+    }
+
+    @Test func fileTailHandlesNoTrailingNewline() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let filePath = tempDir.appendingPathComponent("notrail.txt").path
+        try "x\ny\nz".write(toFile: filePath, atomically: true, encoding: .utf8)
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false, webview: false, cache: false),
+            pluginId: "test.file.tail-notrail"
+        )
+        try state.doString("""
+            local content = lingxi.file.tail("\(filePath)", 2)
+            assert(content == "y\\nz", "expected 'y\\\\nz', got '" .. tostring(content) .. "'")
+        """)
+    }
+
+    @Test func fileTailReturnsNilForMissingFile() throws {
+        let tempDir = makeTestTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tempDir.path], shell: [], notify: false, store: false, webview: false, cache: false),
+            pluginId: "test.file.tail-missing"
+        )
+        try state.doString("""
+            local content = lingxi.file.tail("\(tempDir.path)/missing.txt", 3)
+            assert(content == nil, "expected nil, got " .. tostring(content))
+        """)
+    }
+
+    @Test func fileTailDeniedOutsideWhitelist() throws {
+        let allowedDir = makeTestTempDir()
+        let deniedDir = makeTestTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: allowedDir)
+            try? FileManager.default.removeItem(at: deniedDir)
+        }
+
+        let deniedFile = deniedDir.appendingPathComponent("secret.txt").path
+        try "a\nb\nc\n".write(toFile: deniedFile, atomically: true, encoding: .utf8)
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [allowedDir.path], shell: [], notify: false, store: false, webview: false, cache: false),
+            pluginId: "test.file.tail-denied"
+        )
+        try state.doString("""
+            local content = lingxi.file.tail("\(deniedFile)", 2)
+            assert(content == nil, "expected nil, got " .. tostring(content))
+        """)
+    }
+
+    @Test func fileTrashDeniedOutsideWhitelist() throws {
+        let allowedDir = makeTestTempDir()
+        let deniedDir = makeTestTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: allowedDir)
+            try? FileManager.default.removeItem(at: deniedDir)
+        }
+
+        let deniedFile = deniedDir.appendingPathComponent("sensitive.txt").path
+        try "do not trash".write(toFile: deniedFile, atomically: true, encoding: .utf8)
+
+        let state = makeState(
+            permissions: PermissionConfig(network: false, clipboard: false, filesystem: [allowedDir.path], shell: [], notify: false, store: false, webview: false, cache: false),
+            pluginId: "test.file.trash-denied"
+        )
+        try state.doString("""
+            local ok = lingxi.file.trash("\(deniedFile)")
+            assert(ok == false, "expected false, got " .. tostring(ok))
+        """)
+        // File must not have been moved to user Trash.
+        #expect(FileManager.default.fileExists(atPath: deniedFile))
+    }
+
+    @Test func fileTailAndTrashDisabledWithoutPermission() throws {
+        let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: false, cache: false))
+        try state.doString("""
+            local content = lingxi.file.tail("/tmp/anything.txt", 2)
+            assert(content == nil, "expected nil from disabled tail, got " .. tostring(content))
+            local ok = lingxi.file.trash("/tmp/anything.txt")
+            assert(ok == false, "expected false from disabled trash, got " .. tostring(ok))
+        """)
+    }
+
     // MARK: - lingxi.shell
 
     @Test func shellSubtableExists() throws {

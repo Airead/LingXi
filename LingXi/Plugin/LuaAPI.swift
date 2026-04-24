@@ -175,11 +175,13 @@ nonisolated enum LuaAPI {
     // MARK: - lingxi.file
 
     private static func registerFile(state: LuaState) {
-        state.createTable(nrec: 10)
+        state.createTable(nrec: 12)
         state.pushFunction(fileRead)
         state.setField("read", at: -2)
         state.pushFunction(fileReadLines)
         state.setField("read_lines", at: -2)
+        state.pushFunction(fileTail)
+        state.setField("tail", at: -2)
         state.pushFunction(fileWrite)
         state.setField("write", at: -2)
         state.pushFunction(fileList)
@@ -194,17 +196,21 @@ nonisolated enum LuaAPI {
         state.setField("rmdir", at: -2)
         state.pushFunction(fileRm)
         state.setField("rm", at: -2)
+        state.pushFunction(fileTrash)
+        state.setField("trash", at: -2)
         state.pushFunction(fileMove)
         state.setField("move", at: -2)
         state.setField("file", at: -2)
     }
 
     private static func registerDisabledFile(state: LuaState) {
-        state.createTable(nrec: 10)
+        state.createTable(nrec: 12)
         state.pushFunction(disabledFileRead)
         state.setField("read", at: -2)
         state.pushFunction(disabledFileReadLines)
         state.setField("read_lines", at: -2)
+        state.pushFunction(disabledFileTail)
+        state.setField("tail", at: -2)
         state.pushFunction(disabledFileWrite)
         state.setField("write", at: -2)
         state.pushFunction(disabledFileList)
@@ -219,6 +225,8 @@ nonisolated enum LuaAPI {
         state.setField("rmdir", at: -2)
         state.pushFunction(disabledFileRm)
         state.setField("rm", at: -2)
+        state.pushFunction(disabledFileTrash)
+        state.setField("trash", at: -2)
         state.pushFunction(disabledFileMove)
         state.setField("move", at: -2)
         state.setField("file", at: -2)
@@ -343,6 +351,99 @@ nonisolated enum LuaAPI {
         }
 
         let result = lines.joined(separator: "\n")
+        lua_pushstring(L, result)
+        return 1
+    }
+
+    /// `lingxi.file.tail(path, max_lines) -> string | nil`
+    /// Reads the last `max_lines` lines from a file and returns them joined
+    /// by newlines in forward order. Files shorter than `max_lines` return
+    /// all their content. Empty files return "". Returns nil on error.
+    private static let fileTail: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+        let maxLines = Int(lua_swift_tointeger(L, 2))
+        guard maxLines > 0 else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        if !path.hasPrefix("/") {
+            let pid = pluginId(from: L)
+            if let pluginDir = pluginDirs[pid] {
+                path = pluginDir + "/" + path
+            }
+        }
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        guard let handle = FileHandle(forReadingAtPath: canonicalPath) else {
+            lua_pushnil(L)
+            return 1
+        }
+        defer { handle.closeFile() }
+
+        var fileSize = handle.seekToEndOfFile()
+        if fileSize == 0 {
+            lua_pushstring(L, "")
+            return 1
+        }
+
+        // Strip a trailing newline so "a\nb\n" (2 lines) isn't treated as 3.
+        let chunkSize: UInt64 = 4096
+        let newline: UInt8 = 0x0A
+        var collected = Data()
+        var newlineCount = 0
+
+        handle.seek(toFileOffset: fileSize - 1)
+        let lastByte = handle.readData(ofLength: 1)
+        if lastByte.first == newline {
+            fileSize -= 1
+        }
+
+        // Read chunks backwards until we have at least maxLines newlines or
+        // reach BOF. Each newline we've seen is a line-boundary behind us —
+        // the Nth newline from the end is the separator for the last N lines.
+        var cursor = fileSize
+        while cursor > 0 && newlineCount < maxLines {
+            let readLen = min(chunkSize, cursor)
+            cursor -= readLen
+            handle.seek(toFileOffset: cursor)
+            let chunk = handle.readData(ofLength: Int(readLen))
+            for byte in chunk where byte == newline {
+                newlineCount += 1
+            }
+            collected = chunk + collected
+        }
+
+        // Slice off bytes before the (maxLines)-th newline from the end. If
+        // we didn't accumulate that many newlines, keep everything.
+        var startIndex = 0
+        if newlineCount >= maxLines {
+            var seen = 0
+            for i in (0..<collected.count).reversed() where collected[i] == newline {
+                seen += 1
+                if seen == maxLines {
+                    startIndex = i + 1
+                    break
+                }
+            }
+        }
+
+        let sliced = collected.subdata(in: startIndex..<collected.count)
+        guard let result = String(data: sliced, encoding: .utf8) else {
+            lua_pushnil(L)
+            return 1
+        }
         lua_pushstring(L, result)
         return 1
     }
@@ -546,6 +647,33 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    /// `lingxi.file.trash(path) -> boolean`
+    /// Moves a file or directory to the user's Trash (recoverable via Finder).
+    private static let fileTrash: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        let url = URL(fileURLWithPath: canonicalPath)
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
     /// `lingxi.file.move(src, dst) -> boolean`
     private static let fileMove: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
@@ -599,6 +727,13 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    private static let disabledFileTail: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.tail denied: filesystem permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
     private static let disabledFileWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.file.write denied: filesystem permission not granted")
@@ -637,6 +772,13 @@ nonisolated enum LuaAPI {
     private static let disabledFileRm: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.file.rm denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileTrash: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.trash denied: filesystem permission not granted")
         lua_pushboolean(L, 0)
         return 1
     }
