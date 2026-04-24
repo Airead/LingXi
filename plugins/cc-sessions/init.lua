@@ -5,6 +5,47 @@ local scanner = require("src.scanner")
 local reader = require("src.reader")
 local preview = require("src.preview")
 local identicon = require("src.identicon")
+local opencode_store = require("src.opencode_store")
+
+-- ============================================================================
+-- OpenCode Export Helpers
+-- ============================================================================
+
+-- Export an opencode session to a JSONL file under the plugin cache.
+-- Returns the exported file path on success, nil on failure.
+-- Always re-exports (force) so the viewer sees the latest parts.
+local function _ensure_opencode_jsonl(session)
+    if not session or session.source ~= opencode_store.SOURCE then
+        return nil
+    end
+    local cache_dir = lingxi.cache.getPath()
+    if not cache_dir or cache_dir == "" then
+        lingxi.log.write("[cc-sessions] opencode export: cache path unavailable")
+        return nil
+    end
+    local dir = cache_dir .. "/opencode-export"
+    lingxi.file.mkdir(dir)
+    local out_path = dir .. "/" .. session.session_id .. ".jsonl"
+    local ok, err = opencode_store.export_to_jsonl(session.session_id, out_path)
+    if not ok then
+        lingxi.log.write("[cc-sessions] opencode export failed for " .. tostring(session.session_id) .. ": " .. tostring(err))
+        return nil
+    end
+    return out_path
+end
+
+-- Resolve the viewer file path for a session. For cc sessions, returns
+-- session.file_path as-is. For opencode sessions, exports the session to a
+-- JSONL under the plugin cache and returns that path.
+local function _resolve_viewer_path(session)
+    if not session then
+        return nil
+    end
+    if session.source == opencode_store.SOURCE then
+        return _ensure_opencode_jsonl(session)
+    end
+    return session.file_path
+end
 
 -- ============================================================================
 -- Query Parsing
@@ -260,7 +301,13 @@ lingxi.webview.on_message(function(raw)
             return
         end
 
-        local content = lingxi.file.read(_current_session.file_path)
+        local viewer_path = _resolve_viewer_path(_current_session)
+        if not viewer_path then
+            lingxi.log.write("[cc-sessions] init: no viewer path for session " .. tostring(_current_session.session_id))
+            return
+        end
+
+        local content = lingxi.file.read(viewer_path)
         if not content then
             return
         end
@@ -279,15 +326,19 @@ lingxi.webview.on_message(function(raw)
             end
         end
 
-        -- Check if this is a subagent and find parent
-        local is_subagent = _is_subagent(_current_session.file_path)
+        -- Subagent detection is filesystem-based (only meaningful for cc
+        -- sessions). OpenCode subagent wiring lands in phase 4.
+        local is_cc = _current_session.source ~= opencode_store.SOURCE
+        local is_subagent = is_cc and _is_subagent(_current_session.file_path) or false
         local parent_file_path = nil
         if is_subagent then
             parent_file_path = _find_parent_session(_current_session.file_path)
         end
 
-        -- List subagents
-        local subagents = _list_subagents(_current_session.file_path)
+        local subagents = {}
+        if is_cc then
+            subagents = _list_subagents(_current_session.file_path)
+        end
 
         -- Send structured data to JS
         local payload = {
@@ -299,6 +350,7 @@ lingxi.webview.on_message(function(raw)
                 version = _current_session.version or "",
                 cwd = _current_session.cwd or "",
                 session_id = _current_session.session_id or "",
+                source = _current_session.source or opencode_store.SOURCE_CC,
                 is_subagent = is_subagent,
                 parent_file_path = parent_file_path,
             },
@@ -396,6 +448,10 @@ local function _build_result_item(session, rank)
     -- usage boost is disabled via plugin.toml (usage_boost = false).
     local score = 10000 - (rank or 1)
 
+    local is_opencode = session.source == opencode_store.SOURCE
+    local cmd_subtitle = is_opencode and "Copy session id" or "Copy file path"
+    local delete_subtitle = is_opencode and "Trash not supported for OpenCode" or "Move to Trash"
+
     return {
         title = session.title,
         subtitle = table.concat(subtitle_parts, " · "),
@@ -412,18 +468,33 @@ local function _build_result_item(session, rank)
                 height = 700
             })
             if not ok then
-                -- Fallback: open with default application
-                lingxi.alert.show("Opening with default app...", 1.5)
-                lingxi.shell.exec("open " .. session.file_path)
+                if is_opencode then
+                    lingxi.alert.show("Unable to open viewer for OpenCode session", 2.0)
+                else
+                    -- Fallback: open with default application
+                    lingxi.alert.show("Opening with default app...", 1.5)
+                    lingxi.shell.exec("open " .. session.file_path)
+                end
             end
         end,
         cmd_action = function()
-            lingxi.clipboard.write(session.file_path)
-            lingxi.alert.show("Path copied!", 1.5)
+            if is_opencode then
+                lingxi.clipboard.write(session.session_id)
+                lingxi.alert.show("Session ID copied!", 1.5)
+            else
+                lingxi.clipboard.write(session.file_path)
+                lingxi.alert.show("Path copied!", 1.5)
+            end
         end,
-        cmd_subtitle = "Copy file path",
+        cmd_subtitle = cmd_subtitle,
         delete_action = function()
             -- Host handles the two-press "Delete?" confirmation before calling this.
+            if is_opencode then
+                -- OpenCode sessions live in a shared SQLite DB; the plugin has
+                -- read-only access and must not mutate it.
+                lingxi.alert.show("OpenCode sessions can't be deleted here", 2.0)
+                return
+            end
             local ok = lingxi.file.trash(session.file_path)
             if ok then
                 lingxi.alert.show("Session moved to Trash", 1.5)
@@ -433,7 +504,7 @@ local function _build_result_item(session, rank)
                 lingxi.alert.show("Failed to move to Trash", 2.0)
             end
         end,
-        delete_subtitle = "Move to Trash",
+        delete_subtitle = delete_subtitle,
     }
 end
 
