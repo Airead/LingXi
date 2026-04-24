@@ -229,7 +229,9 @@ final class PanelManager {
     }
 
     private func updatePanelSize(_ panel: FloatingPanel, results: [SearchResult], hasPreview: Bool) {
-        let visibleRows = min(results.count, PanelLayout.maxVisibleRows)
+        let visibleRows = hasPreview
+            ? PanelLayout.maxVisibleRows
+            : min(results.count, PanelLayout.maxVisibleRows)
         let listHeight = CGFloat(visibleRows) * PanelLayout.rowHeight
         let newHeight = PanelLayout.searchBarHeight + listHeight
 
