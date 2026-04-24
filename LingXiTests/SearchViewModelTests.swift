@@ -202,6 +202,27 @@ struct SearchViewModelTests {
         #expect(vm.results.first?.itemId == "app.second")
     }
 
+    @Test func usageBoostSkippedWhenItemOptsOut() async {
+        var first = SearchResult(itemId: "app.first", icon: nil, name: "First", subtitle: "",
+                                 resultType: .application, url: nil, score: 80.0)
+        first.usageBoostEnabled = false
+        var second = SearchResult(itemId: "app.second", icon: nil, name: "Second", subtitle: "",
+                                  resultType: .application, url: nil, score: 50.0)
+        second.usageBoostEnabled = false
+        let provider = StubSearchProvider(results: [first, second])
+        let db = await DatabaseManager()
+        let tracker = UsageTracker(database: db)
+        // Heavy usage on "Second" would normally flip the order; with boost disabled it shouldn't.
+        for _ in 0..<60 {
+            await tracker.record(query: "test", itemId: "app.second")
+        }
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, database: db, debounceMilliseconds: 0)
+        vm.query = "test"
+        await waitUntil { vm.results.count == 2 }
+        #expect(vm.results.first?.itemId == "app.first")
+    }
+
     @Test func noUsageDataPreservesOriginalOrder() async {
         let provider = StubSearchProvider(results: [
             SearchResult(itemId: "app.first", icon: nil, name: "First", subtitle: "",
@@ -782,4 +803,95 @@ struct SearchViewModelTests {
         #expect(modifierActionCalled == true)
         #expect(defaultActionCalled == false)
     }
+
+    // MARK: - Two-press delete confirmation
+
+    private func makeDeletableVM(invocationBox: InvocationBox) async -> SearchViewModel {
+        var first = SearchResult(itemId: "plugin.a", icon: nil, name: "First", subtitle: "sub",
+                                 resultType: .command, url: nil, score: 2.0)
+        first.deleteAction = { _ in
+            invocationBox.count += 1
+            return true
+        }
+        first.deleteSubtitle = "Trash"
+        let second = SearchResult(itemId: "plugin.b", icon: nil, name: "Second", subtitle: "sub",
+                                  resultType: .command, url: nil, score: 1.0)
+        let provider = StubSearchProvider(results: [first, second])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "x"
+        await waitUntil { !vm.results.isEmpty }
+        return vm
+    }
+
+    @Test func firstCmdDeleteSetsPendingWithoutInvoking() async {
+        let box = InvocationBox()
+        let vm = await makeDeletableVM(invocationBox: box)
+        vm.deleteSelected()
+        #expect(vm.pendingDeleteIndex == 0)
+        #expect(box.count == 0)
+        #expect(vm.results.count == 2)
+    }
+
+    @Test func secondCmdDeleteOnSameRowExecutesAndRemoves() async {
+        let box = InvocationBox()
+        let vm = await makeDeletableVM(invocationBox: box)
+        vm.deleteSelected()
+        vm.deleteSelected()
+        #expect(box.count == 1)
+        #expect(vm.pendingDeleteIndex == nil)
+        #expect(vm.results.count == 1)
+        #expect(vm.results.first?.itemId == "plugin.b")
+    }
+
+    @Test func selectionChangeCancelsPendingDelete() async {
+        let box = InvocationBox()
+        let vm = await makeDeletableVM(invocationBox: box)
+        vm.deleteSelected()
+        #expect(vm.pendingDeleteIndex == 0)
+        vm.moveDown()
+        #expect(vm.pendingDeleteIndex == nil)
+        // Next cmd+delete on new row requires its own first press.
+        vm.deleteSelected()
+        #expect(box.count == 0)
+    }
+
+    @Test func queryChangeCancelsPendingDelete() async {
+        let box = InvocationBox()
+        let vm = await makeDeletableVM(invocationBox: box)
+        vm.deleteSelected()
+        #expect(vm.pendingDeleteIndex == 0)
+        vm.query = "y"
+        #expect(vm.pendingDeleteIndex == nil)
+    }
+
+    @Test func releasingCommandCancelsPendingDelete() async {
+        let box = InvocationBox()
+        let vm = await makeDeletableVM(invocationBox: box)
+        vm.activeModifiers = [.command]
+        vm.deleteSelected()
+        #expect(vm.pendingDeleteIndex == 0)
+        vm.activeModifiers = []
+        #expect(vm.pendingDeleteIndex == nil)
+    }
+
+    @Test func cmdDeleteIgnoredWhenNoDeleteAction() async {
+        // Clipboard-style items without deleteAction go through the legacy path;
+        // command items without either should be no-ops.
+        let result = SearchResult(itemId: "plain", icon: nil, name: "Plain", subtitle: "",
+                                  resultType: .command, url: nil, score: 1.0)
+        let provider = StubSearchProvider(results: [result])
+        let router = SearchRouter(defaultProvider: provider)
+        let vm = await SearchViewModel(router: router, debounceMilliseconds: 0)
+        vm.query = "x"
+        await waitUntil { !vm.results.isEmpty }
+        vm.deleteSelected()
+        #expect(vm.pendingDeleteIndex == nil)
+        #expect(vm.results.count == 1)
+    }
+}
+
+@MainActor
+private final class InvocationBox {
+    var count: Int = 0
 }

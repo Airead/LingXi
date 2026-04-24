@@ -11,16 +11,18 @@ actor LuaSearchProvider: SearchProvider {
 
     nonisolated let debounceMilliseconds: Int
     nonisolated let timeoutMilliseconds: Int
+    nonisolated let usageBoostEnabled: Bool
     nonisolated var supportsPreview: Bool { true }
 
     private let state: LuaState
     private weak var panelContext: PanelContext?
 
-    init(name: String, pluginDir: URL, state: LuaState, debounce: Int = 100, timeout: Int = 5000, panelContext: PanelContext? = nil) {
+    init(name: String, pluginDir: URL, state: LuaState, debounce: Int = 100, timeout: Int = 5000, usageBoost: Bool = true, panelContext: PanelContext? = nil) {
         self.name = name
         self.pluginDir = pluginDir
         self.debounceMilliseconds = debounce
         self.timeoutMilliseconds = timeout
+        self.usageBoostEnabled = usageBoost
         self.state = state
         self.panelContext = panelContext
     }
@@ -187,6 +189,7 @@ actor LuaSearchProvider: SearchProvider {
             url: url,
             score: score
         )
+        result.usageBoostEnabled = usageBoostEnabled
 
         state.getField("action", at: index)
         if state.isFunction(at: -1) {
@@ -205,14 +208,31 @@ actor LuaSearchProvider: SearchProvider {
         // Parse modifier actions
         result.modifierActions = parseModifierActions(at: index)
 
+        // Parse delete_action / delete_subtitle (cmd+delete, host handles 2-press confirm)
+        state.getField("delete_action", at: index)
+        if state.isFunction(at: -1) {
+            let ref = state.ref(at: -1)
+            result.deleteAction = { [weak self] _ in
+                guard let self else { return false }
+                Task {
+                    await self.executeAction(ref: ref)
+                }
+                return true
+            }
+            if let subtitle = state.stringField("delete_subtitle", at: index), !subtitle.isEmpty {
+                result.deleteSubtitle = subtitle
+            }
+        } else {
+            state.pop()
+        }
+
         // Parse preview data
         if let previewType = state.stringField("preview_type", at: index),
            let previewContent = state.stringField("preview", at: index) {
             if previewType == "text" {
                 result.previewData = .text(previewContent)
             } else if previewType == "html" {
-                // HTML preview not yet supported, fall back to text
-                result.previewData = .text(previewContent)
+                result.previewData = .html(previewContent)
             }
         }
 

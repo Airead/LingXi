@@ -1,0 +1,821 @@
+import Foundation
+import SQLite3
+import Testing
+@testable import LingXi
+
+/// Tests for `lingxi.db` Lua API (phase 1: plugin-owned databases).
+///
+/// All tests run against an injected temporary base directory so that we never
+/// touch the real `~/.cache/LingXi/plugin-db/` on the developer machine.
+struct LuaDBAPITests {
+    // MARK: - Fixtures
+
+    private func makeTempDir() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LuaDBAPITests-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func cleanup(_ url: URL) async {
+        await PluginDBManager.shared.resetForTesting(
+            baseDirectory: FileManager.default.temporaryDirectory
+        )
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Create a small sqlite file at `path` with a `cities` table for
+    /// external-DB tests to read from.
+    private func seedExternalDB(at path: String) {
+        var handle: OpaquePointer?
+        let rc = sqlite3_open_v2(path, &handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+        precondition(rc == SQLITE_OK, "failed to create test sqlite at \(path)")
+        defer { sqlite3_close_v2(handle) }
+        sqlite3_exec(handle, "CREATE TABLE cities (id INTEGER PRIMARY KEY, name TEXT, pop INTEGER);", nil, nil, nil)
+        sqlite3_exec(handle, "INSERT INTO cities VALUES (1, 'Tokyo', 37400000);", nil, nil, nil)
+        sqlite3_exec(handle, "INSERT INTO cities VALUES (2, 'Delhi', 30300000);", nil, nil, nil)
+        sqlite3_exec(handle, "INSERT INTO cities VALUES (3, 'Shanghai', 27100000);", nil, nil, nil)
+    }
+
+    private func makeState(
+        db: Bool = true,
+        externalPaths: [String] = [],
+        pluginId: String = "test.db.plugin"
+    ) -> LuaState {
+        let state = LuaState()
+        state.openLibs()
+        LuaSandbox.apply(to: state)
+        let perms = PermissionConfig(
+            network: false,
+            clipboard: false,
+            filesystem: [],
+            shell: [],
+            notify: false,
+            store: false,
+            webview: false,
+            cache: false,
+            db: db,
+            dbExternalPaths: externalPaths
+        )
+        LuaAPI.registerAll(state: state, permissions: perms, pluginId: pluginId, pluginDir: "")
+        return state
+    }
+
+    // MARK: - Surface
+
+    @Test func dbTableExistsWhenEnabled() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState(db: true)
+        try state.doString("""
+            assert(type(lingxi.db) == 'table')
+            assert(type(lingxi.db.open) == 'function')
+        """)
+    }
+
+    @Test func dbOpenDeniedWhenDisabled() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState(db: false)
+        try state.doString("""
+            local db, err = lingxi.db.open("test")
+            assert(db == nil, "expected nil db, got " .. tostring(db))
+            assert(type(err) == 'string' and err:find("permission") ~= nil,
+                   "expected permission error, got " .. tostring(err))
+        """)
+    }
+
+    // MARK: - Basic CRUD
+
+    @Test func openExecQueryRoundTrip() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("sessions"))
+            assert(db:exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)") == 0)
+            assert(db:exec("INSERT INTO t(name) VALUES (?)", {"alice"}) == 1)
+            assert(db:exec("INSERT INTO t(name) VALUES (?)", {"bob"}) == 1)
+            local rows = assert(db:query("SELECT id, name FROM t ORDER BY id"))
+            assert(#rows == 2, "expected 2 rows, got " .. #rows)
+            assert(rows[1].id == 1 and rows[1].name == "alice")
+            assert(rows[2].id == 2 and rows[2].name == "bob")
+            db:close()
+        """)
+    }
+
+    @Test func parameterBindingTypes() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("types"))
+            db:exec("CREATE TABLE t (i INTEGER, r REAL, s TEXT, n TEXT)")
+            assert(db:exec("INSERT INTO t VALUES (?, ?, ?, ?)", {42, 3.14, "hello", nil}) == 1)
+            local row = assert(db:queryOne("SELECT i, r, s, n FROM t"))
+            assert(row.i == 42, "integer roundtrip, got " .. tostring(row.i))
+            assert(math.abs(row.r - 3.14) < 0.0001, "real roundtrip, got " .. tostring(row.r))
+            assert(row.s == "hello", "text roundtrip, got " .. tostring(row.s))
+            assert(row.n == nil, "null roundtrip, got " .. tostring(row.n))
+            db:close()
+        """)
+    }
+
+    @Test func queryOneReturnsNilWhenNoRows() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("empty"))
+            db:exec("CREATE TABLE t (id INTEGER)")
+            local row = db:queryOne("SELECT id FROM t WHERE id = ?", {999})
+            assert(row == nil, "expected nil row, got " .. tostring(row))
+            db:close()
+        """)
+    }
+
+    // MARK: - Error paths
+
+    @Test func closedHandleReturnsError() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("closed"))
+            db:close()
+            local rows, err = db:query("SELECT 1")
+            assert(rows == nil, "expected nil rows after close")
+            assert(type(err) == 'string' and err:find("closed") ~= nil,
+                   "expected 'closed' error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func invalidSQLReturnsError() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("badsql"))
+            local rows, err = db:query("NOT A VALID STATEMENT")
+            assert(rows == nil)
+            assert(type(err) == 'string' and #err > 0)
+            db:close()
+        """)
+    }
+
+    @Test func invalidNameRejected() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local bad = {"", "..", ".", "a/b", "a\\\\b"}
+            for _, name in ipairs(bad) do
+                local db, err = lingxi.db.open(name)
+                assert(db == nil, "expected nil for name " .. name)
+                assert(type(err) == 'string', "expected error message for name " .. name)
+            end
+        """)
+    }
+
+    // MARK: - Persistence
+
+    @Test func dataPersistsAcrossOpen() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state1 = makeState()
+        try state1.doString("""
+            local db = assert(lingxi.db.open("persist"))
+            db:exec("CREATE TABLE t (x INTEGER)")
+            db:exec("INSERT INTO t VALUES (?)", {7})
+            db:close()
+        """)
+
+        let state2 = makeState()
+        try state2.doString("""
+            local db = assert(lingxi.db.open("persist"))
+            local row = assert(db:queryOne("SELECT x FROM t"))
+            assert(row.x == 7)
+            db:close()
+        """)
+    }
+
+    @Test func pluginDataIsolated() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let stateA = makeState(pluginId: "plugin.a")
+        try stateA.doString("""
+            local db = assert(lingxi.db.open("data"))
+            db:exec("CREATE TABLE t (x INTEGER)")
+            db:exec("INSERT INTO t VALUES (1)")
+            db:close()
+        """)
+
+        // Different plugin, same file name — should be a separate file.
+        let stateB = makeState(pluginId: "plugin.b")
+        try stateB.doString("""
+            local db = assert(lingxi.db.open("data"))
+            -- Table does not exist yet for plugin.b.
+            local rows, err = db:query("SELECT * FROM t")
+            assert(rows == nil and err ~= nil, "expected error, got " .. tostring(err))
+            db:close()
+        """)
+    }
+
+    // MARK: - Lifecycle
+
+    @Test func closeAllDropsPluginConnections() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState(pluginId: "plugin.close")
+        try state.doString("""
+            _G.handle = assert(lingxi.db.open("cx"))
+            _G.handle:exec("CREATE TABLE t (x INTEGER)")
+        """)
+
+        await PluginDBManager.shared.closeAll(pluginId: "plugin.close")
+
+        // After host-side closeAll, the Lua-side handle is stale; next call
+        // should return an error, not crash.
+        try state.doString("""
+            local rows, err = _G.handle:query("SELECT 1")
+            assert(rows == nil, "expected nil after closeAll")
+            assert(type(err) == 'string')
+        """)
+    }
+
+    // MARK: - External DB
+
+    @Test func openExternalReadsWhitelistedFile() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("external.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db = assert(lingxi.db.openExternal(EXT_PATH))
+            local rows = assert(db:query("SELECT id, name, pop FROM cities ORDER BY id"))
+            assert(#rows == 3, "expected 3 rows")
+            assert(rows[1].name == "Tokyo")
+            assert(rows[1].pop == 37400000)
+            local one = assert(db:queryOne("SELECT name FROM cities WHERE id = ?", {2}))
+            assert(one.name == "Delhi")
+            db:close()
+        """)
+    }
+
+    @Test func openExternalExecMethodIsAbsent() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("external.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db = assert(lingxi.db.openExternal(EXT_PATH))
+            assert(db.exec == nil, "exec must not be present on external handle")
+            -- attempting to call it should raise Lua error
+            local ok, err = pcall(function() db:exec("SELECT 1") end)
+            assert(not ok, "calling nil exec should raise")
+            db:close()
+        """)
+    }
+
+    @Test func openExternalRejectsNonWhitelisted() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        // whitelist a harmless tmp file; probe attempts a different path.
+        let allowed = tmp.appendingPathComponent("allowed.sqlite").path
+        seedExternalDB(at: allowed)
+        let disallowed = tmp.appendingPathComponent("other.sqlite").path
+        seedExternalDB(at: disallowed)
+
+        let state = makeState(externalPaths: [allowed])
+        state.push(disallowed)
+        state.setGlobal("BAD_PATH")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(BAD_PATH)
+            assert(db == nil, "expected nil db for non-whitelisted path")
+            assert(type(err) == 'string' and err:find("whitelist") ~= nil,
+                "expected whitelist error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func openExternalRejectsWhenWhitelistEmpty() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("x.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(db: true, externalPaths: [])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(EXT_PATH)
+            assert(db == nil)
+            assert(type(err) == 'string' and err:find("external") ~= nil,
+                "expected 'no external paths' error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func openExternalDeniedWhenDBPermissionOff() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("x.sqlite").path
+        seedExternalDB(at: extPath)
+
+        // Note: even with paths set, disabled db permission shuts down the API.
+        let state = makeState(db: false, externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(EXT_PATH)
+            assert(db == nil)
+            assert(type(err) == 'string' and err:find("permission") ~= nil,
+                "expected permission error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func openExternalRejectsSymlinkEscape() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let allowedDir = tmp.appendingPathComponent("allowed", isDirectory: true)
+        let sensitiveDir = tmp.appendingPathComponent("sensitive", isDirectory: true)
+        try FileManager.default.createDirectory(at: allowedDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sensitiveDir, withIntermediateDirectories: true)
+
+        let realSecret = sensitiveDir.appendingPathComponent("secret.sqlite").path
+        seedExternalDB(at: realSecret)
+
+        let symlinkInAllowed = allowedDir.appendingPathComponent("trojan.sqlite")
+        try FileManager.default.createSymbolicLink(
+            at: symlinkInAllowed,
+            withDestinationURL: URL(fileURLWithPath: realSecret)
+        )
+
+        // Whitelist only the allowed dir; canonicalization should resolve the
+        // symlink target outside the whitelist.
+        let state = makeState(externalPaths: [allowedDir.path])
+        state.push(symlinkInAllowed.path)
+        state.setGlobal("TROJAN")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(TROJAN)
+            assert(db == nil, "symlink escape must be rejected")
+            assert(type(err) == 'string')
+        """)
+    }
+
+    @Test func openExternalMissingFile() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let missingPath = tmp.appendingPathComponent("nope.sqlite").path
+
+        // Whitelist the parent dir so the path passes validation but the file
+        // itself is missing — error should be distinguishable.
+        let state = makeState(externalPaths: [tmp.path])
+        state.push(missingPath)
+        state.setGlobal("MISSING")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(MISSING)
+            assert(db == nil)
+            assert(type(err) == 'string')
+            assert(err:find("does not exist") ~= nil or err:find("not in") ~= nil,
+                "expected existence error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func externalHandleCloseThenQueryErrors() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("ext.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db = assert(lingxi.db.openExternal(EXT_PATH))
+            assert(db:close() == true)
+            local rows, err = db:query("SELECT 1")
+            assert(rows == nil)
+            assert(type(err) == 'string' and err:find("closed") ~= nil)
+        """)
+    }
+
+    // MARK: - Transactions
+
+    @Test func transactionCommitsOnNormalReturn() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_commit"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            local ok = db:transaction(function()
+                assert(db:exec("INSERT INTO t(v) VALUES (1)"))
+                assert(db:exec("INSERT INTO t(v) VALUES (2)"))
+            end)
+            assert(ok == true, "transaction should return true on commit")
+            local rows = assert(db:query("SELECT v FROM t ORDER BY v"))
+            assert(#rows == 2, "both inserts should be committed")
+            db:close()
+        """)
+    }
+
+    @Test func transactionPassesThroughReturnValues() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_ret"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            db:exec("INSERT INTO t(v) VALUES (42)")
+            local ok, v, note = db:transaction(function()
+                local row = assert(db:queryOne("SELECT v FROM t"))
+                return row.v, "fetched"
+            end)
+            assert(ok == true)
+            assert(v == 42, "first return value passed through")
+            assert(note == "fetched", "second return value passed through")
+            db:close()
+        """)
+    }
+
+    @Test func transactionRollbacksOnFalsyReturn() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_rollback"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            local ok, err = db:transaction(function()
+                db:exec("INSERT INTO t(v) VALUES (100)")
+                db:exec("INSERT INTO t(v) VALUES (200)")
+                return false, "user-requested rollback"
+            end)
+            assert(ok == false, "should return false on explicit rollback")
+            assert(err == "user-requested rollback", "error msg passed through: " .. tostring(err))
+            local rows = assert(db:query("SELECT v FROM t"))
+            assert(#rows == 0, "no rows should be committed")
+            db:close()
+        """)
+    }
+
+    @Test func transactionRollbacksAndRaisesOnError() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_error"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            local ok, err = pcall(function()
+                db:transaction(function()
+                    db:exec("INSERT INTO t(v) VALUES (999)")
+                    error("kaboom")
+                end)
+            end)
+            assert(ok == false, "error from fn should propagate out of transaction")
+            assert(tostring(err):find("kaboom") ~= nil, "error message preserved: " .. tostring(err))
+            local rows = assert(db:query("SELECT v FROM t"))
+            assert(#rows == 0, "rolled back on error")
+            db:close()
+        """)
+    }
+
+    @Test func transactionRejectsNestedCall() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_nested"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            -- Outer transaction attempts a nested transaction; inner BEGIN should fail.
+            local captured_err
+            local ok, err = pcall(function()
+                db:transaction(function()
+                    local r_ok, r_err = db:transaction(function()
+                        return true
+                    end)
+                    captured_err = r_err
+                    error(r_err or "no error returned")
+                end)
+            end)
+            assert(ok == false, "outer should propagate error")
+            assert(type(captured_err) == 'string' and captured_err:find("already") ~= nil,
+                   "inner transaction should fail: " .. tostring(captured_err))
+            db:close()
+        """)
+    }
+
+    @Test func transactionRequiresFunctionArg() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_bad_arg"))
+            local ok, err = db:transaction("not a function")
+            assert(ok == nil, "non-function arg rejected")
+            assert(type(err) == 'string' and err:find("function") ~= nil)
+            db:close()
+        """)
+    }
+
+    @Test func externalHandleHasNoTransaction() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("ext_tx.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db = assert(lingxi.db.openExternal(EXT_PATH))
+            assert(db.transaction == nil, "external handle must not expose transaction")
+            db:close()
+        """)
+    }
+
+    @Test func transactionOnClosedHandleErrors() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_closed"))
+            db:close()
+            local ok, err = db:transaction(function() end)
+            assert(ok == nil)
+            assert(type(err) == 'string' and err:find("closed") ~= nil)
+        """)
+    }
+
+    // MARK: - Snapshot (phase 4)
+
+    @Test func snapshotCreatesReadableCopy() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("snap_src.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("SRC")
+        try state.doString("""
+            local path = assert(lingxi.db.snapshot(SRC))
+            assert(type(path) == 'string' and #path > 0)
+            local db = assert(lingxi.db.openExternal(path))
+            local rows = assert(db:query("SELECT name FROM cities ORDER BY id"))
+            assert(#rows == 3, "expected 3 rows, got " .. #rows)
+            assert(rows[1].name == "Tokyo")
+            assert(rows[3].name == "Shanghai")
+            db:close()
+        """)
+    }
+
+    @Test func snapshotDeniedWhenSourceNotWhitelisted() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("snap_unauth.sqlite").path
+        seedExternalDB(at: extPath)
+
+        // Empty whitelist: snapshot must be denied.
+        let state = makeState(externalPaths: [])
+        state.push(extPath)
+        state.setGlobal("SRC")
+        try state.doString("""
+            local path, err = lingxi.db.snapshot(SRC)
+            assert(path == nil, "expected nil path, got " .. tostring(path))
+            assert(type(err) == 'string' and err:find("external") ~= nil,
+                   "expected whitelist error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func snapshotOverwritesOnRepeatCall() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("snap_overwrite.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("SRC")
+
+        // First snapshot sees 3 cities.
+        try state.doString("""
+            local path = assert(lingxi.db.snapshot(SRC))
+            local db = assert(lingxi.db.openExternal(path))
+            local rows = assert(db:query("SELECT id FROM cities"))
+            assert(#rows == 3)
+            db:close()
+            SNAP_PATH_1 = path
+        """)
+
+        // Mutate source, snapshot again, expect 4.
+        var handle: OpaquePointer?
+        sqlite3_open_v2(extPath, &handle, SQLITE_OPEN_READWRITE, nil)
+        sqlite3_exec(handle, "INSERT INTO cities VALUES (4, 'Seoul', 9700000);", nil, nil, nil)
+        sqlite3_close_v2(handle)
+
+        try state.doString("""
+            local path = assert(lingxi.db.snapshot(SRC))
+            assert(path == SNAP_PATH_1, "hash-stable path should be reused: " .. tostring(path))
+            local db = assert(lingxi.db.openExternal(path))
+            local rows = assert(db:query("SELECT id FROM cities"))
+            assert(#rows == 4, "expected refreshed snapshot with 4 rows, got " .. #rows)
+            db:close()
+        """)
+    }
+
+    @Test func snapshotDisabledWhenDbPermissionOff() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState(db: false)
+        try state.doString("""
+            local path, err = lingxi.db.snapshot("/tmp/anything.sqlite")
+            assert(path == nil)
+            assert(type(err) == 'string' and err:find("permission") ~= nil,
+                   "expected permission error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func snapshotRejectsNonStringPath() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState(externalPaths: ["/tmp"])
+        try state.doString("""
+            local path, err = lingxi.db.snapshot(nil)
+            assert(path == nil)
+            assert(type(err) == 'string' and err:find("string") ~= nil)
+        """)
+    }
+
+    // MARK: - BLOB support (phase 5)
+
+    @Test func blobRoundTripPreservesBytes() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("blob_db"))
+            assert(db:exec("CREATE TABLE bin (id INTEGER PRIMARY KEY, payload BLOB)") == 0)
+            -- Bytes including embedded NUL and 0xFF to prove binary-safety.
+            local payload = string.char(72, 73, 0, 255, 254, 65, 0, 1)
+            assert(db:exec("INSERT INTO bin(payload) VALUES (?)", { lingxi.db.blob(payload) }) == 1)
+
+            local row = assert(db:queryOne("SELECT payload FROM bin WHERE id = 1"))
+            assert(#row.payload == #payload, "length mismatch: got " .. #row.payload)
+            assert(row.payload == payload, "byte payload mismatch")
+
+            -- Confirm the column was stored as BLOB, not TEXT.
+            local t = assert(db:queryOne("SELECT typeof(payload) AS t FROM bin"))
+            assert(t.t == "blob", "column typeof should be blob, got " .. tostring(t.t))
+            db:close()
+        """)
+    }
+
+    @Test func blobEmptyRoundTrip() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("blob_empty"))
+            db:exec("CREATE TABLE t (v BLOB)")
+            assert(db:exec("INSERT INTO t(v) VALUES (?)", { lingxi.db.blob("") }) == 1)
+            local row = assert(db:queryOne("SELECT v FROM t"))
+            assert(#row.v == 0, "empty blob should survive round trip")
+            db:close()
+        """)
+    }
+
+    @Test func blobRejectsNonStringArgument() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local v, err = lingxi.db.blob(123)
+            assert(v == nil)
+            assert(type(err) == 'string' and err:find("string") ~= nil,
+                   "expected string-arg error, got: " .. tostring(err))
+        """)
+    }
+
+    @Test func paramTableWithoutBlobMarkerIsRejected() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("bad_table"))
+            db:exec("CREATE TABLE t (v BLOB)")
+            local ok, err = db:exec("INSERT INTO t(v) VALUES (?)", { { foo = "bar" } })
+            assert(ok == nil)
+            assert(type(err) == 'string' and err:find("blob") ~= nil,
+                   "expected blob-related error, got: " .. tostring(err))
+            db:close()
+        """)
+    }
+
+    // MARK: - TCC / permission hint (phase 5)
+
+    @Test func openExternalHintsPermissionOnEACCES() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("locked.sqlite").path
+        seedExternalDB(at: extPath)
+        // Strip all permissions to simulate an OS-level denial (TCC analog).
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: extPath)
+        defer {
+            // Restore permission so cleanup can remove the file.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: extPath)
+        }
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(EXT)
+            assert(db == nil, "expected open to fail under chmod 0")
+            assert(type(err) == 'string', "err should be string")
+            local lower = err:lower()
+            assert(lower:find("permission") ~= nil or lower:find("full disk access") ~= nil,
+                   "expected permission hint, got: " .. tostring(err))
+        """)
+    }
+}

@@ -2,6 +2,7 @@ import AppKit
 
 nonisolated enum PreviewData: Sendable {
     case text(String)
+    case html(String)
     case image(path: URL, description: String)
 }
 
@@ -60,6 +61,9 @@ nonisolated struct SearchResult: Identifiable, Sendable {
     var thumbnailURL: URL?
     var sourceProviderId: String?
     var action: (@MainActor @Sendable (SearchResult) -> Bool)?
+    var deleteAction: (@MainActor @Sendable (SearchResult) -> Bool)?
+    var deleteSubtitle: String = "Delete"
+    var usageBoostEnabled: Bool = true
 
     private static let modifierPriority: [ActionModifier] = [.command, .option, .control]
 

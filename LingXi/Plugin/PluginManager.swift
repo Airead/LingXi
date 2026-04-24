@@ -62,8 +62,13 @@ final class PluginManager: PluginService {
 
     /// Reload all plugins: unregister old ones, re-scan, register new ones.
     func reload() async {
+        // Reset webview callback reference before unloading plugins.
+        // Otherwise luaL_unref in the next plugin load would access a
+        // Lua state that has already been closed.
+        LuaAPI.resetWebViewMessageState()
         for plugin in plugins {
             router.unregister(id: plugin.routerId)
+            await PluginDBManager.shared.closeAll(pluginId: plugin.manifest.id)
         }
         await unregisterPluginCommands()
         plugins.removeAll()
@@ -288,7 +293,11 @@ final class PluginManager: PluginService {
             filesystem: manifest.permissions.filesystem + [pluginDir.path],
             shell: manifest.permissions.shell,
             notify: manifest.permissions.notify,
-            store: manifest.permissions.store
+            store: manifest.permissions.store,
+            webview: manifest.permissions.webview,
+            cache: manifest.permissions.cache,
+            db: manifest.permissions.db,
+            dbExternalPaths: manifest.permissions.dbExternalPaths
         )
 
         LuaAPI.registerAll(state: state, permissions: permissions, pluginId: manifest.id, pluginDir: pluginDir.path)
@@ -300,7 +309,8 @@ final class PluginManager: PluginService {
             pluginDir: pluginDir,
             state: state,
             debounce: manifest.debounce,
-            timeout: manifest.timeout
+            timeout: manifest.timeout,
+            usageBoost: manifest.usageBoost
         )
 
         return LoadedPlugin(manifest: manifest, provider: provider)

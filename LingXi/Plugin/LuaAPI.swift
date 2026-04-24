@@ -42,10 +42,16 @@ nonisolated enum LuaAPI {
             registerDisabledClipboard(state: state)
             registerDisabledPaste(state: state)
         }
-        if permissions.filesystem.isEmpty {
+        if permissions.filesystem.isEmpty && !permissions.cache {
             registerDisabledFile(state: state)
         } else {
-            filePermissions[pluginId] = permissions.filesystem
+            var allowedPaths = permissions.filesystem
+            if permissions.cache, !pluginId.isEmpty {
+                let cachePath = RegistryManager.cacheDirectory.appendingPathComponent(pluginId)
+                try? FileManager.default.createDirectory(at: cachePath, withIntermediateDirectories: true)
+                allowedPaths.append(cachePath.path)
+            }
+            filePermissions[pluginId] = allowedPaths
             registerFile(state: state)
         }
         if permissions.shell.isEmpty {
@@ -64,6 +70,32 @@ nonisolated enum LuaAPI {
         } else {
             registerDisabledNotify(state: state)
         }
+        if permissions.webview {
+            registerWebView(state: state)
+        } else {
+            registerDisabledWebView(state: state)
+        }
+        if permissions.cache {
+            registerCache(state: state)
+        } else {
+            registerDisabledCache(state: state)
+        }
+        if permissions.db {
+            LuaDBAPI.register(state: state, pluginId: pluginId, externalPaths: permissions.dbExternalPaths)
+        } else {
+            LuaDBAPI.registerDisabled(state: state)
+        }
+        registerEnv(state: state)
+        
+        // Debug: verify lingxi.env was set
+        state.getField("env", at: -1)
+        if state.isNil(at: -1) {
+            DebugLog.log("[LuaAPI] WARNING: lingxi.env is nil after registerEnv")
+        } else {
+            DebugLog.log("[LuaAPI] OK: lingxi.env is set (type: \(state.type(at: -1)))")
+        }
+        state.pop()
+        
         registerAlert(state: state)
         registerLog(state: state)
         registerJSON(state: state)
@@ -148,28 +180,60 @@ nonisolated enum LuaAPI {
     // MARK: - lingxi.file
 
     private static func registerFile(state: LuaState) {
-        state.createTable(nrec: 4)
+        state.createTable(nrec: 12)
         state.pushFunction(fileRead)
         state.setField("read", at: -2)
+        state.pushFunction(fileReadLines)
+        state.setField("read_lines", at: -2)
+        state.pushFunction(fileTail)
+        state.setField("tail", at: -2)
         state.pushFunction(fileWrite)
         state.setField("write", at: -2)
         state.pushFunction(fileList)
         state.setField("list", at: -2)
         state.pushFunction(fileExists)
         state.setField("exists", at: -2)
+        state.pushFunction(fileStat)
+        state.setField("stat", at: -2)
+        state.pushFunction(fileMkdir)
+        state.setField("mkdir", at: -2)
+        state.pushFunction(fileRmdir)
+        state.setField("rmdir", at: -2)
+        state.pushFunction(fileRm)
+        state.setField("rm", at: -2)
+        state.pushFunction(fileTrash)
+        state.setField("trash", at: -2)
+        state.pushFunction(fileMove)
+        state.setField("move", at: -2)
         state.setField("file", at: -2)
     }
 
     private static func registerDisabledFile(state: LuaState) {
-        state.createTable(nrec: 4)
+        state.createTable(nrec: 12)
         state.pushFunction(disabledFileRead)
         state.setField("read", at: -2)
+        state.pushFunction(disabledFileReadLines)
+        state.setField("read_lines", at: -2)
+        state.pushFunction(disabledFileTail)
+        state.setField("tail", at: -2)
         state.pushFunction(disabledFileWrite)
         state.setField("write", at: -2)
         state.pushFunction(disabledFileList)
         state.setField("list", at: -2)
         state.pushFunction(disabledFileExists)
         state.setField("exists", at: -2)
+        state.pushFunction(disabledFileStat)
+        state.setField("stat", at: -2)
+        state.pushFunction(disabledFileMkdir)
+        state.setField("mkdir", at: -2)
+        state.pushFunction(disabledFileRmdir)
+        state.setField("rmdir", at: -2)
+        state.pushFunction(disabledFileRm)
+        state.setField("rm", at: -2)
+        state.pushFunction(disabledFileTrash)
+        state.setField("trash", at: -2)
+        state.pushFunction(disabledFileMove)
+        state.setField("move", at: -2)
         state.setField("file", at: -2)
     }
 
@@ -181,6 +245,15 @@ nonisolated enum LuaAPI {
 
     // MARK: - File C Functions
 
+    /// Expand `~` to the user's home directory.
+    private static func expandTilde(_ path: String) -> String {
+        if path.hasPrefix("~/") {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            return home + String(path.dropFirst(1))
+        }
+        return path
+    }
+
     /// `lingxi.file.read(path) -> string | nil`
     private static let fileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
@@ -188,6 +261,9 @@ nonisolated enum LuaAPI {
             lua_pushnil(L)
             return 1
         }
+
+        // Expand tilde before checking for absolute/relative path.
+        path = expandTilde(path)
 
         // Resolve relative paths against the plugin's directory.
         if !path.hasPrefix("/") {
@@ -212,14 +288,182 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    /// `lingxi.file.read_lines(path, max_lines) -> string | nil`
+    /// Reads up to max_lines from a file, returning them as a single string.
+    private static let fileReadLines: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+        let maxLines = Int(lua_swift_tointeger(L, 2))
+        guard maxLines > 0 else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        // Expand tilde before checking for absolute/relative path.
+        path = expandTilde(path)
+
+        // Resolve relative paths against the plugin's directory.
+        if !path.hasPrefix("/") {
+            let pid = pluginId(from: L)
+            if let pluginDir = pluginDirs[pid] {
+                path = pluginDir + "/" + path
+            }
+        }
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        guard let handle = FileHandle(forReadingAtPath: canonicalPath) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        defer { handle.closeFile() }
+
+        var lines: [String] = []
+        var buffer = Data()
+        let chunkSize = 4096
+        let newline = Data([0x0A]) // '\n'
+
+        while lines.count < maxLines {
+            let chunk = handle.readData(ofLength: chunkSize)
+            if chunk.isEmpty {
+                // EOF: append any remaining buffer as the last line
+                if !buffer.isEmpty, let line = String(data: buffer, encoding: .utf8) {
+                    lines.append(line)
+                }
+                break
+            }
+            buffer.append(chunk)
+
+            // Split buffer on newlines
+            while lines.count < maxLines {
+                guard let range = buffer.range(of: newline) else {
+                    break
+                }
+                let lineData = buffer.prefix(upTo: range.lowerBound)
+                if let line = String(data: lineData, encoding: .utf8) {
+                    lines.append(line)
+                }
+                buffer = Data(buffer.suffix(from: range.upperBound))
+            }
+        }
+
+        let result = lines.joined(separator: "\n")
+        lua_pushstring(L, result)
+        return 1
+    }
+
+    /// `lingxi.file.tail(path, max_lines) -> string | nil`
+    /// Reads the last `max_lines` lines from a file and returns them joined
+    /// by newlines in forward order. Files shorter than `max_lines` return
+    /// all their content. Empty files return "". Returns nil on error.
+    private static let fileTail: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+        let maxLines = Int(lua_swift_tointeger(L, 2))
+        guard maxLines > 0 else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        if !path.hasPrefix("/") {
+            let pid = pluginId(from: L)
+            if let pluginDir = pluginDirs[pid] {
+                path = pluginDir + "/" + path
+            }
+        }
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        guard let handle = FileHandle(forReadingAtPath: canonicalPath) else {
+            lua_pushnil(L)
+            return 1
+        }
+        defer { handle.closeFile() }
+
+        var fileSize = handle.seekToEndOfFile()
+        if fileSize == 0 {
+            lua_pushstring(L, "")
+            return 1
+        }
+
+        // Strip a trailing newline so "a\nb\n" (2 lines) isn't treated as 3.
+        let chunkSize: UInt64 = 4096
+        let newline: UInt8 = 0x0A
+        var collected = Data()
+        var newlineCount = 0
+
+        handle.seek(toFileOffset: fileSize - 1)
+        let lastByte = handle.readData(ofLength: 1)
+        if lastByte.first == newline {
+            fileSize -= 1
+        }
+
+        // Read chunks backwards until we have at least maxLines newlines or
+        // reach BOF. Each newline we've seen is a line-boundary behind us —
+        // the Nth newline from the end is the separator for the last N lines.
+        var cursor = fileSize
+        while cursor > 0 && newlineCount < maxLines {
+            let readLen = min(chunkSize, cursor)
+            cursor -= readLen
+            handle.seek(toFileOffset: cursor)
+            let chunk = handle.readData(ofLength: Int(readLen))
+            for byte in chunk where byte == newline {
+                newlineCount += 1
+            }
+            collected = chunk + collected
+        }
+
+        // Slice off bytes before the (maxLines)-th newline from the end. If
+        // we didn't accumulate that many newlines, keep everything.
+        var startIndex = 0
+        if newlineCount >= maxLines {
+            var seen = 0
+            for i in (0..<collected.count).reversed() where collected[i] == newline {
+                seen += 1
+                if seen == maxLines {
+                    startIndex = i + 1
+                    break
+                }
+            }
+        }
+
+        let sliced = collected.subdata(in: startIndex..<collected.count)
+        guard let result = String(data: sliced, encoding: .utf8) else {
+            lua_pushnil(L)
+            return 1
+        }
+        lua_pushstring(L, result)
+        return 1
+    }
+
     /// `lingxi.file.write(path, content) -> boolean`
     private static let fileWrite: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        guard let path = lua_swift_tostring(L, 1).map({ String(cString: $0) }),
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }),
               let content = lua_swift_tostring(L, 2).map({ String(cString: $0) }) else {
             lua_pushboolean(L, 0)
             return 1
         }
+
+        // Expand tilde before validation.
+        path = expandTilde(path)
 
         let validator = PathValidator(allowedPaths: filePaths(from: L))
         guard let canonicalPath = validator.validate(path) else {
@@ -292,11 +536,205 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    /// `lingxi.file.stat(path) -> {mtime, size, isDir} | nil`
+    private static let fileStat: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: canonicalPath, isDirectory: &isDir) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        do {
+            let attrs = try fm.attributesOfItem(atPath: canonicalPath)
+            let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            let size = (attrs[.size] as? Int64) ?? 0
+
+            lua_createtable(L, 0, 3)
+            lua_pushnumber(L, mtime)
+            lua_setfield(L, -2, "mtime")
+            lua_pushinteger(L, lua_Integer(size))
+            lua_setfield(L, -2, "size")
+            lua_pushboolean(L, isDir.boolValue ? 1 : 0)
+            lua_setfield(L, -2, "isDir")
+        } catch {
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.mkdir(path) -> boolean`
+    private static let fileMkdir: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            try FileManager.default.createDirectory(atPath: canonicalPath, withIntermediateDirectories: true)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.rmdir(path) -> boolean`
+    private static let fileRmdir: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            try FileManager.default.removeItem(atPath: canonicalPath)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.rm(path) -> boolean`
+    private static let fileRm: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            try FileManager.default.removeItem(atPath: canonicalPath)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.trash(path) -> boolean`
+    /// Moves a file or directory to the user's Trash (recoverable via Finder).
+    private static let fileTrash: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var path = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        path = expandTilde(path)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalPath = validator.validate(path) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        let url = URL(fileURLWithPath: canonicalPath)
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            lua_pushboolean(L, 1)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
+    /// `lingxi.file.move(src, dst) -> boolean`
+    private static let fileMove: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard var srcPath = lua_swift_tostring(L, 1).map({ String(cString: $0) }),
+              var dstPath = lua_swift_tostring(L, 2).map({ String(cString: $0) }) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        srcPath = expandTilde(srcPath)
+        dstPath = expandTilde(dstPath)
+
+        let validator = PathValidator(allowedPaths: filePaths(from: L))
+        guard let canonicalSrc = validator.validate(srcPath),
+              let canonicalDst = validator.validate(dstPath) else {
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        do {
+            let srcURL = URL(fileURLWithPath: canonicalSrc)
+            let dstURL = URL(fileURLWithPath: canonicalDst)
+            let result = try FileManager.default.replaceItemAt(dstURL, withItemAt: srcURL)
+            lua_pushboolean(L, result != nil ? 1 : 0)
+        } catch {
+            lua_pushboolean(L, 0)
+        }
+        return 1
+    }
+
     // MARK: - Disabled File Stubs
+
+    private static let disabledFileStat: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.stat denied: filesystem permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
 
     private static let disabledFileRead: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.file.read denied: filesystem permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledFileReadLines: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.read_lines denied: filesystem permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    private static let disabledFileTail: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.tail denied: filesystem permission not granted")
         lua_pushnil(L)
         return 1
     }
@@ -318,6 +756,41 @@ nonisolated enum LuaAPI {
     private static let disabledFileExists: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaAPI] lingxi.file.exists denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileMkdir: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.mkdir denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileRmdir: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.rmdir denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileRm: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.rm denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileTrash: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.trash denied: filesystem permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledFileMove: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.file.move denied: filesystem permission not granted")
         lua_pushboolean(L, 0)
         return 1
     }
@@ -998,9 +1471,11 @@ nonisolated enum LuaAPI {
     // MARK: - lingxi.json
 
     private static func registerJSON(state: LuaState) {
-        state.createTable(nrec: 1)
+        state.createTable(nrec: 2)
         state.pushFunction(jsonParse)
         state.setField("parse", at: -2)
+        state.pushFunction(jsonEncode)
+        state.setField("encode", at: -2)
         state.setField("json", at: -2)
     }
 
@@ -1028,9 +1503,353 @@ nonisolated enum LuaAPI {
         return 1
     }
 
+    /// `lingxi.json.encode(value, opts?) -> string | nil`
+    ///
+    /// Serializes a Lua value into a JSON string. **Compact by default**; pass
+    /// `{ pretty = true }` as the second argument for indented output.
+    ///
+    /// Compact is the default because JSONL framing, WebView message passing,
+    /// and most byte-economical transports break or waste bandwidth on pretty
+    /// output. Plugins that want readable JSON (typically for debug dumps)
+    /// opt in explicitly.
+    ///
+    /// Top-level primitives (string/number/boolean/null) still return nil —
+    /// NSJSONSerialization does not emit fragments and this function does
+    /// not enable `.fragmentsAllowed` to keep behavior predictable.
+    private static let jsonEncode: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+
+        // Convert Lua value at index 1 to Swift JSON-compatible value
+        let value = luaValueToSwift(L, index: 1)
+
+        // Check for unsupported types (functions, threads, userdata)
+        if let str = value as? String, str.hasPrefix("unsupported Lua type") {
+            lua_pushnil(L)
+            return 1
+        }
+
+        // Optional second arg: { pretty = true } — opt-in indented output.
+        var options: JSONSerialization.WritingOptions = []
+        if lua_type(L, 2) == lua_swift_type_table() {
+            lua_getfield(L, 2, "pretty")
+            if lua_toboolean(L, -1) != 0 {
+                options.insert(.prettyPrinted)
+            }
+            lua_swift_pop(L, 1)
+        }
+
+        // NSJSONSerialization raises an Obj-C exception (not a Swift-catchable
+        // NSError) when asked to encode a top-level primitive. Pre-validate
+        // so we surface a clean `nil` instead of crashing the plugin host.
+        guard JSONSerialization.isValidJSONObject(value) else {
+            lua_pushnil(L)
+            return 1
+        }
+
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: value, options: options)
+            if let jsonString = String(data: jsonData, encoding: .utf8) {
+                lua_pushstring(L, jsonString)
+            } else {
+                lua_pushnil(L)
+            }
+        } catch {
+            DebugLog.log("[LuaAPI] lingxi.json.encode error: \(error)")
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
     // MARK: - lingxi.fuzzy
 
     private static func registerFuzzy(state: LuaState) {
         LuaFuzzyAPI.register(state: state)
+    }
+
+    // MARK: - lingxi.webview
+
+    /// Reference to the registered Lua message callback function.
+    private static var webviewMessageRef: Int32 = 0
+    /// The Lua state that owns the webview message callback.
+    private static var webviewMessageState: OpaquePointer?
+
+    /// Reset the webview message callback reference. Called by PluginManager before reload
+    /// to prevent accessing a Lua state that has already been closed.
+    static func resetWebViewMessageState() {
+        webviewMessageRef = 0
+        webviewMessageState = nil
+    }
+
+    private static func registerWebView(state: LuaState) {
+        state.createTable(nrec: 4)
+        state.pushFunction(webviewOpen)
+        state.setField("open", at: -2)
+        state.pushFunction(webviewClose)
+        state.setField("close", at: -2)
+        state.pushFunction(webviewSend)
+        state.setField("send", at: -2)
+        state.pushFunction(webviewOnMessage)
+        state.setField("on_message", at: -2)
+        state.setField("webview", at: -2)
+    }
+
+    private static func registerDisabledWebView(state: LuaState) {
+        state.createTable(nrec: 4)
+        state.pushFunction(disabledWebViewOpen)
+        state.setField("open", at: -2)
+        state.pushFunction(disabledWebViewClose)
+        state.setField("close", at: -2)
+        state.pushFunction(disabledWebViewSend)
+        state.setField("send", at: -2)
+        state.pushFunction(disabledWebViewOnMessage)
+        state.setField("on_message", at: -2)
+        state.setField("webview", at: -2)
+    }
+
+    /// `lingxi.webview.open(htmlPath, opts?) -> boolean`
+    private static let webviewOpen: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let htmlPath = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            DebugLog.log("[LuaAPI] lingxi.webview.open: first argument must be a string (html path)")
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        var title: String?
+        var width: CGFloat = 900
+        var height: CGFloat = 700
+
+        if lua_type(L, 2) == lua_swift_type_table() {
+            lua_getfield(L, 2, "title")
+            if let t = lua_swift_tostring(L, -1) {
+                title = String(cString: t)
+            }
+            lua_swift_pop(L, 1)
+
+            lua_getfield(L, 2, "width")
+            if lua_type(L, -1) == lua_swift_type_number() {
+                width = CGFloat(lua_swift_tonumber(L, -1))
+            }
+            lua_swift_pop(L, 1)
+
+            lua_getfield(L, 2, "height")
+            if lua_type(L, -1) == lua_swift_type_number() {
+                height = CGFloat(lua_swift_tonumber(L, -1))
+            }
+            lua_swift_pop(L, 1)
+        }
+
+        // Resolve relative paths against the plugin directory.
+        var fullPath = htmlPath
+        if !fullPath.hasPrefix("/") {
+            let pid = pluginId(from: L)
+            if let pluginDir = pluginDirs[pid] {
+                fullPath = pluginDir + "/" + fullPath
+            }
+        }
+
+        let capturedPath = fullPath
+        let capturedTitle = title
+        let capturedWidth = width
+        let capturedHeight = height
+        let messageRef = webviewMessageRef
+
+        Task { @MainActor in
+            PluginWebViewManager.shared.open(
+                htmlPath: capturedPath,
+                title: capturedTitle,
+                width: capturedWidth,
+                height: capturedHeight
+            ) { message in
+                // Execute on main actor since Lua calls are not thread-safe
+                MainActor.assumeIsolated {
+                    guard let msgL = webviewMessageState, messageRef != 0 else { return }
+                    lua_rawgeti(msgL, lua_swift_registry_index(), lua_Integer(messageRef))
+                    if lua_type(msgL, -1) == lua_swift_type_function() {
+                        lua_pushstring(msgL, message)
+                        let result = lua_swift_pcall(msgL, 1, 0, 0)
+                        if result != 0 {
+                            if let err = lua_swift_tostring(msgL, -1) {
+                                DebugLog.log("[LuaAPI] webview.on_message callback error: \(String(cString: err))")
+                            }
+                            lua_swift_pop(msgL, 1)
+                        }
+                    } else {
+                        lua_swift_pop(msgL, 1)
+                    }
+                }
+            }
+        }
+
+        lua_pushboolean(L, 1)
+        return 1
+    }
+
+    /// `lingxi.webview.close() -> void`
+    private static let webviewClose: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        Task { @MainActor in
+            PluginWebViewManager.shared.close()
+        }
+        return 0
+    }
+
+    /// `lingxi.webview.send(jsonString) -> void`
+    private static let webviewSend: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let jsonString = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            return 0
+        }
+        Task { @MainActor in
+            PluginWebViewManager.shared.sendMessage(jsonString)
+        }
+        return 0
+    }
+
+    /// `lingxi.webview.on_message(callback) -> boolean`
+    private static let webviewOnMessage: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard lua_type(L, 1) == lua_swift_type_function() else {
+            DebugLog.log("[LuaAPI] lingxi.webview.on_message: argument must be a function")
+            lua_pushboolean(L, 0)
+            return 1
+        }
+
+        // Release previous reference if any.
+        if webviewMessageRef != 0, let oldL = webviewMessageState {
+            luaL_unref(oldL, lua_swift_registry_index(), webviewMessageRef)
+        }
+
+        webviewMessageState = L
+        webviewMessageRef = luaL_ref(L, lua_swift_registry_index())
+
+        lua_pushboolean(L, 1)
+        return 1
+    }
+
+    // MARK: - Disabled WebView Stubs
+
+    private static let disabledWebViewOpen: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.webview.open denied: webview permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    private static let disabledWebViewClose: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.webview.close denied: webview permission not granted")
+        return 0
+    }
+
+    private static let disabledWebViewSend: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.webview.send denied: webview permission not granted")
+        return 0
+    }
+
+    private static let disabledWebViewOnMessage: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.webview.on_message denied: webview permission not granted")
+        lua_pushboolean(L, 0)
+        return 1
+    }
+
+    // MARK: - lingxi.cache
+
+    private static func registerCache(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(cacheGetPath)
+        state.setField("getPath", at: -2)
+        state.setField("cache", at: -2)
+    }
+
+    private static func registerDisabledCache(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(disabledCacheGetPath)
+        state.setField("getPath", at: -2)
+        state.setField("cache", at: -2)
+    }
+
+    /// `lingxi.cache.getPath() -> string | nil`
+    /// Returns the plugin-specific cache directory path.
+    private static let cacheGetPath: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        let pid = pluginId(from: L)
+        if pid.isEmpty {
+            lua_pushnil(L)
+            return 1
+        }
+        let cachePath = RegistryManager.cacheDirectory
+            .appendingPathComponent(pid)
+            .path
+        lua_pushstring(L, cachePath)
+        return 1
+    }
+
+    private static let disabledCacheGetPath: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.cache.getPath denied: cache permission not granted")
+        lua_pushnil(L)
+        return 1
+    }
+
+    // MARK: - lingxi.env
+
+    /// Whitelist of environment variables accessible to plugins.
+    private static let allowedEnvVars: Set<String> = [
+        "HOME", "USER", "SHELL", "LANG", "TMPDIR", "PATH",
+    ]
+
+    private static func registerEnv(state: LuaState) {
+        DebugLog.log("[LuaAPI] registerEnv called")
+        state.createTable(nrec: 1)
+        state.pushFunction(envGet)
+        state.setField("get", at: -2)
+        state.setField("env", at: -2)
+        DebugLog.log("[LuaAPI] registerEnv done")
+    }
+
+    private static func registerDisabledEnv(state: LuaState) {
+        state.createTable(nrec: 1)
+        state.pushFunction(disabledEnvGet)
+        state.setField("get", at: -2)
+        state.setField("env", at: -2)
+    }
+
+    /// `lingxi.env.get(key) -> string | nil`
+    /// Returns the value of a whitelisted environment variable.
+    private static let envGet: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard let key = lua_swift_tostring(L, 1).map({ String(cString: $0) }) else {
+            lua_pushnil(L)
+            return 1
+        }
+        // Check whitelist using direct string comparison to avoid Set capture issues
+        var isAllowed = false
+        let whitelist = ["HOME", "USER", "SHELL", "LANG", "TMPDIR", "PATH"]
+        for allowed in whitelist {
+            if allowed == key {
+                isAllowed = true
+                break
+            }
+        }
+        guard isAllowed else {
+            lua_pushnil(L)
+            return 1
+        }
+        // Use getenv C function instead of ProcessInfo to avoid reference capture
+        if let value = getenv(key) {
+            lua_pushstring(L, value)
+        } else {
+            lua_pushnil(L)
+        }
+        return 1
+    }
+
+    private static let disabledEnvGet: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaAPI] lingxi.env.get denied: env permission not granted")
+        lua_pushnil(L)
+        return 1
     }
 }

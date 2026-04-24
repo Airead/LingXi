@@ -378,6 +378,63 @@ struct LuaSearchProviderTests {
         #expect(results[0].modifierActions[.option]?.subtitle == "Show details")
     }
 
+    @Test func deleteActionParsed() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "Deletable",
+                        subtitle = "sub",
+                        delete_action = function() end,
+                        delete_subtitle = "Move to Trash"
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "x")
+        #expect(results.count == 1)
+        #expect(results[0].deleteAction != nil)
+        #expect(results[0].deleteSubtitle == "Move to Trash")
+    }
+
+    @Test func deleteActionMissingLeavesNilAndDefaultSubtitle() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    { title = "NoDelete", subtitle = "sub" }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "x")
+        #expect(results.count == 1)
+        #expect(results[0].deleteAction == nil)
+        #expect(results[0].deleteSubtitle == "Delete")
+    }
+
+    @Test func deleteActionWithoutSubtitleUsesDefault() async throws {
+        let (provider, cleanup) = try makeTempPlugin(luaCode: """
+            function search(query)
+                return {
+                    {
+                        title = "NoSubtitle",
+                        subtitle = "sub",
+                        delete_action = function() end
+                    }
+                }
+            end
+        """)
+        defer { cleanup() }
+
+        let results = await provider.search(query: "x")
+        #expect(results.count == 1)
+        #expect(results[0].deleteAction != nil)
+        #expect(results[0].deleteSubtitle == "Delete")
+    }
+
     @Test func allModifierActions() async throws {
         let (provider, cleanup) = try makeTempPlugin(luaCode: """
             function search(query)
@@ -481,7 +538,7 @@ struct LuaSearchProviderTests {
         #expect(results[0].previewData == nil)
     }
 
-    @Test func htmlPreviewFallsBackToText() async throws {
+    @Test func htmlPreviewReturnsHtmlData() async throws {
         let (provider, cleanup) = try makeTempPlugin(luaCode: """
             function search(query)
                 return {
@@ -498,11 +555,11 @@ struct LuaSearchProviderTests {
 
         let results = await provider.search(query: "test")
         #expect(results.count == 1)
-        // HTML preview should fall back to text for now
-        if case .text(let content) = results[0].previewData {
+        // HTML preview should return html data
+        if case .html(let content) = results[0].previewData {
             #expect(content == "<h1>HTML Preview</h1>")
         } else {
-            Issue.record("Expected text preview data for HTML fallback")
+            Issue.record("Expected html preview data")
         }
     }
 

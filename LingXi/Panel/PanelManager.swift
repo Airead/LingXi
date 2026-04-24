@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import WebKit
 
 private enum PanelLayout {
     static let defaultWidth: CGFloat = 680
@@ -348,7 +349,8 @@ private struct PanelContentView: View {
                             result: result,
                             isSelected: index == viewModel.selectedIndex,
                             activeModifiers: viewModel.activeModifiers,
-                            shortcutNumber: index < PanelLayout.maxShortcutKeys ? index + 1 : nil
+                            shortcutNumber: index < PanelLayout.maxShortcutKeys ? index + 1 : nil,
+                            isPendingDelete: index == viewModel.pendingDeleteIndex
                         )
                         .id(result.id)
                     }
@@ -371,6 +373,9 @@ private struct PreviewPane: View {
         switch data {
         case .text(let content):
             NativeTextPreview(text: content)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .html(let content):
+            HTMLPreview(htmlContent: content)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let path, let description):
             VStack(spacing: 12) {
@@ -421,6 +426,21 @@ private struct NativeTextPreview: NSViewRepresentable {
     }
 }
 
+/// A WKWebView wrapped for SwiftUI, used for HTML preview rendering.
+private struct HTMLPreview: NSViewRepresentable {
+    let htmlContent: String
+
+    func makeNSView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        webView.setValue(false, forKey: "drawsBackground")
+        return webView
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        webView.loadHTMLString(htmlContent, baseURL: nil)
+    }
+}
+
 private struct CachedImageView<Placeholder: View>: View {
     let url: URL
     let maxPixelSize: Int?
@@ -461,6 +481,14 @@ private struct SearchResultRow: View {
     var isSelected: Bool = false
     var activeModifiers: Set<ActionModifier> = []
     var shortcutNumber: Int?
+    var isPendingDelete: Bool = false
+
+    private var subtitleText: String {
+        if isPendingDelete {
+            return "\(result.deleteSubtitle)?"
+        }
+        return isSelected ? result.displaySubtitle(for: activeModifiers) : result.subtitle
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -485,9 +513,9 @@ private struct SearchResultRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.name)
                     .font(.system(size: 15))
-                Text(isSelected ? result.displaySubtitle(for: activeModifiers) : result.subtitle)
+                Text(subtitleText)
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isPendingDelete ? AnyShapeStyle(Color.red) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
             }
             Spacer()
             if let shortcutNumber {

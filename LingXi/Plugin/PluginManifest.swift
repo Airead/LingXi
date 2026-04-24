@@ -16,6 +16,12 @@ nonisolated struct PermissionConfig: Sendable, Equatable {
     let shell: [String]
     let notify: Bool
     let store: Bool
+    let webview: Bool
+    let cache: Bool
+    let db: Bool
+    /// Whitelist of paths that `lingxi.db.openExternal` may read (read-only).
+    /// Decoupled from `filesystem`: this list is for SQLite access only.
+    let dbExternalPaths: [String]
 
     /// Restrictive default for plugins.
     nonisolated static let `default` = PermissionConfig(
@@ -24,7 +30,11 @@ nonisolated struct PermissionConfig: Sendable, Equatable {
         filesystem: [],
         shell: [],
         notify: false,
-        store: false
+        store: false,
+        webview: false,
+        cache: false,
+        db: false,
+        dbExternalPaths: []
     )
 }
 
@@ -46,6 +56,7 @@ nonisolated struct PluginManifest: Sendable, Equatable {
     let prefix: String
     let debounce: Int
     let timeout: Int
+    let usageBoost: Bool
     let permissions: PermissionConfig
     let commands: [PluginCommand]
     let files: [String]
@@ -61,6 +72,7 @@ nonisolated struct PluginManifest: Sendable, Equatable {
         minLingXiVersion: String = "",
         debounce: Int = 100,
         timeout: Int = 5000,
+        usageBoost: Bool = true,
         permissions: PermissionConfig = .default,
         commands: [PluginCommand] = [],
         files: [String] = []
@@ -74,6 +86,7 @@ nonisolated struct PluginManifest: Sendable, Equatable {
         self.prefix = prefix
         self.debounce = debounce
         self.timeout = timeout
+        self.usageBoost = usageBoost
         self.permissions = permissions
         self.commands = commands
         self.files = files

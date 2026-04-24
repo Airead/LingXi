@@ -183,7 +183,7 @@ cc-sessions/
 ├── scanner.lua              # 会话扫描器
 ├── reader.lua               # JSONL 读取与解析
 ├── preview.lua              # 文本预览生成
-├── cache.lua                # 基于 lingxi.store 的缓存
+├── cache.lua                # 增量磁盘缓存（基于 mtime）
 ├── identicon.lua            # SVG 项目头像
 ├── git_utils.lua            # Git 工具
 ├── viewer.html              # WebView 查看器（精简版）
@@ -193,6 +193,77 @@ cc-sessions/
     ├── highlight.min.js
     └── github-dark.min.css
 ```
+
+### D8: 扫描缓存策略（更新）
+
+**问题**：`scan_all()` 遍历 `~/.claude/projects/` 下所有项目（115+），逐个读取 JSONL 文件解析元数据，耗时以分钟计。
+
+**原方案（已废弃）**：使用 `lingxi.store`（key-value）缓存扫描结果，TTL 30 秒。但无法应对以下场景：
+- 扫描耗时过长（分钟级），TTL 内无法完成第二次扫描
+- 需要增量更新（只读取变更的文件）
+
+**新方案**：增量持久缓存（参考 WenZi `cache.py`）
+
+**缓存格式**：
+```json
+{
+  "version": 1,
+  "sessions": {
+    "/path/to/session.jsonl": {
+      "mtime": 1234567890,
+      "data": { /* session metadata */ }
+    }
+  }
+}
+```
+
+**策略**：
+1. **防并发保护**：扫描执行期间，新的 `scan_all()` 请求直接返回旧结果（或空列表），禁止并行执行
+2. **增量更新**：对每个 JSONL 文件，先获取 mtime，与缓存对比：
+   - mtime 未变更 → 直接使用缓存数据
+   - mtime 变更或缓存不存在 → 重新解析并更新缓存
+3. **清理**：扫描完成后，删除缓存中已不存在文件的条目
+4. **持久化**：扫描完成后原子写入缓存文件（`.tmp` → `rename`）
+5. **内存缓存**：扫描结果保存在 Lua 模块级变量 `_cached_sessions`，后续搜索直接读取内存，不再触发文件扫描
+
+**缓存位置**：`~/.cache/LingXi/io.github.airead.lingxi.cc-sessions/sessions.json`（通过宿主 API `lingxi.cache.getPath()` 获取）
+
+### D9: 宿主 Cache 目录 API
+
+插件需要一个隔离的、可写的缓存目录存储大对象（如增量缓存文件），`lingxi.store`（key-value）不适合。
+
+**缓存目录约定**（见 `CLAUDE.md`）：
+- 根目录：`~/.cache/LingXi/`
+- 插件隔离：`~/.cache/LingXi/<plugin-id>/`
+
+**方案**：
+```lua
+-- 返回插件专属的缓存目录路径
+-- 例如：~/.cache/LingXi/io.github.airead.lingxi.cc-sessions/
+local cache_dir = lingxi.cache.getPath()
+```
+
+**实现**：
+- 宿主在加载插件时创建 `~/.cache/LingXi/<plugin-id>/` 目录
+- 插件 `plugin.toml` 需声明 `cache = true` 权限
+- 插件卸载时自动清理（可选）
+
+### D10: 文件 stat API
+
+扫描缓存需要获取文件 mtime 来判断是否变更。
+
+**方案**：扩展 `lingxi.file` 模块
+
+```lua
+-- 返回文件的元数据
+local stat = lingxi.file.stat(path)
+-- stat = { mtime = 1234567890, size = 1024, isDir = false }
+```
+
+**实现**：
+- 新增 `lingxi.file.stat(path)` 函数
+- 返回 `{ mtime, size, isDir }` 表，失败返回 `nil`
+- mtime 为 Unix 时间戳（秒）
 
 ---
 
@@ -275,7 +346,7 @@ lingxi.webview.on_message(callback)      -- 注册消息回调
 
 ### 阶段 2：插件骨架 + 扫描器
 
-**目标**：实现插件基础结构和会话扫描功能。
+**目标**：实现插件基础结构和会话扫描功能。重点解决扫描耗时过长和防并发问题。
 
 #### 2.1 新建插件文件
 
@@ -315,6 +386,7 @@ clipboard = true
 filesystem = ["~/.claude", "~/.claude/projects"]
 shell = ["git"]
 store = true
+cache = true
 webview = true
 
 [[commands]]
@@ -337,7 +409,8 @@ action = "cmd_clear_cache"
 - 遍历 `~/.claude/projects/*/` 目录
 - 读取 `*.jsonl` 文件（通过 `reader.lua`）
 - 提取：标题、项目名、分支、消息数、时间戳
-- 应用缓存（`cache.lua`）
+- **防并发保护**：使用变量标记扫描状态，执行期间新请求返回旧结果
+- **增量缓存**：基于 mtime 的增量更新，只重新读取变更的文件
 
 **新建文件**: `plugins/cc-sessions/reader.lua`
 
@@ -346,11 +419,23 @@ action = "cmd_clear_cache"
 - 提取：元数据、用户消息、助手消息、Token 用量
 - 返回结构化数据
 
+**新建文件**: `plugins/cc-sessions/cache.lua`
+
+- 增量持久缓存（基于 mtime）
+- `cache.load()`：从磁盘加载缓存
+- `cache.get(file_path, mtime)`：获取单个文件缓存
+- `cache.put(file_path, mtime, data)`：更新缓存
+- `cache.prune(live_paths)`：清理已删除文件
+- `cache.save()`：原子写入磁盘
+- `cache.clear()`：清除缓存
+
 #### 2.2 验证
 
-- 输入 `cc` → 显示最近会话列表
+- 输入 `cc` → 首次扫描（耗时较长），显示最近会话列表
+- 再次输入 `cc` → 从内存缓存读取，瞬时响应
 - 输入 `cc 关键词` → 模糊匹配过滤
 - 输入 `cc @项目名` → 按项目过滤
+- 运行 `cc-sessions:clear-cache` → 清除缓存，下次重新扫描
 
 ---
 
@@ -439,43 +524,60 @@ end)
 
 ---
 
-### 阶段 4：缓存与优化
+### 阶段 4：宿主 API 完善
 
-**目标**：实现扫描缓存，提升搜索性能。
+**目标**：实现 `lingxi.cache` 和 `lingxi.file.stat` API，为插件提供隔离缓存目录和文件元数据能力。
 
-#### 4.1 缓存实现
+#### 4.1 新增 Cache 目录 API
 
-**新建文件**: `plugins/cc-sessions/cache.lua`
+**修改文件**: `LingXi/Plugin/LuaAPI.swift`
 
-- `lingxi.store` 存储扫描结果
-- TTL 30 秒
-- 提供 `get()` / `set()` / `clear()` 接口
+注册 `lingxi.cache` 模块：
 
-#### 4.2 Git 工具
+```lua
+lingxi.cache.getPath()  -- 返回插件专属缓存目录
+```
+
+- 路径：`~/.config/LingXi/cache/<plugin-id>/`
+- 无需权限声明，所有插件默认可用
+- 插件卸载时自动清理（可选）
+
+#### 4.2 新增 File Stat API
+
+**修改文件**: `LingXi/Plugin/LuaAPI.swift`
+
+扩展 `lingxi.file` 模块：
+
+```lua
+lingxi.file.stat(path)  -- 返回 { mtime, size, isDir }
+```
+
+- mtime 为 Unix 时间戳（秒）
+- 失败返回 `nil`
+- 基于 `FileManager.attributesOfItem`
+
+#### 4.3 更新扫描器缓存
+
+**修改文件**: `plugins/cc-sessions/scanner.lua`
+
+- 使用 `lingxi.file.stat()` 获取 mtime
+- 使用 `lingxi.cache.getPath()` 获取缓存目录
+- 增量更新 + 防并发保护（已在阶段 2 实现）
+
+#### 4.4 Git 工具
 
 **新建文件**: `plugins/cc-sessions/git_utils.lua`
 
 - 解析 `git remote` 获取项目名
 - 解析 `git branch` 获取分支名
 
-#### 4.3 缓存命令
+#### 4.5 验证
 
-**修改文件**: `plugins/cc-sessions/init.lua`
-
-实现 `cmd_clear_cache(args)`：
-
-```lua
-function cmd_clear_cache(args)
-    cache.clear()
-    lingxi.alert.show("Cache cleared!", 2.0)
-    return {{title = "Cache cleared", subtitle = "Session scan cache has been cleared"}}
-end
-```
-
-#### 4.4 验证
-
-- 首次搜索 → 扫描目录，耗时较长
-- 再次搜索（30 秒内）→ 从缓存读取，瞬时响应
+- `lingxi.cache.getPath()` → 返回正确路径
+- `lingxi.file.stat("~/.claude")` → 返回正确的 mtime/size/isDir
+- 首次搜索 → 扫描目录（耗时较长），保存增量缓存
+- 再次搜索 → 从内存缓存读取，瞬时响应
+- 修改 JSONL 文件后搜索 → 只重新读取变更的文件
 - 运行 `cc-sessions:clear-cache` → 缓存清除，下次重新扫描
 
 ---
@@ -521,13 +623,14 @@ min_lingxi_version = "1.1.0"
 
 | 文件 | 类型 | 说明 |
 |------|------|------|
-| `LingXi/Plugin/PluginManifest.swift` | 修改 | `PermissionConfig` 新增 `webview: Bool` |
-| `LingXi/Plugin/ManifestParser.swift` | 修改 | 解析 `permissions.webview` |
-| `LingXi/Plugin/PluginManager.swift` | 修改 | 加载插件时注册 WebView 权限 |
-| `LingXi/Plugin/LuaAPI.swift` | 修改 | 新增 `lingxi.webview.*` API 注册 |
+| `LingXi/Plugin/PluginManifest.swift` | 修改 | `PermissionConfig` 新增 `webview: Bool`, `cache: Bool` |
+| `LingXi/Plugin/ManifestParser.swift` | 修改 | 解析 `permissions.webview` 和 `permissions.cache` |
+| `LingXi/Plugin/PluginManager.swift` | 修改 | 加载插件时注册 WebView 和 Cache 权限 |
+| `LingXi/Plugin/LuaAPI.swift` | 修改 | 新增 `lingxi.webview.*`, `lingxi.env.*`, `lingxi.file.stat()` API |
+| `LingXi/Plugin/PluginCacheManager.swift` | **新建** | 插件隔离缓存目录管理 |
 | `LingXi/Plugin/PluginWebViewManager.swift` | **新建** | WebView 窗口管理器（单例） |
 | `LingXi/Plugin/PluginWebViewWindow.swift` | **新建** | 单个 WKWebView 窗口实现 |
-| `LingXiTests/LuaAPITests.swift` | 修改 | 新增 WebView API 测试 |
+| `LingXiTests/LuaAPITests.swift` | 修改 | 新增 WebView、env、cache、file.stat API 测试 |
 
 ### 插件端（Lua + HTML）
 
@@ -538,7 +641,7 @@ min_lingxi_version = "1.1.0"
 | `plugins/cc-sessions/scanner.lua` | **新建** | 会话扫描器 |
 | `plugins/cc-sessions/reader.lua` | **新建** | JSONL 读取与解析 |
 | `plugins/cc-sessions/preview.lua` | **新建** | 文本预览生成 |
-| `plugins/cc-sessions/cache.lua` | **新建** | 基于 lingxi.store 的缓存 |
+| `plugins/cc-sessions/cache.lua` | **新建** | 增量持久缓存（基于 mtime + 内存缓存） |
 | `plugins/cc-sessions/identicon.lua` | **新建** | SVG 项目头像生成 |
 | `plugins/cc-sessions/git_utils.lua` | **新建** | Git 工具 |
 | `plugins/cc-sessions/viewer.html` | **新建** | WebView 查看器 HTML |
@@ -553,9 +656,9 @@ min_lingxi_version = "1.1.0"
 ## 实现顺序
 
 1. **阶段 1**：宿主端 WebView API（Swift）
-2. **阶段 2**：插件骨架 + 扫描器（Lua）
+2. **阶段 2**：插件骨架 + 扫描器 + 增量缓存（Lua）
 3. **阶段 3**：预览 + 查看器（Lua + HTML/JS）
-4. **阶段 4**：缓存与优化（Lua）
+4. **阶段 4**：宿主 API 完善（Swift）— `lingxi.cache`, `lingxi.file.stat`
 5. **阶段 5**：测试与完善
 
 ---
@@ -571,20 +674,26 @@ xcodebuild test -scheme LingXi -destination 'platform=macOS' -parallel-testing-e
 **需覆盖的测试**：
 - `PluginWebViewManager`：打开/关闭窗口，消息收发
 - `LuaAPI.webview`：Lua 调用 `open`/`close`/`send`/`on_message`
+- `LuaAPI.env`：获取白名单环境变量
+- `LuaAPI.cache`：获取插件隔离缓存目录
+- `LuaAPI.file.stat`：获取文件 mtime/size/isDir
 - `cc-sessions search()`：返回正确格式的 SearchResult
 - `cc-sessions scanner`：正确扫描 `~/.claude/projects/` 目录
+- `cc-sessions cache`：增量缓存 + 防并发
 
 ### 手动测试
 
-- 呼出面板，输入 `cc` → 确认显示最近会话列表
+- 呼出面板，输入 `cc` → 首次扫描（耗时较长），显示最近会话列表
+- 再次输入 `cc` → 从内存缓存读取，瞬时响应
 - 输入 `cc 关键词` → 确认模糊匹配过滤
 - 输入 `cc @项目名` → 确认按项目过滤
 - 选中会话 → 确认右侧预览面板显示最近对话摘要
 - 按 Enter → 确认 WebView 窗口打开，正确渲染 Markdown 和代码高亮
 - WebView 中点击大纲 → 确认跳转到对应消息
 - JS 发送 copy 消息 → 确认文本写入剪贴板
-- 运行 `cc-sessions:clear-cache` → 确认缓存清除
-- 重启 LingXi → 确认插件正常加载
+- 运行 `cc-sessions:clear-cache` → 确认缓存清除，下次重新扫描
+- 修改 JSONL 文件后搜索 → 确认只重新读取变更的文件
+- 重启 LingXi → 确认插件正常加载，从磁盘缓存恢复
 
 ---
 
@@ -602,7 +711,9 @@ xcodebuild test -scheme LingXi -destination 'platform=macOS' -parallel-testing-e
 1. **WebView 数量限制**：同一时间只允许一个插件 WebView 打开，避免资源竞争
 2. **线程安全**：`PluginWebViewManager` 标记为 `@MainActor`，所有 UI 操作在主线程执行
 3. **向后兼容**：`PermissionConfig` 新增 `webview` 字段后，旧插件 manifest 无此字段时默认为 `false`
-4. **文件路径**：`~/.claude` 路径在不同用户环境一致，但需验证 `PathValidator` 是否支持 `~` 展开
+4. **文件路径**：`~/.claude` 路径已支持 `~` 展开（`PathValidator` 和 `fileRead/fileWrite` 均支持）
 5. **性能**：JSONL 文件可能很大（活跃会话可达数十 MB），MVP 先全量发送，后续优化为分页/按需加载
-6. **测试隔离**：单元测试使用临时目录和 mock 数据，不读写真实 `~/.claude` 目录
-7. **权限最小化**：cc-sessions 插件仅需 `filesystem`（读取 Claude 数据）、`clipboard`（复制文本）、`store`（缓存）、`webview`（查看器），其他权限均为 false
+6. **扫描性能**：`scan_all()` 遍历大量文件，耗时以分钟计，必须通过增量缓存 + 内存缓存 + 防并发保护解决
+7. **测试隔离**：单元测试使用临时目录和 mock 数据，不读写真实 `~/.claude` 目录
+8. **权限最小化**：cc-sessions 插件仅需 `filesystem`（读取 Claude 数据）、`clipboard`（复制文本）、`store`（缓存）、`cache`（磁盘缓存）、`webview`（查看器），其他权限均为 false
+9. **缓存持久化**：缓存文件写入插件隔离缓存目录 `~/.cache/LingXi/<plugin-id>/`，不占用 `lingxi.store` 空间
