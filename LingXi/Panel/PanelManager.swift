@@ -117,6 +117,7 @@ final class PanelManager {
         } else {
             viewModel.clear()
         }
+        viewModel.resetHoverTracking()
         positionPanel(activePanel)
         NSApp.activate(ignoringOtherApps: true)
         activePanel.makeKeyAndOrderFront(nil)
@@ -359,14 +360,11 @@ private struct PanelContentView: View {
                     }
                 }
                 // Rows are fixed-height; derive hovered index from y-coordinate.
-                // Using .onContinuousHover (not .onHover) so stationary cursors
-                // don't hijack keyboard selection when rows scroll under them.
+                // The view model gates the first event as a baseline so a
+                // stationary cursor can't hijack selection when the panel opens.
                 .onContinuousHover(coordinateSpace: .local) { phase in
                     guard case .active(let point) = phase else { return }
-                    let index = Int(point.y / PanelLayout.rowHeight)
-                    guard viewModel.results.indices.contains(index),
-                          viewModel.selectedIndex != index else { return }
-                    viewModel.selectedIndex = index
+                    viewModel.handleHover(at: point, rowHeight: PanelLayout.rowHeight)
                 }
             }
             .onChange(of: viewModel.selectedIndex) { _, newIndex in

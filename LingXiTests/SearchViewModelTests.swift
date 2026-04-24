@@ -118,6 +118,86 @@ struct SearchViewModelTests {
         #expect(vm.selectedIndex == 0)
     }
 
+    // MARK: - Hover tracking
+
+    @Test func hoverFirstEventEstablishesBaselineWithoutChangingSelection() async {
+        let vm = await makeViewModel(query: "a")
+        #expect(vm.results.count > 1)
+        #expect(vm.selectedIndex == 0)
+
+        // Cursor happens to be over row 2 when the panel opens. The first
+        // hover event must NOT hijack the default selection.
+        let changed = vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 2.5), rowHeight: rowHeight)
+        #expect(changed == false)
+        #expect(vm.selectedIndex == 0)
+    }
+
+    @Test func hoverUpdatesSelectionAfterMouseMoves() async {
+        let vm = await makeViewModel(query: "a")
+        #expect(vm.results.count > 2)
+
+        // Baseline.
+        vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 0.5), rowHeight: rowHeight)
+        #expect(vm.selectedIndex == 0)
+
+        // Real move to row 2.
+        let changed = vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 2.5), rowHeight: rowHeight)
+        #expect(changed)
+        #expect(vm.selectedIndex == 2)
+    }
+
+    @Test func hoverIgnoresRepeatedEventAtSamePoint() async {
+        let vm = await makeViewModel(query: "a")
+        #expect(vm.results.count > 1)
+
+        let point = CGPoint(x: 10, y: rowHeight * 1.5)
+        vm.handleHover(at: point, rowHeight: rowHeight) // baseline
+        vm.handleHover(at: point, rowHeight: rowHeight) // re-fire from re-layout
+        #expect(vm.selectedIndex == 0)
+    }
+
+    @Test func queryChangeResetsHoverBaseline() async {
+        let vm = await makeViewModel(query: "a")
+        #expect(vm.results.count > 1)
+
+        // Establish a baseline and move to row 1.
+        vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 0.5), rowHeight: rowHeight)
+        vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 1.5), rowHeight: rowHeight)
+        #expect(vm.selectedIndex == 1)
+
+        // Typing a new query resets selection AND the hover baseline.
+        vm.query = "m"
+        await waitUntil { !vm.results.isEmpty }
+        #expect(vm.selectedIndex == 0)
+
+        // Cursor stayed where it was; the first post-layout hover must not
+        // hijack the freshly reset selection.
+        let changed = vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 1.5), rowHeight: rowHeight)
+        #expect(changed == false)
+        #expect(vm.selectedIndex == 0)
+    }
+
+    @Test func resetHoverTrackingRestoresBaselineGuard() async {
+        let vm = await makeViewModel(query: "a")
+        #expect(vm.results.count > 1)
+
+        // Move the mouse so selection tracks hover.
+        vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 0.5), rowHeight: rowHeight)
+        vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 1.5), rowHeight: rowHeight)
+        #expect(vm.selectedIndex == 1)
+
+        // Simulate panel close/reopen: selection goes back to 0 and baseline clears.
+        vm.selectedIndex = 0
+        vm.resetHoverTracking()
+
+        // Cursor still over row 1 — first event after reset must not hijack.
+        let changed = vm.handleHover(at: CGPoint(x: 10, y: rowHeight * 1.5), rowHeight: rowHeight)
+        #expect(changed == false)
+        #expect(vm.selectedIndex == 0)
+    }
+
+    private var rowHeight: CGFloat { 44 }
+
     // MARK: - confirm
 
     @Test func confirmReturnsFalseWhenNoResults() async {

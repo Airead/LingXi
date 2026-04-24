@@ -73,6 +73,38 @@ final class SearchViewModel: ObservableObject {
         query = ""
     }
 
+    // MARK: - Hover tracking
+
+    /// Last point received from the results list's hover handler. `nil` means
+    /// no baseline yet — the next hover event will establish one without
+    /// changing selection. See `handleHover(at:rowHeight:)`.
+    var lastHoverPoint: CGPoint?
+
+    /// Clear the hover baseline so the next hover event is treated as the
+    /// initial sample rather than real movement. Call this when the panel
+    /// (re)opens so a stationary cursor can't hijack the default selection.
+    func resetHoverTracking() {
+        lastHoverPoint = nil
+    }
+
+    /// Update `selectedIndex` from a hover at `point` in a list of fixed-height
+    /// rows. The first call after `resetHoverTracking()` only records the
+    /// baseline; subsequent calls update selection only when `point` actually
+    /// changed, ignoring re-fires caused by view re-layout.
+    @discardableResult
+    func handleHover(at point: CGPoint, rowHeight: CGFloat) -> Bool {
+        guard let last = lastHoverPoint else {
+            lastHoverPoint = point
+            return false
+        }
+        guard point != last else { return false }
+        lastHoverPoint = point
+        let index = Int(point.y / rowHeight)
+        guard results.indices.contains(index), selectedIndex != index else { return false }
+        selectedIndex = index
+        return true
+    }
+
     var historyIndex: Int? { historyBrowsing?.index }
 
     func moveUp() {
@@ -257,6 +289,10 @@ final class SearchViewModel: ObservableObject {
         searchTask?.cancel()
         generation += 1
         pendingDeleteIndex = nil
+        // Results are about to change; re-establish the hover baseline so a
+        // stationary cursor (common while typing) can't hijack the reset
+        // selection when the list re-layouts.
+        resetHoverTracking()
 
         guard !query.isEmpty else {
             results = []
