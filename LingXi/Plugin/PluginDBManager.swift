@@ -103,6 +103,58 @@ actor PluginDBManager {
         return .success(id)
     }
 
+    /// Open an external SQLite file read-only. `canonicalPath` must already
+    /// have been path-validated (symlinks resolved, whitelist enforced) by the
+    /// caller. The DB is opened with `mode=ro&immutable=1` so SQLite will not
+    /// try to create `-shm`/`-wal` sidecar files.
+    func openExternal(pluginId: String, canonicalPath: String) -> Result<Int, PluginDBError> {
+        guard !pluginId.isEmpty else {
+            return .failure(.invalidName("empty pluginId"))
+        }
+        guard FileManager.default.fileExists(atPath: canonicalPath) else {
+            return .failure(.openFailed("file does not exist: \(canonicalPath)"))
+        }
+
+        // SQLite URI form: escape '?' and '#' in the path.
+        let escaped = canonicalPath
+            .replacingOccurrences(of: "?", with: "%3f")
+            .replacingOccurrences(of: "#", with: "%23")
+        let uri = "file:\(escaped)?mode=ro&immutable=1"
+
+        var handle: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
+        let rc = sqlite3_open_v2(uri, &handle, flags, nil)
+        if rc != SQLITE_OK {
+            var msg: String
+            if let handle {
+                msg = String(cString: sqlite3_errmsg(handle))
+                sqlite3_close_v2(handle)
+            } else {
+                msg = "sqlite3_open_v2 rc=\(rc)"
+            }
+            // Hint at TCC: readable file that SQLite cannot open often means
+            // the app is missing Full Disk Access for that location.
+            if rc == SQLITE_CANTOPEN {
+                msg += " (may need Full Disk Access)"
+            }
+            return .failure(.openFailed(msg))
+        }
+        guard let handle else {
+            return .failure(.openFailed("null handle"))
+        }
+
+        // Read-only connection: busy_timeout is still useful in case another
+        // writer holds the lock briefly. journal_mode/foreign_keys pragmas are
+        // no-ops on a readonly connection, so skip them.
+        sqlite3_exec(handle, "PRAGMA busy_timeout=3000;", nil, nil, nil)
+
+        let id = nextHandleId
+        nextHandleId += 1
+        connections[id] = Connection(db: handle, isReadOnly: true)
+        pluginHandles[pluginId, default: []].insert(id)
+        return .success(id)
+    }
+
     func close(pluginId: String, handleId: Int) {
         guard let conn = connections.removeValue(forKey: handleId) else { return }
         pluginHandles[pluginId]?.remove(handleId)
@@ -309,6 +361,17 @@ extension PluginDBManager {
         var result: Result<Int, PluginDBError> = .failure(.handleNotFound)
         Task {
             result = await openOwned(pluginId: pluginId, name: name)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+    }
+
+    nonisolated func syncOpenExternal(pluginId: String, canonicalPath: String) -> Result<Int, PluginDBError> {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<Int, PluginDBError> = .failure(.handleNotFound)
+        Task {
+            result = await openExternal(pluginId: pluginId, canonicalPath: canonicalPath)
             semaphore.signal()
         }
         semaphore.wait()

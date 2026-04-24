@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import LingXi
 
@@ -23,8 +24,22 @@ struct LuaDBAPITests {
         try? FileManager.default.removeItem(at: url)
     }
 
+    /// Create a small sqlite file at `path` with a `cities` table for
+    /// external-DB tests to read from.
+    private func seedExternalDB(at path: String) {
+        var handle: OpaquePointer?
+        let rc = sqlite3_open_v2(path, &handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+        precondition(rc == SQLITE_OK, "failed to create test sqlite at \(path)")
+        defer { sqlite3_close_v2(handle) }
+        sqlite3_exec(handle, "CREATE TABLE cities (id INTEGER PRIMARY KEY, name TEXT, pop INTEGER);", nil, nil, nil)
+        sqlite3_exec(handle, "INSERT INTO cities VALUES (1, 'Tokyo', 37400000);", nil, nil, nil)
+        sqlite3_exec(handle, "INSERT INTO cities VALUES (2, 'Delhi', 30300000);", nil, nil, nil)
+        sqlite3_exec(handle, "INSERT INTO cities VALUES (3, 'Shanghai', 27100000);", nil, nil, nil)
+    }
+
     private func makeState(
         db: Bool = true,
+        externalPaths: [String] = [],
         pluginId: String = "test.db.plugin"
     ) -> LuaState {
         let state = LuaState()
@@ -39,7 +54,8 @@ struct LuaDBAPITests {
             store: false,
             webview: false,
             cache: false,
-            db: db
+            db: db,
+            dbExternalPaths: externalPaths
         )
         LuaAPI.registerAll(state: state, permissions: perms, pluginId: pluginId, pluginDir: "")
         return state
@@ -246,6 +262,185 @@ struct LuaDBAPITests {
             local rows, err = _G.handle:query("SELECT 1")
             assert(rows == nil, "expected nil after closeAll")
             assert(type(err) == 'string')
+        """)
+    }
+
+    // MARK: - External DB
+
+    @Test func openExternalReadsWhitelistedFile() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("external.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db = assert(lingxi.db.openExternal(EXT_PATH))
+            local rows = assert(db:query("SELECT id, name, pop FROM cities ORDER BY id"))
+            assert(#rows == 3, "expected 3 rows")
+            assert(rows[1].name == "Tokyo")
+            assert(rows[1].pop == 37400000)
+            local one = assert(db:queryOne("SELECT name FROM cities WHERE id = ?", {2}))
+            assert(one.name == "Delhi")
+            db:close()
+        """)
+    }
+
+    @Test func openExternalExecMethodIsAbsent() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("external.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db = assert(lingxi.db.openExternal(EXT_PATH))
+            assert(db.exec == nil, "exec must not be present on external handle")
+            -- attempting to call it should raise Lua error
+            local ok, err = pcall(function() db:exec("SELECT 1") end)
+            assert(not ok, "calling nil exec should raise")
+            db:close()
+        """)
+    }
+
+    @Test func openExternalRejectsNonWhitelisted() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        // whitelist a harmless tmp file; probe attempts a different path.
+        let allowed = tmp.appendingPathComponent("allowed.sqlite").path
+        seedExternalDB(at: allowed)
+        let disallowed = tmp.appendingPathComponent("other.sqlite").path
+        seedExternalDB(at: disallowed)
+
+        let state = makeState(externalPaths: [allowed])
+        state.push(disallowed)
+        state.setGlobal("BAD_PATH")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(BAD_PATH)
+            assert(db == nil, "expected nil db for non-whitelisted path")
+            assert(type(err) == 'string' and err:find("whitelist") ~= nil,
+                "expected whitelist error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func openExternalRejectsWhenWhitelistEmpty() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("x.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(db: true, externalPaths: [])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(EXT_PATH)
+            assert(db == nil)
+            assert(type(err) == 'string' and err:find("external") ~= nil,
+                "expected 'no external paths' error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func openExternalDeniedWhenDBPermissionOff() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("x.sqlite").path
+        seedExternalDB(at: extPath)
+
+        // Note: even with paths set, disabled db permission shuts down the API.
+        let state = makeState(db: false, externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(EXT_PATH)
+            assert(db == nil)
+            assert(type(err) == 'string' and err:find("permission") ~= nil,
+                "expected permission error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func openExternalRejectsSymlinkEscape() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let allowedDir = tmp.appendingPathComponent("allowed", isDirectory: true)
+        let sensitiveDir = tmp.appendingPathComponent("sensitive", isDirectory: true)
+        try FileManager.default.createDirectory(at: allowedDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sensitiveDir, withIntermediateDirectories: true)
+
+        let realSecret = sensitiveDir.appendingPathComponent("secret.sqlite").path
+        seedExternalDB(at: realSecret)
+
+        let symlinkInAllowed = allowedDir.appendingPathComponent("trojan.sqlite")
+        try FileManager.default.createSymbolicLink(
+            at: symlinkInAllowed,
+            withDestinationURL: URL(fileURLWithPath: realSecret)
+        )
+
+        // Whitelist only the allowed dir; canonicalization should resolve the
+        // symlink target outside the whitelist.
+        let state = makeState(externalPaths: [allowedDir.path])
+        state.push(symlinkInAllowed.path)
+        state.setGlobal("TROJAN")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(TROJAN)
+            assert(db == nil, "symlink escape must be rejected")
+            assert(type(err) == 'string')
+        """)
+    }
+
+    @Test func openExternalMissingFile() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let missingPath = tmp.appendingPathComponent("nope.sqlite").path
+
+        // Whitelist the parent dir so the path passes validation but the file
+        // itself is missing — error should be distinguishable.
+        let state = makeState(externalPaths: [tmp.path])
+        state.push(missingPath)
+        state.setGlobal("MISSING")
+        try state.doString("""
+            local db, err = lingxi.db.openExternal(MISSING)
+            assert(db == nil)
+            assert(type(err) == 'string')
+            assert(err:find("does not exist") ~= nil or err:find("not in") ~= nil,
+                "expected existence error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func externalHandleCloseThenQueryErrors() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("ext.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db = assert(lingxi.db.openExternal(EXT_PATH))
+            assert(db:close() == true)
+            local rows, err = db:query("SELECT 1")
+            assert(rows == nil)
+            assert(type(err) == 'string' and err:find("closed") ~= nil)
         """)
     }
 }

@@ -19,6 +19,9 @@ nonisolated struct PermissionConfig: Sendable, Equatable {
     let webview: Bool
     let cache: Bool
     let db: Bool
+    /// Whitelist of paths that `lingxi.db.openExternal` may read (read-only).
+    /// Decoupled from `filesystem`: this list is for SQLite access only.
+    let dbExternalPaths: [String]
 
     /// Restrictive default for plugins.
     nonisolated static let `default` = PermissionConfig(
@@ -30,7 +33,8 @@ nonisolated struct PermissionConfig: Sendable, Equatable {
         store: false,
         webview: false,
         cache: false,
-        db: false
+        db: false,
+        dbExternalPaths: []
     )
 }
 

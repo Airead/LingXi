@@ -81,7 +81,7 @@ nonisolated enum LuaAPI {
             registerDisabledCache(state: state)
         }
         if permissions.db {
-            LuaDBAPI.register(state: state)
+            LuaDBAPI.register(state: state, pluginId: pluginId, externalPaths: permissions.dbExternalPaths)
         } else {
             LuaDBAPI.registerDisabled(state: state)
         }

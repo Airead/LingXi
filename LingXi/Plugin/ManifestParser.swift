@@ -53,6 +53,7 @@ nonisolated enum ManifestParser {
         let webview = doc.bool("permissions", "webview") ?? false
         let cache = doc.bool("permissions", "cache") ?? false
         let db = doc.bool("permissions", "db") ?? false
+        let dbExternalPaths = doc.stringArray("permissions", "db_external_paths") ?? []
         let permissions = PermissionConfig(
             network: network,
             clipboard: clipboard,
@@ -62,7 +63,8 @@ nonisolated enum ManifestParser {
             store: store,
             webview: webview,
             cache: cache,
-            db: db
+            db: db,
+            dbExternalPaths: dbExternalPaths
         )
 
         // Commands

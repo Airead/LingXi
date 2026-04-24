@@ -557,6 +557,31 @@ local function test_transactions_manual()
     end)
 end
 
+local function test_external_demo()
+    _current_suite = "external.demo"
+    -- Demonstrates that openExternal is permission-gated. This plugin's
+    -- manifest does NOT declare db_external_paths, so every call should
+    -- be rejected. This is non-functional — only confirms the gate exists.
+
+    _run_test("openExternal is a function", function()
+        _assert_type(lingxi.db.openExternal, "function", "openExternal must exist")
+    end)
+
+    _run_test("openExternal denied (no db_external_paths)", function()
+        local db, err = lingxi.db.openExternal("/tmp/anything.sqlite")
+        _assert_eq(db, nil, "expected nil db without whitelist")
+        _assert_type(err, "string", "expected error string")
+        _assert(err:find("external") ~= nil,
+            "error should mention 'external': " .. tostring(err))
+    end)
+
+    _run_test("openExternal rejects non-string path", function()
+        local db, err = lingxi.db.openExternal(42)
+        _assert_eq(db, nil)
+        _assert_type(err, "string")
+    end)
+end
+
 -- ============================================================================
 -- Result Reporting
 -- ============================================================================
@@ -669,6 +694,7 @@ local function run_all()
     test_lifecycle()
     test_persistence()
     test_transactions_manual()
+    test_external_demo()
     return _build_result_items()
 end
 
@@ -684,6 +710,7 @@ local _subsuites = {
     lifecycle   = test_lifecycle,
     persistence = test_persistence,
     transaction = test_transactions_manual,
+    external    = test_external_demo,
 }
 
 local function run_subsuite(key)
@@ -714,6 +741,7 @@ function search(query)
             { title = "test-db lifecycle",   subtitle = "Test close/__gc/double-close" },
             { title = "test-db persistence", subtitle = "Test data survival & DB isolation" },
             { title = "test-db transaction", subtitle = "Test manual BEGIN/COMMIT/ROLLBACK" },
+            { title = "test-db external",    subtitle = "Demo: openExternal permission gate (no whitelist)" },
             { title = "test-db:run-all",     subtitle = "Command: Run full test suite (copies to clipboard)" },
             { title = "test-db:clear-results", subtitle = "Command: Clear all test results" },
         }

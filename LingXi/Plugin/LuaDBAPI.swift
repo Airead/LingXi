@@ -11,31 +11,44 @@ import Foundation
 ///   db:close()                                    -> true
 nonisolated enum LuaDBAPI {
     private static let ownedMetatableName = "lingxi.db.owned"
+    private static let externalMetatableName = "lingxi.db.external"
+
+    /// Per-plugin whitelist for `lingxi.db.openExternal`. Populated by
+    /// `register(state:pluginId:externalPaths:)` and consulted by the C
+    /// callback to validate external DB paths.
+    private static var externalPermissions: [String: [String]] = [:]
 
     // MARK: - Registration
 
-    static func register(state: LuaState) {
+    static func register(state: LuaState, pluginId: String = "", externalPaths: [String] = []) {
         ensureMetatables(L: state.raw)
 
-        state.createTable(nrec: 1)
+        if !pluginId.isEmpty {
+            externalPermissions[pluginId] = externalPaths
+        }
+
+        state.createTable(nrec: 2)
         state.pushFunction(dbOpen)
         state.setField("open", at: -2)
+        state.pushFunction(dbOpenExternal)
+        state.setField("openExternal", at: -2)
         state.setField("db", at: -2)
     }
 
     static func registerDisabled(state: LuaState) {
-        state.createTable(nrec: 1)
+        state.createTable(nrec: 2)
         state.pushFunction(disabledOpen)
         state.setField("open", at: -2)
+        state.pushFunction(disabledOpen)
+        state.setField("openExternal", at: -2)
         state.setField("db", at: -2)
     }
 
     // MARK: - Metatable setup
 
     private static func ensureMetatables(L: OpaquePointer) {
-        // Create metatable only once per Lua state.
+        // Owned DB metatable: exec + query + queryOne + close.
         if luaL_newmetatable(L, ownedMetatableName) != 0 {
-            // __index -> method table
             lua_createtable(L, 0, 4)
             lua_swift_pushcfunction(L, dbExec)
             lua_setfield(L, -2, "exec")
@@ -47,12 +60,31 @@ nonisolated enum LuaDBAPI {
             lua_setfield(L, -2, "close")
             lua_setfield(L, -2, "__index")
 
-            // __gc -> close on GC
             lua_swift_pushcfunction(L, dbGc)
             lua_setfield(L, -2, "__gc")
 
-            // __metatable -> opaque string to prevent user from replacing methods
             lua_pushstring(L, "lingxi.db")
+            lua_setfield(L, -2, "__metatable")
+        }
+        lua_swift_pop(L, 1)
+
+        // External DB metatable: intentionally omits `exec` (read-only only).
+        // Trying to call exec on an external handle raises "attempt to call
+        // a nil value" at the Lua level.
+        if luaL_newmetatable(L, externalMetatableName) != 0 {
+            lua_createtable(L, 0, 3)
+            lua_swift_pushcfunction(L, dbQuery)
+            lua_setfield(L, -2, "query")
+            lua_swift_pushcfunction(L, dbQueryOne)
+            lua_setfield(L, -2, "queryOne")
+            lua_swift_pushcfunction(L, dbClose)
+            lua_setfield(L, -2, "close")
+            lua_setfield(L, -2, "__index")
+
+            lua_swift_pushcfunction(L, dbGc)
+            lua_setfield(L, -2, "__gc")
+
+            lua_pushstring(L, "lingxi.db.external")
             lua_setfield(L, -2, "__metatable")
         }
         lua_swift_pop(L, 1)
@@ -78,17 +110,29 @@ nonisolated enum LuaDBAPI {
         return pid
     }
 
-    /// Read the handleId stored in a userdata at `index`. Returns 0 if invalid or closed.
-    private static func handleId(L: OpaquePointer, at index: Int32) -> Int {
-        guard let ud = luaL_checkudata(L, index, ownedMetatableName) else { return 0 }
-        return ud.assumingMemoryBound(to: Int.self).pointee
+    /// Read the handleId from a userdata matching any of the provided metatables.
+    /// Returns 0 if the type doesn't match or the handle has been closed.
+    /// Uses `luaL_testudata` (non-raising) so callers can accept multiple types.
+    private static func handleId(L: OpaquePointer, at index: Int32, metatables: [String]) -> Int {
+        for name in metatables {
+            if let ud = luaL_testudata(L, index, name) {
+                return ud.assumingMemoryBound(to: Int.self).pointee
+            }
+        }
+        return 0
     }
 
-    /// Overwrite the handleId (used to invalidate on close).
-    private static func setHandleId(L: OpaquePointer, at index: Int32, value: Int) {
-        guard let ud = luaL_checkudata(L, index, ownedMetatableName) else { return }
-        ud.assumingMemoryBound(to: Int.self).pointee = value
+    /// Overwrite the handleId (used to invalidate on close) across either metatable.
+    private static func setHandleId(L: OpaquePointer, at index: Int32, value: Int, metatables: [String]) {
+        for name in metatables {
+            if let ud = luaL_testudata(L, index, name) {
+                ud.assumingMemoryBound(to: Int.self).pointee = value
+                return
+            }
+        }
     }
+
+    private static let anyDBMetatables = [ownedMetatableName, externalMetatableName]
 
     /// Convert a Lua table (array) at `paramsIndex` to `[PluginDBValue]`.
     /// If no table is present (nil / absent), returns empty array.
@@ -198,9 +242,11 @@ nonisolated enum LuaDBAPI {
     // MARK: - C Functions: methods on db
 
     /// `db:exec(sql, params?) -> changes | nil, err`
+    /// Only valid on owned DB handles — external handles' metatable does not
+    /// expose this method.
     private static let dbExec: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        let hid = handleId(L: L, at: 1)
+        let hid = handleId(L: L, at: 1, metatables: [ownedMetatableName])
         guard hid > 0 else {
             lua_pushnil(L)
             lua_pushstring(L, "db is closed")
@@ -235,7 +281,7 @@ nonisolated enum LuaDBAPI {
     /// `db:query(sql, params?) -> rows[] | nil, err`
     private static let dbQuery: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        let hid = handleId(L: L, at: 1)
+        let hid = handleId(L: L, at: 1, metatables: anyDBMetatables)
         guard hid > 0 else {
             lua_pushnil(L)
             lua_pushstring(L, "db is closed")
@@ -274,7 +320,7 @@ nonisolated enum LuaDBAPI {
     /// `db:queryOne(sql, params?) -> row|nil | nil, err`
     private static let dbQueryOne: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        let hid = handleId(L: L, at: 1)
+        let hid = handleId(L: L, at: 1, metatables: anyDBMetatables)
         guard hid > 0 else {
             lua_pushnil(L)
             lua_pushstring(L, "db is closed")
@@ -313,11 +359,11 @@ nonisolated enum LuaDBAPI {
     /// `db:close() -> true`
     private static let dbClose: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        let hid = handleId(L: L, at: 1)
+        let hid = handleId(L: L, at: 1, metatables: anyDBMetatables)
         if hid > 0 {
             let pid = pluginId(from: L)
             PluginDBManager.shared.syncClose(pluginId: pid, handleId: hid)
-            setHandleId(L: L, at: 1, value: 0)
+            setHandleId(L: L, at: 1, value: 0, metatables: anyDBMetatables)
         }
         lua_pushboolean(L, 1)
         return 1
@@ -326,12 +372,56 @@ nonisolated enum LuaDBAPI {
     /// `__gc` metamethod — ensures DB is closed when userdata is collected.
     private static let dbGc: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
-        let hid = handleId(L: L, at: 1)
+        let hid = handleId(L: L, at: 1, metatables: anyDBMetatables)
         if hid > 0 {
             let pid = pluginId(from: L)
             PluginDBManager.shared.syncClose(pluginId: pid, handleId: hid)
-            setHandleId(L: L, at: 1, value: 0)
+            setHandleId(L: L, at: 1, value: 0, metatables: anyDBMetatables)
         }
         return 0
+    }
+
+    // MARK: - openExternal implementation
+
+    /// `lingxi.db.openExternal(path) -> userdata | nil, err`
+    private static let dbOpenExternal: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard lua_type(L, 1) == lua_swift_type_string(),
+              let cstr = lua_swift_tostring(L, 1) else {
+            lua_pushnil(L)
+            lua_pushstring(L, "path must be a string")
+            return 2
+        }
+        let path = String(cString: cstr)
+        let pid = pluginId(from: L)
+
+        let allowed = externalPermissions[pid] ?? []
+        guard !allowed.isEmpty else {
+            DebugLog.log("[LuaDB] \(pid): openExternal(\(path)) denied: no db_external_paths configured")
+            lua_pushnil(L)
+            lua_pushstring(L, "no external paths allowed (configure permissions.db_external_paths)")
+            return 2
+        }
+
+        let validator = PathValidator(allowedPaths: allowed)
+        guard let canonical = validator.validate(path) else {
+            DebugLog.log("[LuaDB] \(pid): openExternal(\(path)) denied: not in db_external_paths whitelist")
+            lua_pushnil(L)
+            lua_pushstring(L, "path not in db_external_paths whitelist")
+            return 2
+        }
+
+        switch PluginDBManager.shared.syncOpenExternal(pluginId: pid, canonicalPath: canonical) {
+        case .failure(let err):
+            DebugLog.log("[LuaDB] \(pid): openExternal(\(canonical)) failed: \(err.message)")
+            lua_pushnil(L)
+            lua_pushstring(L, err.message)
+            return 2
+        case .success(let handleId):
+            let ud = lua_newuserdatauv(L, MemoryLayout<Int>.size, 0)
+            ud?.assumingMemoryBound(to: Int.self).pointee = handleId
+            luaL_setmetatable(L, externalMetatableName)
+            return 1
+        }
     }
 }

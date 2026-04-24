@@ -233,7 +233,7 @@ struct CCSessionsPluginTests {
         state.openLibs()
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: tmpDir.path)
-        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: false, cache: true, db: false), pluginId: "test.cache", pluginDir: tmpDir.path)
+        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: false, cache: true, db: false, dbExternalPaths: []), pluginId: "test.cache", pluginDir: tmpDir.path)
 
         let pluginSrcDir = tmpDir.appendingPathComponent("src")
         try FileManager.default.createDirectory(at: pluginSrcDir, withIntermediateDirectories: true)
@@ -263,7 +263,7 @@ struct CCSessionsPluginTests {
         state.openLibs()
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: tmpDir.path)
-        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: false, cache: true, db: false), pluginId: "test.cache", pluginDir: tmpDir.path)
+        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: false, cache: true, db: false, dbExternalPaths: []), pluginId: "test.cache", pluginDir: tmpDir.path)
 
         let pluginSrcDir = tmpDir.appendingPathComponent("src")
         try FileManager.default.createDirectory(at: pluginSrcDir, withIntermediateDirectories: true)
@@ -322,7 +322,7 @@ struct CCSessionsPluginTests {
         state.openLibs()
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: tmpDir.path)
-        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tmpDir.path], shell: [], notify: false, store: false, webview: false, cache: false, db: false), pluginId: "test.reader", pluginDir: tmpDir.path)
+        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: false, filesystem: [tmpDir.path], shell: [], notify: false, store: false, webview: false, cache: false, db: false, dbExternalPaths: []), pluginId: "test.reader", pluginDir: tmpDir.path)
 
         let pluginSrcDir = tmpDir.appendingPathComponent("src")
         try FileManager.default.createDirectory(at: pluginSrcDir, withIntermediateDirectories: true)
@@ -355,7 +355,7 @@ struct CCSessionsPluginTests {
         state.openLibs()
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: tmpDir.path)
-        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: false, cache: false, db: false), pluginId: "test.preview", pluginDir: tmpDir.path)
+        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: false, cache: false, db: false, dbExternalPaths: []), pluginId: "test.preview", pluginDir: tmpDir.path)
 
         let pluginSrcDir = tmpDir.appendingPathComponent("src")
         try FileManager.default.createDirectory(at: pluginSrcDir, withIntermediateDirectories: true)
@@ -380,7 +380,7 @@ struct CCSessionsPluginTests {
         state.openLibs()
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: pluginDir.path)
-        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: true, filesystem: ["/tmp"], shell: ["git"], notify: false, store: true, webview: true, cache: true, db: false), pluginId: "io.github.airead.lingxi.cc-sessions", pluginDir: pluginDir.path)
+        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: true, filesystem: ["/tmp"], shell: ["git"], notify: false, store: true, webview: true, cache: true, db: false, dbExternalPaths: []), pluginId: "io.github.airead.lingxi.cc-sessions", pluginDir: pluginDir.path)
 
         try state.doFile(pluginDir.appendingPathComponent("init.lua").path)
 
@@ -398,7 +398,7 @@ struct CCSessionsPluginTests {
         state.openLibs()
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: pluginDir.path)
-        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: true, filesystem: ["/tmp"], shell: ["git"], notify: false, store: true, webview: true, cache: true, db: false), pluginId: "io.github.airead.lingxi.cc-sessions", pluginDir: pluginDir.path)
+        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: true, filesystem: ["/tmp"], shell: ["git"], notify: false, store: true, webview: true, cache: true, db: false, dbExternalPaths: []), pluginId: "io.github.airead.lingxi.cc-sessions", pluginDir: pluginDir.path)
 
         try state.doFile(pluginDir.appendingPathComponent("init.lua").path)
 
@@ -416,7 +416,7 @@ struct CCSessionsPluginTests {
         state.openLibs()
         LuaSandbox.apply(to: state)
         LuaSandbox.setupPackagePath(to: state, pluginDir: pluginDir.path)
-        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: true, filesystem: ["/tmp"], shell: ["git"], notify: false, store: true, webview: true, cache: true, db: false), pluginId: "io.github.airead.lingxi.cc-sessions", pluginDir: pluginDir.path)
+        LuaAPI.registerAll(state: state, permissions: PermissionConfig(network: false, clipboard: true, filesystem: ["/tmp"], shell: ["git"], notify: false, store: true, webview: true, cache: true, db: false, dbExternalPaths: []), pluginId: "io.github.airead.lingxi.cc-sessions", pluginDir: pluginDir.path)
 
         try state.doFile(pluginDir.appendingPathComponent("init.lua").path)
 
