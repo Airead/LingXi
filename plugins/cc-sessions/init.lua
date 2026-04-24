@@ -507,7 +507,13 @@ end)
 
 local function _build_result_item(session, rank)
     local time_str = _time_ago(session.modified)
-    local subtitle_parts = { session.project }
+    local subtitle_parts = {}
+    -- Minority-source tag so OpenCode results are distinguishable at a glance;
+    -- cc is the default and stays unmarked to keep the line short.
+    if session.source == opencode_store.SOURCE then
+        table.insert(subtitle_parts, "[OC]")
+    end
+    table.insert(subtitle_parts, session.project)
     if time_str ~= "" then
         table.insert(subtitle_parts, time_str)
     end

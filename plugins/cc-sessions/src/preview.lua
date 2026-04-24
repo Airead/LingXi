@@ -109,6 +109,12 @@ function M.build(session)
 
     -- Build metadata pills (compact)
     local pills = {}
+    -- Lead with source pill so users can tell CC vs OpenCode at a glance.
+    if session.source == "opencode" then
+        table.insert(pills, '<span class="pill source-oc">OC</span>')
+    else
+        table.insert(pills, '<span class="pill source-cc">CC</span>')
+    end
     table.insert(pills, '<span class="pill project">' .. _escape_html(session.project) .. '</span>')
     if session.git_branch and session.git_branch ~= "" then
         table.insert(pills, '<span class="pill branch">' .. _escape_html(session.git_branch) .. '</span>')
@@ -169,6 +175,8 @@ function M.build(session)
         '.title { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: #1a1a1a; line-height: 1.3; }',
         '.pills { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }',
         '.pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }',
+        '.pill.source-cc { background: #ede7f6; color: #4527a0; font-weight: 700; }',
+        '.pill.source-oc { background: #e0f2f1; color: #00695c; font-weight: 700; }',
         '.pill.project { background: #e3f2fd; color: #1565c0; }',
         '.pill.branch { background: #f3e5f5; color: #6a1b9a; }',
         '.pill.version { background: #e8f5e9; color: #2e7d32; }',

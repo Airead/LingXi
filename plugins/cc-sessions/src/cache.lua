@@ -261,6 +261,28 @@ end
 -- Cache Management
 -- ============================================================================
 
+-- Remove every exported opencode JSONL under <plugin-cache>/opencode-export/.
+-- The directory itself is left in place so subsequent exports can reuse it.
+local function _clear_opencode_export()
+    local cache_dir = lingxi.cache.getPath()
+    if not cache_dir or cache_dir == "" then
+        return
+    end
+    local dir = cache_dir .. "/opencode-export"
+    if not lingxi.file.exists(dir) then
+        return
+    end
+    local entries = lingxi.file.list(dir)
+    if not entries then
+        return
+    end
+    for _, entry in ipairs(entries) do
+        if not entry.isDir then
+            lingxi.file.trash(dir .. "/" .. entry.name)
+        end
+    end
+end
+
 function M.clear()
     _sessions = nil
     _scan_all_cached_at = 0
@@ -269,11 +291,16 @@ function M.clear()
     _disk_cache_loaded = false
     _dirty = false
     _index_supplements = {}
-    
+
     local path = _cache_file_path()
     if path then
         lingxi.file.write(path, lingxi.json.encode({ version = CACHE_VERSION, sessions = {} }))
     end
+
+    -- Cascade: opencode has its own in-memory TTL cache and exported JSONLs.
+    local opencode_store = require("src.opencode_store")
+    opencode_store.clear_cache()
+    _clear_opencode_export()
 end
 
 return M
