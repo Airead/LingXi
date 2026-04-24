@@ -607,7 +607,12 @@ function M.export_to_jsonl(sid, out_path)
         end
     end
 
-    -- Convert each message to a JSONL line
+    -- Convert each message to a JSONL line. lingxi.json.encode pretty-prints
+    -- by default (NSJSONWritingOptions.prettyPrinted), which breaks JSONL
+    -- framing. Strip the structural LFs + indentation to compact each line.
+    -- Safe: JSON string literals cannot contain raw LF (must be escaped as
+    -- the two-char sequence \n), so any LF in `encoded` comes from pretty
+    -- formatting, never from user content.
     local lines = {}
     for _, m in ipairs(messages) do
         local mdata = _json_parse(m.data)
@@ -618,7 +623,8 @@ function M.export_to_jsonl(sid, out_path)
                     return lingxi.json.encode(converted)
                 end)
                 if ok and type(encoded) == "string" and encoded ~= "" then
-                    table.insert(lines, encoded)
+                    local compact = encoded:gsub("\n%s*", "")
+                    table.insert(lines, compact)
                 end
             end
         end
