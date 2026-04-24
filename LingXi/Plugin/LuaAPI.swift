@@ -1503,8 +1503,19 @@ nonisolated enum LuaAPI {
         return 1
     }
 
-    /// `lingxi.json.encode(table) -> string | nil`
-    /// Serializes a Lua table into a JSON string.
+    /// `lingxi.json.encode(value, opts?) -> string | nil`
+    ///
+    /// Serializes a Lua value into a JSON string. **Compact by default**; pass
+    /// `{ pretty = true }` as the second argument for indented output.
+    ///
+    /// Compact is the default because JSONL framing, WebView message passing,
+    /// and most byte-economical transports break or waste bandwidth on pretty
+    /// output. Plugins that want readable JSON (typically for debug dumps)
+    /// opt in explicitly.
+    ///
+    /// Top-level primitives (string/number/boolean/null) still return nil —
+    /// NSJSONSerialization does not emit fragments and this function does
+    /// not enable `.fragmentsAllowed` to keep behavior predictable.
     private static let jsonEncode: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
 
@@ -1517,8 +1528,26 @@ nonisolated enum LuaAPI {
             return 1
         }
 
+        // Optional second arg: { pretty = true } — opt-in indented output.
+        var options: JSONSerialization.WritingOptions = []
+        if lua_type(L, 2) == lua_swift_type_table() {
+            lua_getfield(L, 2, "pretty")
+            if lua_toboolean(L, -1) != 0 {
+                options.insert(.prettyPrinted)
+            }
+            lua_swift_pop(L, 1)
+        }
+
+        // NSJSONSerialization raises an Obj-C exception (not a Swift-catchable
+        // NSError) when asked to encode a top-level primitive. Pre-validate
+        // so we surface a clean `nil` instead of crashing the plugin host.
+        guard JSONSerialization.isValidJSONObject(value) else {
+            lua_pushnil(L)
+            return 1
+        }
+
         do {
-            let jsonData = try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted])
+            let jsonData = try JSONSerialization.data(withJSONObject: value, options: options)
             if let jsonString = String(data: jsonData, encoding: .utf8) {
                 lua_pushstring(L, jsonString)
             } else {

@@ -1026,6 +1026,88 @@ struct LuaAPITests {
         """)
     }
 
+    @Test func jsonEncodeIsFunction() throws {
+        let state = makeState()
+        try state.doString("assert(type(lingxi.json.encode) == 'function')")
+    }
+
+    @Test func jsonEncodeDefaultIsCompact() throws {
+        let state = makeState()
+        try state.doString("""
+            local encoded = lingxi.json.encode({ a = 1, nested = { b = "x" } })
+            assert(type(encoded) == 'string', "expected string, got " .. type(encoded))
+            -- Compact output must never contain structural newlines.
+            assert(encoded:find("\\n") == nil, "expected no newlines in compact output, got: " .. encoded)
+            -- Round-trips back into the same structure.
+            local decoded = lingxi.json.parse(encoded)
+            assert(decoded.a == 1, "a round-trip")
+            assert(decoded.nested.b == 'x', "nested round-trip")
+        """)
+    }
+
+    @Test func jsonEncodeCompactSurvivesJSONLFraming() throws {
+        // Regression: pretty-printed output used to break multi-object JSONL
+        // because each encoded object spanned multiple lines.
+        let state = makeState()
+        try state.doString("""
+            local a = lingxi.json.encode({ role = "user", text = "hello" })
+            local b = lingxi.json.encode({ role = "assistant", text = "hi" })
+            assert(a:find("\\n") == nil)
+            assert(b:find("\\n") == nil)
+            -- Build a JSONL buffer and split line-by-line; each line must parse.
+            local jsonl = a .. "\\n" .. b
+            local count = 0
+            for line in jsonl:gmatch("[^\\r\\n]+") do
+                local obj = lingxi.json.parse(line)
+                assert(type(obj) == 'table', "each JSONL line must parse to a table")
+                count = count + 1
+            end
+            assert(count == 2, "expected 2 framed objects, got " .. count)
+        """)
+    }
+
+    @Test func jsonEncodePrettyOptIn() throws {
+        let state = makeState()
+        try state.doString("""
+            local encoded = lingxi.json.encode({ a = 1, b = 2 }, { pretty = true })
+            assert(type(encoded) == 'string')
+            -- Pretty output introduces structural newlines + indentation.
+            assert(encoded:find("\\n") ~= nil, "expected newlines in pretty output, got: " .. encoded)
+            -- Still round-trippable.
+            local decoded = lingxi.json.parse(encoded)
+            assert(decoded.a == 1)
+            assert(decoded.b == 2)
+        """)
+    }
+
+    @Test func jsonEncodePrettyFalseStaysCompact() throws {
+        let state = makeState()
+        try state.doString("""
+            local encoded = lingxi.json.encode({ a = 1 }, { pretty = false })
+            assert(encoded:find("\\n") == nil, "pretty=false must stay compact")
+        """)
+    }
+
+    @Test func jsonEncodeRejectsTopLevelPrimitive() throws {
+        // Keep the existing "no fragments" behavior: NSJSONSerialization
+        // refuses top-level primitives, and this API does not enable the
+        // fragmentsAllowed option. Encoding a bare number/string returns nil.
+        let state = makeState()
+        try state.doString("""
+            assert(lingxi.json.encode(42) == nil)
+            assert(lingxi.json.encode("hello") == nil)
+            assert(lingxi.json.encode(true) == nil)
+        """)
+    }
+
+    @Test func jsonEncodeArrayStaysArray() throws {
+        let state = makeState()
+        try state.doString("""
+            local encoded = lingxi.json.encode({ 1, 2, 3 })
+            assert(encoded == '[1,2,3]', "expected [1,2,3], got " .. encoded)
+        """)
+    }
+
     // MARK: - lingxi.fuzzy
 
     @Test func fuzzySubtableExists() throws {
