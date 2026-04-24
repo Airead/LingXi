@@ -173,11 +173,33 @@ local function _scan_session_jsonl(jsonl_path, project_name)
         meta.first_user_message
     )
 
-    -- Use filesystem mtime as modified time (reflects actual file change)
-    local fs_mtime = cache.get_mtime(jsonl_path)
-    -- Convert numeric Unix timestamp to ISO string for time formatting functions
-    if type(fs_mtime) == "number" then
-        fs_mtime = os.date("!%Y-%m-%dT%H:%M:%S", math.floor(fs_mtime))
+    -- Prefer the timestamp from the JSONL's last valid message — it reflects
+    -- the session's actual "last activity" moment. Fall back to filesystem
+    -- mtime (and then to metadata's last_timestamp) on tail/parse failure.
+    local last_ts = nil
+    local tail_content = lingxi.file.tail(jsonl_path, 5)
+    if tail_content and tail_content ~= "" then
+        for line in tail_content:gmatch("[^\r\n]+") do
+            local trimmed = line:match("^%s*(.-)%s*$")
+            if trimmed ~= "" then
+                local ok, obj = pcall(function()
+                    return lingxi.json.parse(trimmed)
+                end)
+                if ok and type(obj) == "table" and obj.timestamp and obj.timestamp ~= "" then
+                    last_ts = obj.timestamp
+                end
+            end
+        end
+    end
+
+    local modified = last_ts
+    if not modified then
+        local fs_mtime = cache.get_mtime(jsonl_path)
+        if type(fs_mtime) == "number" then
+            modified = os.date("!%Y-%m-%dT%H:%M:%S", math.floor(fs_mtime))
+        else
+            modified = fs_mtime
+        end
     end
 
     return _make_session(
@@ -190,7 +212,7 @@ local function _scan_session_jsonl(jsonl_path, project_name)
             first_prompt = meta.first_user_message or "",
             git_branch = meta.git_branch,
             created = meta.first_timestamp or "",
-            modified = fs_mtime or meta.last_timestamp or "",
+            modified = modified or meta.last_timestamp or "",
             message_count = 0,
             version = meta.version,
             summary = meta.summary,
@@ -367,14 +389,6 @@ function M.scan_all()
                 end
             else
                 cache_hit = cache_hit + 1
-                -- Ensure session.modified reflects filesystem mtime (migrates old caches)
-                if session and mtime then
-                    if type(mtime) == "number" then
-                        session.modified = os.date("!%Y-%m-%dT%H:%M:%S", math.floor(mtime))
-                    else
-                        session.modified = mtime
-                    end
-                end
                 -- Log first 3 hits for comparison
                 if cache_hit <= 3 then
                     local entry_info = disk_cache[jsonl_path]

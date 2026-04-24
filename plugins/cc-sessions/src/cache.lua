@@ -8,7 +8,9 @@ local M = {}
 -- ============================================================================
 
 local CACHE_FILE_NAME = "sessions.json"
-local CACHE_VERSION = 1
+-- v2: `modified` now stores the last JSONL message timestamp instead of the
+-- filesystem mtime, so v1 entries must be discarded to avoid stale ordering.
+local CACHE_VERSION = 2
 
 -- ============================================================================
 -- Memory Cache with TTL
