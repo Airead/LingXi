@@ -30,6 +30,14 @@ end
 -- Time Formatting
 -- ============================================================================
 
+-- Seconds offset of the local timezone from UTC (e.g. +28800 for CST).
+-- os.time(tbl) treats table fields as local time, so to convert UTC components
+-- into a real epoch we must add this offset back.
+local function _local_utc_offset()
+    local now = os.time()
+    return os.difftime(now, os.time(os.date("!*t", now)))
+end
+
 local function _time_ago(iso_timestamp)
     if not iso_timestamp or iso_timestamp == "" then
         return ""
@@ -48,7 +56,7 @@ local function _time_ago(iso_timestamp)
         hour = tonumber(hour),
         min = tonumber(min),
         sec = tonumber(sec),
-    })
+    }) + _local_utc_offset()
 
     local now = os.time()
     local seconds = now - timestamp
@@ -370,7 +378,7 @@ end)
 -- Result Building
 -- ============================================================================
 
-local function _build_result_item(session)
+local function _build_result_item(session, rank)
     local time_str = _time_ago(session.modified)
     local subtitle_parts = { session.project }
     if time_str ~= "" then
@@ -383,11 +391,17 @@ local function _build_result_item(session)
     local msg_count = session.message_count or 0
     local item_id = "cc-" .. session.session_id
 
+    -- Assign a descending score so the host's stable-score sort preserves
+    -- the modified-time order produced by _filter_sessions. Host-side
+    -- usage boost is disabled via plugin.toml (usage_boost = false).
+    local score = 10000 - (rank or 1)
+
     return {
         title = session.title,
         subtitle = table.concat(subtitle_parts, " · "),
         icon = identicon.generate(session.project),
         item_id = item_id,
+        score = score,
         preview_type = "html",
         preview = preview.build(session),
         action = function()
@@ -490,7 +504,7 @@ function search(query)
 
     local items = {}
     for i = 1, math.min(#filtered, 50) do
-        table.insert(items, _build_result_item(filtered[i]))
+        table.insert(items, _build_result_item(filtered[i], i))
     end
 
     return items

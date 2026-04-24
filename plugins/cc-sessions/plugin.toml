@@ -24,6 +24,7 @@ files = [
 prefix = "cc"
 debounce = 100
 timeout = 10000
+usage_boost = false
 
 [permissions]
 clipboard = true
