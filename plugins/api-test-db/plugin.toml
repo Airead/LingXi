@@ -1,0 +1,30 @@
+[plugin]
+id = "io.github.airead.lingxi.api-test-db"
+name = "API Test: SQLite DB"
+version = "1.0.0"
+author = "LingXi Team"
+description = "Test plugin for lingxi.db (owned SQLite databases)"
+min_lingxi_version = "1.1.0"
+
+files = ["init.lua"]
+
+[search]
+prefix = "test-db"
+debounce = 50
+timeout = 5000
+
+[permissions]
+clipboard = true
+db = true
+
+[[commands]]
+name = "test-db:run-all"
+title = "Run All SQLite DB Tests"
+subtitle = "Execute comprehensive lingxi.db test suite"
+action = "cmd_run_all"
+
+[[commands]]
+name = "test-db:clear-results"
+title = "Clear Test Results"
+subtitle = "Reset all stored test results"
+action = "cmd_clear_results"
