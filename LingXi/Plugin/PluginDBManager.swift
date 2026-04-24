@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SQLite3
 
@@ -23,6 +24,7 @@ enum PluginDBError: Error, Equatable {
     case bindFailed(String)
     case stepFailed(String)
     case unsupportedParamType(Int)
+    case snapshotFailed(String)
 
     var message: String {
         switch self {
@@ -33,6 +35,7 @@ enum PluginDBError: Error, Equatable {
         case .bindFailed(let m): "bind failed: \(m)"
         case .stepFailed(let m): "step failed: \(m)"
         case .unsupportedParamType(let i): "unsupported param type at index \(i)"
+        case .snapshotFailed(let m): "snapshot failed: \(m)"
         }
     }
 }
@@ -171,6 +174,134 @@ actor PluginDBManager {
                 sqlite3_close_v2(conn.db)
             }
         }
+    }
+
+    // MARK: - Snapshot
+
+    /// Copy an external SQLite file into this plugin's snapshots cache using the
+    /// SQLite Backup API so concurrent writers on the source do not corrupt the
+    /// copy. Returns the canonical path of the snapshot file. Overwrites any
+    /// previous snapshot for the same source path.
+    ///
+    /// Callers must have already path-validated `canonicalSourcePath` against
+    /// `db_external_paths`. The destination path is always inside the plugin's
+    /// own cache subtree, so it does not need whitelist authorization.
+    func snapshotExternal(pluginId: String, canonicalSourcePath: String) -> Result<String, PluginDBError> {
+        guard !pluginId.isEmpty else {
+            return .failure(.invalidName("empty pluginId"))
+        }
+        guard FileManager.default.fileExists(atPath: canonicalSourcePath) else {
+            return .failure(.snapshotFailed("source does not exist: \(canonicalSourcePath)"))
+        }
+
+        let snapshotsURL = snapshotsDirectoryURL(pluginId: pluginId)
+        do {
+            try FileManager.default.createDirectory(at: snapshotsURL, withIntermediateDirectories: true)
+        } catch {
+            return .failure(.snapshotFailed("cannot create snapshots dir: \(error.localizedDescription)"))
+        }
+
+        let hash = Self.shortHash(canonicalSourcePath)
+        let destURL = snapshotsURL.appendingPathComponent("\(hash).sqlite")
+        let destPath = destURL.path
+
+        // Remove any previous snapshot (and stale WAL sidecars) before rewriting.
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            try? FileManager.default.removeItem(atPath: destPath + suffix)
+        }
+
+        let escaped = canonicalSourcePath
+            .replacingOccurrences(of: "?", with: "%3f")
+            .replacingOccurrences(of: "#", with: "%23")
+        let srcURI = "file:\(escaped)?mode=ro&immutable=1"
+
+        var srcDB: OpaquePointer?
+        let srcRC = sqlite3_open_v2(srcURI, &srcDB, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil)
+        if srcRC != SQLITE_OK {
+            let msg: String
+            if let srcDB {
+                msg = String(cString: sqlite3_errmsg(srcDB))
+                sqlite3_close_v2(srcDB)
+            } else {
+                msg = "sqlite3_open_v2 rc=\(srcRC)"
+            }
+            var hinted = msg
+            if srcRC == SQLITE_CANTOPEN { hinted += " (may need Full Disk Access)" }
+            return .failure(.snapshotFailed("open source: \(hinted)"))
+        }
+        guard let srcDB else {
+            return .failure(.snapshotFailed("null source handle"))
+        }
+        defer { sqlite3_close_v2(srcDB) }
+
+        var destDB: OpaquePointer?
+        let destRC = sqlite3_open_v2(destPath, &destDB, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+        if destRC != SQLITE_OK {
+            let msg: String
+            if let destDB {
+                msg = String(cString: sqlite3_errmsg(destDB))
+                sqlite3_close_v2(destDB)
+            } else {
+                msg = "sqlite3_open_v2 rc=\(destRC)"
+            }
+            try? FileManager.default.removeItem(atPath: destPath)
+            return .failure(.snapshotFailed("open dest: \(msg)"))
+        }
+        guard let destDB else {
+            return .failure(.snapshotFailed("null dest handle"))
+        }
+        defer { sqlite3_close_v2(destDB) }
+
+        guard let backup = sqlite3_backup_init(destDB, "main", srcDB, "main") else {
+            let msg = String(cString: sqlite3_errmsg(destDB))
+            try? FileManager.default.removeItem(atPath: destPath)
+            return .failure(.snapshotFailed("backup_init: \(msg)"))
+        }
+        let stepRC = sqlite3_backup_step(backup, -1)
+        _ = sqlite3_backup_finish(backup)
+        if stepRC != SQLITE_DONE {
+            let msg = String(cString: sqlite3_errmsg(destDB))
+            try? FileManager.default.removeItem(atPath: destPath)
+            return .failure(.snapshotFailed("backup_step rc=\(stepRC): \(msg)"))
+        }
+
+        return .success(destPath)
+    }
+
+    /// If `path` (after ~-expansion and symlink resolution) lies inside this
+    /// plugin's snapshots subdirectory, returns the canonical path. Otherwise
+    /// returns nil. Used by `openExternal` to auto-allow previously produced
+    /// snapshot files without requiring them to be listed in `db_external_paths`.
+    func resolveSnapshotPath(pluginId: String, path: String) -> String? {
+        guard !pluginId.isEmpty else { return nil }
+        let snapshotsDir = canonicalize(snapshotsDirectoryURL(pluginId: pluginId).path)
+        let expanded = Self.expandTilde(path)
+        let canonical = canonicalize(expanded)
+        if canonical == snapshotsDir { return canonical }
+        if canonical.hasPrefix(snapshotsDir + "/") { return canonical }
+        return nil
+    }
+
+    private func snapshotsDirectoryURL(pluginId: String) -> URL {
+        baseDirectory
+            .appendingPathComponent(pluginId, isDirectory: true)
+            .appendingPathComponent("snapshots", isDirectory: true)
+    }
+
+    private func canonicalize(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    private static func expandTilde(_ path: String) -> String {
+        if path.hasPrefix("~/") {
+            return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst(1))
+        }
+        return path
+    }
+
+    private static func shortHash(_ s: String) -> String {
+        let digest = SHA256.hash(data: Data(s.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Test-only: close every connection and redirect the base directory.
@@ -501,5 +632,27 @@ extension PluginDBManager {
             semaphore.signal()
         }
         semaphore.wait()
+    }
+
+    nonisolated func syncSnapshotExternal(pluginId: String, canonicalSourcePath: String) -> Result<String, PluginDBError> {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<String, PluginDBError> = .failure(.snapshotFailed("unreached"))
+        Task {
+            result = await snapshotExternal(pluginId: pluginId, canonicalSourcePath: canonicalSourcePath)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+    }
+
+    nonisolated func syncResolveSnapshotPath(pluginId: String, path: String) -> String? {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: String?
+        Task {
+            result = await resolveSnapshotPath(pluginId: pluginId, path: path)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
     }
 }

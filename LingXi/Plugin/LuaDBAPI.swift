@@ -27,20 +27,24 @@ nonisolated enum LuaDBAPI {
             externalPermissions[pluginId] = externalPaths
         }
 
-        state.createTable(nrec: 2)
+        state.createTable(nrec: 3)
         state.pushFunction(dbOpen)
         state.setField("open", at: -2)
         state.pushFunction(dbOpenExternal)
         state.setField("openExternal", at: -2)
+        state.pushFunction(dbSnapshot)
+        state.setField("snapshot", at: -2)
         state.setField("db", at: -2)
     }
 
     static func registerDisabled(state: LuaState) {
-        state.createTable(nrec: 2)
+        state.createTable(nrec: 3)
         state.pushFunction(disabledOpen)
         state.setField("open", at: -2)
         state.pushFunction(disabledOpen)
         state.setField("openExternal", at: -2)
+        state.pushFunction(disabledSnapshot)
+        state.setField("snapshot", at: -2)
         state.setField("db", at: -2)
     }
 
@@ -236,6 +240,14 @@ nonisolated enum LuaDBAPI {
     private static let disabledOpen: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         DebugLog.log("[LuaDB] open denied: db permission not granted")
+        lua_pushnil(L)
+        lua_pushstring(L, "db permission not granted")
+        return 2
+    }
+
+    private static let disabledSnapshot: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        DebugLog.log("[LuaDB] snapshot denied: db permission not granted")
         lua_pushnil(L)
         lua_pushstring(L, "db permission not granted")
         return 2
@@ -469,6 +481,10 @@ nonisolated enum LuaDBAPI {
     // MARK: - openExternal implementation
 
     /// `lingxi.db.openExternal(path) -> userdata | nil, err`
+    ///
+    /// A path that lies inside this plugin's own snapshots cache (produced by
+    /// `lingxi.db.snapshot`) is auto-allowed regardless of `db_external_paths`.
+    /// All other paths must match the user-configured whitelist.
     private static let dbOpenExternal: @convention(c) (OpaquePointer?) -> Int32 = { L in
         guard let L else { return 0 }
         guard lua_type(L, 1) == lua_swift_type_string(),
@@ -480,20 +496,25 @@ nonisolated enum LuaDBAPI {
         let path = String(cString: cstr)
         let pid = pluginId(from: L)
 
-        let allowed = externalPermissions[pid] ?? []
-        guard !allowed.isEmpty else {
-            DebugLog.log("[LuaDB] \(pid): openExternal(\(path)) denied: no db_external_paths configured")
-            lua_pushnil(L)
-            lua_pushstring(L, "no external paths allowed (configure permissions.db_external_paths)")
-            return 2
-        }
-
-        let validator = PathValidator(allowedPaths: allowed)
-        guard let canonical = validator.validate(path) else {
-            DebugLog.log("[LuaDB] \(pid): openExternal(\(path)) denied: not in db_external_paths whitelist")
-            lua_pushnil(L)
-            lua_pushstring(L, "path not in db_external_paths whitelist")
-            return 2
+        let canonical: String
+        if let snap = PluginDBManager.shared.syncResolveSnapshotPath(pluginId: pid, path: path) {
+            canonical = snap
+        } else {
+            let allowed = externalPermissions[pid] ?? []
+            guard !allowed.isEmpty else {
+                DebugLog.log("[LuaDB] \(pid): openExternal(\(path)) denied: no db_external_paths configured")
+                lua_pushnil(L)
+                lua_pushstring(L, "no external paths allowed (configure permissions.db_external_paths)")
+                return 2
+            }
+            let validator = PathValidator(allowedPaths: allowed)
+            guard let c = validator.validate(path) else {
+                DebugLog.log("[LuaDB] \(pid): openExternal(\(path)) denied: not in db_external_paths whitelist")
+                lua_pushnil(L)
+                lua_pushstring(L, "path not in db_external_paths whitelist")
+                return 2
+            }
+            canonical = c
         }
 
         switch PluginDBManager.shared.syncOpenExternal(pluginId: pid, canonicalPath: canonical) {
@@ -506,6 +527,51 @@ nonisolated enum LuaDBAPI {
             let ud = lua_newuserdatauv(L, MemoryLayout<Int>.size, 0)
             ud?.assumingMemoryBound(to: Int.self).pointee = handleId
             luaL_setmetatable(L, externalMetatableName)
+            return 1
+        }
+    }
+
+    // MARK: - snapshot implementation
+
+    /// `lingxi.db.snapshot(src) -> destPath | nil, err`
+    ///
+    /// Source must be whitelisted in `db_external_paths`. The returned path
+    /// lives under the plugin's cache (`<baseDirectory>/<plugin-id>/snapshots/`)
+    /// and is auto-allowed by `openExternal`.
+    private static let dbSnapshot: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        guard lua_type(L, 1) == lua_swift_type_string(),
+              let cstr = lua_swift_tostring(L, 1) else {
+            lua_pushnil(L)
+            lua_pushstring(L, "path must be a string")
+            return 2
+        }
+        let path = String(cString: cstr)
+        let pid = pluginId(from: L)
+
+        let allowed = externalPermissions[pid] ?? []
+        guard !allowed.isEmpty else {
+            DebugLog.log("[LuaDB] \(pid): snapshot(\(path)) denied: no db_external_paths configured")
+            lua_pushnil(L)
+            lua_pushstring(L, "no external paths allowed (configure permissions.db_external_paths)")
+            return 2
+        }
+        let validator = PathValidator(allowedPaths: allowed)
+        guard let canonical = validator.validate(path) else {
+            DebugLog.log("[LuaDB] \(pid): snapshot(\(path)) denied: not in db_external_paths whitelist")
+            lua_pushnil(L)
+            lua_pushstring(L, "path not in db_external_paths whitelist")
+            return 2
+        }
+
+        switch PluginDBManager.shared.syncSnapshotExternal(pluginId: pid, canonicalSourcePath: canonical) {
+        case .failure(let err):
+            DebugLog.log("[LuaDB] \(pid): snapshot(\(canonical)) failed: \(err.message)")
+            lua_pushnil(L)
+            lua_pushstring(L, err.message)
+            return 2
+        case .success(let destPath):
+            lua_pushstring(L, destPath)
             return 1
         }
     }

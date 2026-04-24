@@ -606,4 +606,114 @@ struct LuaDBAPITests {
             assert(type(err) == 'string' and err:find("closed") ~= nil)
         """)
     }
+
+    // MARK: - Snapshot (phase 4)
+
+    @Test func snapshotCreatesReadableCopy() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("snap_src.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("SRC")
+        try state.doString("""
+            local path = assert(lingxi.db.snapshot(SRC))
+            assert(type(path) == 'string' and #path > 0)
+            local db = assert(lingxi.db.openExternal(path))
+            local rows = assert(db:query("SELECT name FROM cities ORDER BY id"))
+            assert(#rows == 3, "expected 3 rows, got " .. #rows)
+            assert(rows[1].name == "Tokyo")
+            assert(rows[3].name == "Shanghai")
+            db:close()
+        """)
+    }
+
+    @Test func snapshotDeniedWhenSourceNotWhitelisted() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("snap_unauth.sqlite").path
+        seedExternalDB(at: extPath)
+
+        // Empty whitelist: snapshot must be denied.
+        let state = makeState(externalPaths: [])
+        state.push(extPath)
+        state.setGlobal("SRC")
+        try state.doString("""
+            local path, err = lingxi.db.snapshot(SRC)
+            assert(path == nil, "expected nil path, got " .. tostring(path))
+            assert(type(err) == 'string' and err:find("external") ~= nil,
+                   "expected whitelist error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func snapshotOverwritesOnRepeatCall() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("snap_overwrite.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("SRC")
+
+        // First snapshot sees 3 cities.
+        try state.doString("""
+            local path = assert(lingxi.db.snapshot(SRC))
+            local db = assert(lingxi.db.openExternal(path))
+            local rows = assert(db:query("SELECT id FROM cities"))
+            assert(#rows == 3)
+            db:close()
+            SNAP_PATH_1 = path
+        """)
+
+        // Mutate source, snapshot again, expect 4.
+        var handle: OpaquePointer?
+        sqlite3_open_v2(extPath, &handle, SQLITE_OPEN_READWRITE, nil)
+        sqlite3_exec(handle, "INSERT INTO cities VALUES (4, 'Seoul', 9700000);", nil, nil, nil)
+        sqlite3_close_v2(handle)
+
+        try state.doString("""
+            local path = assert(lingxi.db.snapshot(SRC))
+            assert(path == SNAP_PATH_1, "hash-stable path should be reused: " .. tostring(path))
+            local db = assert(lingxi.db.openExternal(path))
+            local rows = assert(db:query("SELECT id FROM cities"))
+            assert(#rows == 4, "expected refreshed snapshot with 4 rows, got " .. #rows)
+            db:close()
+        """)
+    }
+
+    @Test func snapshotDisabledWhenDbPermissionOff() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState(db: false)
+        try state.doString("""
+            local path, err = lingxi.db.snapshot("/tmp/anything.sqlite")
+            assert(path == nil)
+            assert(type(err) == 'string' and err:find("permission") ~= nil,
+                   "expected permission error, got " .. tostring(err))
+        """)
+    }
+
+    @Test func snapshotRejectsNonStringPath() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState(externalPaths: ["/tmp"])
+        try state.doString("""
+            local path, err = lingxi.db.snapshot(nil)
+            assert(path == nil)
+            assert(type(err) == 'string' and err:find("string") ~= nil)
+        """)
+    }
 }
