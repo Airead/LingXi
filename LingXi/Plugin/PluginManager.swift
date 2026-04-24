@@ -68,6 +68,7 @@ final class PluginManager: PluginService {
         LuaAPI.resetWebViewMessageState()
         for plugin in plugins {
             router.unregister(id: plugin.routerId)
+            await PluginDBManager.shared.closeAll(pluginId: plugin.manifest.id)
         }
         await unregisterPluginCommands()
         plugins.removeAll()
@@ -294,7 +295,8 @@ final class PluginManager: PluginService {
             notify: manifest.permissions.notify,
             store: manifest.permissions.store,
             webview: manifest.permissions.webview,
-            cache: manifest.permissions.cache
+            cache: manifest.permissions.cache,
+            db: manifest.permissions.db
         )
 
         LuaAPI.registerAll(state: state, permissions: permissions, pluginId: manifest.id, pluginDir: pluginDir.path)

@@ -80,6 +80,11 @@ nonisolated enum LuaAPI {
         } else {
             registerDisabledCache(state: state)
         }
+        if permissions.db {
+            LuaDBAPI.register(state: state)
+        } else {
+            LuaDBAPI.registerDisabled(state: state)
+        }
         registerEnv(state: state)
         
         // Debug: verify lingxi.env was set

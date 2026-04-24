@@ -18,6 +18,7 @@ nonisolated struct PermissionConfig: Sendable, Equatable {
     let store: Bool
     let webview: Bool
     let cache: Bool
+    let db: Bool
 
     /// Restrictive default for plugins.
     nonisolated static let `default` = PermissionConfig(
@@ -28,7 +29,8 @@ nonisolated struct PermissionConfig: Sendable, Equatable {
         notify: false,
         store: false,
         webview: false,
-        cache: false
+        cache: false,
+        db: false
     )
 }
 
