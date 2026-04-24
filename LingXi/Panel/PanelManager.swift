@@ -353,7 +353,18 @@ private struct PanelContentView: View {
                             isPendingDelete: index == viewModel.pendingDeleteIndex
                         )
                         .id(result.id)
+                        .onTapGesture { handleRowTap(index: index) }
                     }
+                }
+                // Rows are fixed-height; derive hovered index from y-coordinate.
+                // Using .onContinuousHover (not .onHover) so stationary cursors
+                // don't hijack keyboard selection when rows scroll under them.
+                .onContinuousHover(coordinateSpace: .local) { phase in
+                    guard case .active(let point) = phase else { return }
+                    let index = Int(point.y / PanelLayout.rowHeight)
+                    guard viewModel.results.indices.contains(index),
+                          viewModel.selectedIndex != index else { return }
+                    viewModel.selectedIndex = index
                 }
             }
             .onChange(of: viewModel.selectedIndex) { _, newIndex in
@@ -362,6 +373,16 @@ private struct PanelContentView: View {
                     proxy.scrollTo(viewModel.results[newIndex].id, anchor: nil)
                 }
             }
+        }
+    }
+
+    private func handleRowTap(index: Int) {
+        guard viewModel.results.indices.contains(index) else { return }
+        viewModel.selectedIndex = index
+        if viewModel.confirm(modifiers: viewModel.activeModifiers) {
+            onDismiss()
+        } else {
+            isSearchFieldFocused = true
         }
     }
 }
