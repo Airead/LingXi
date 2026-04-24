@@ -213,9 +213,13 @@ const outlineItems = [];
 let activeOutlineIdx = -1;
 
 // Label for the assistant bubble. Defaults to "Claude" for cc sessions;
-// switches to "OpenCode" when the Lua side reports source === "opencode".
+// switches to the source's name for OpenCode / Kimi.
 function getAssistantLabel() {
-  return (sessionInfo && sessionInfo.source === "opencode") ? "OpenCode" : "Claude";
+  if (sessionInfo) {
+    if (sessionInfo.source === "opencode") return "OpenCode";
+    if (sessionInfo.source === "kimi") return "Kimi";
+  }
+  return "Claude";
 }
 
 // ── Main entry: receive data from Lua ──

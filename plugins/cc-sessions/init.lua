@@ -6,43 +6,47 @@ local reader = require("src.reader")
 local preview = require("src.preview")
 local identicon = require("src.identicon")
 local opencode_store = require("src.opencode_store")
+local kimi_store = require("src.kimi_store")
 
 -- ============================================================================
--- OpenCode Export Helpers
+-- External-Source Export Helpers
 -- ============================================================================
 
--- Export an opencode session to a JSONL file under the plugin cache.
--- Returns the exported file path on success, nil on failure.
--- Always re-exports (force) so the viewer sees the latest parts.
-local function _ensure_opencode_jsonl(session)
-    if not session or session.source ~= opencode_store.SOURCE then
+-- Export a non-cc session (opencode / kimi) to a JSONL file under the plugin
+-- cache. Returns the exported file path on success, nil on failure. Always
+-- re-exports (force) so the viewer sees the latest parts.
+local function _ensure_external_jsonl(session, source, subdir, export_fn)
+    if not session or session.source ~= source then
         return nil
     end
     local cache_dir = lingxi.cache.getPath()
     if not cache_dir or cache_dir == "" then
-        lingxi.log.write("[cc-sessions] opencode export: cache path unavailable")
+        lingxi.log.write("[cc-sessions] " .. source .. " export: cache path unavailable")
         return nil
     end
-    local dir = cache_dir .. "/opencode-export"
+    local dir = cache_dir .. "/" .. subdir
     lingxi.file.mkdir(dir)
     local out_path = dir .. "/" .. session.session_id .. ".jsonl"
-    local ok, err = opencode_store.export_to_jsonl(session.session_id, out_path)
+    local ok, err = export_fn(session.session_id, out_path)
     if not ok then
-        lingxi.log.write("[cc-sessions] opencode export failed for " .. tostring(session.session_id) .. ": " .. tostring(err))
+        lingxi.log.write("[cc-sessions] " .. source .. " export failed for " .. tostring(session.session_id) .. ": " .. tostring(err))
         return nil
     end
     return out_path
 end
 
 -- Resolve the viewer file path for a session. For cc sessions, returns
--- session.file_path as-is. For opencode sessions, exports the session to a
--- JSONL under the plugin cache and returns that path.
+-- session.file_path as-is. For opencode / kimi sessions, exports the session
+-- to a JSONL under the plugin cache and returns that path.
 local function _resolve_viewer_path(session)
     if not session then
         return nil
     end
     if session.source == opencode_store.SOURCE then
-        return _ensure_opencode_jsonl(session)
+        return _ensure_external_jsonl(session, opencode_store.SOURCE, "opencode-export", opencode_store.export_to_jsonl)
+    end
+    if session.source == kimi_store.SOURCE then
+        return _ensure_external_jsonl(session, kimi_store.SOURCE, "kimi-export", kimi_store.export_to_jsonl)
     end
     return session.file_path
 end
@@ -221,6 +225,12 @@ local function _list_subagents(session)
             })
         end
         return subagents
+    end
+
+    -- Kimi inlines SubagentEvent records into the parent's wire.jsonl instead
+    -- of persisting separate session files, so there's nothing to navigate to.
+    if session.source == kimi_store.SOURCE then
+        return {}
     end
 
     -- CC: children are sibling JSONL files under <session>/subagents/.
@@ -508,10 +518,12 @@ end)
 local function _build_result_item(session, rank)
     local time_str = _time_ago(session.modified)
     local subtitle_parts = {}
-    -- Minority-source tag so OpenCode results are distinguishable at a glance;
+    -- Minority-source tag so non-cc results are distinguishable at a glance;
     -- cc is the default and stays unmarked to keep the line short.
     if session.source == opencode_store.SOURCE then
         table.insert(subtitle_parts, "[OC]")
+    elseif session.source == kimi_store.SOURCE then
+        table.insert(subtitle_parts, "[KIMI]")
     end
     table.insert(subtitle_parts, session.project)
     if time_str ~= "" then
@@ -530,8 +542,21 @@ local function _build_result_item(session, rank)
     local score = 10000 - (rank or 1)
 
     local is_opencode = session.source == opencode_store.SOURCE
-    local cmd_subtitle = is_opencode and "Copy session id" or "Copy file path"
-    local delete_subtitle = is_opencode and "Trash not supported for OpenCode" or "Move to Trash"
+    local is_kimi = session.source == kimi_store.SOURCE
+    local cmd_subtitle
+    if is_opencode then
+        cmd_subtitle = "Copy session id"
+    else
+        cmd_subtitle = "Copy file path"
+    end
+    local delete_subtitle
+    if is_opencode then
+        delete_subtitle = "Trash not supported for OpenCode"
+    elseif is_kimi then
+        delete_subtitle = "Trash not supported for Kimi"
+    else
+        delete_subtitle = "Move to Trash"
+    end
 
     return {
         title = session.title,
@@ -551,6 +576,8 @@ local function _build_result_item(session, rank)
             if not ok then
                 if is_opencode then
                     lingxi.alert.show("Unable to open viewer for OpenCode session", 2.0)
+                elseif is_kimi then
+                    lingxi.alert.show("Unable to open viewer for Kimi session", 2.0)
                 else
                     -- Fallback: open with default application
                     lingxi.alert.show("Opening with default app...", 1.5)
@@ -563,6 +590,7 @@ local function _build_result_item(session, rank)
                 lingxi.clipboard.write(session.session_id)
                 lingxi.alert.show("Session ID copied!", 1.5)
             else
+                -- Kimi and CC both have real absolute paths on disk.
                 lingxi.clipboard.write(session.file_path)
                 lingxi.alert.show("Path copied!", 1.5)
             end
@@ -574,6 +602,13 @@ local function _build_result_item(session, rank)
                 -- OpenCode sessions live in a shared SQLite DB; the plugin has
                 -- read-only access and must not mutate it.
                 lingxi.alert.show("OpenCode sessions can't be deleted here", 2.0)
+                return
+            end
+            if is_kimi then
+                -- Kimi keeps context.jsonl + wire.jsonl + checkpoint state in
+                -- the same directory; half-deleting one file would corrupt
+                -- the session. Skip for now.
+                lingxi.alert.show("Kimi sessions can't be deleted here", 2.0)
                 return
             end
             local ok = lingxi.file.trash(session.file_path)

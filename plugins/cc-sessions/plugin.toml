@@ -1,9 +1,9 @@
 [plugin]
 id = "io.github.airead.lingxi.cc-sessions"
 name = "Claude Code Sessions"
-version = "1.0.0"
+version = "1.1.0"
 author = "LingXi Team"
-description = "Browse and view Claude Code session history"
+description = "Browse and view Claude Code, OpenCode, and Kimi session history"
 min_lingxi_version = "1.1.0"
 
 files = [
@@ -14,6 +14,7 @@ files = [
     "src/preview.lua",
     "src/identicon.lua",
     "src/opencode_store.lua",
+    "src/kimi_store.lua",
     "viewer.html",
     "viewer.js",
     "vendor/marked.min.js",
@@ -29,7 +30,7 @@ usage_boost = false
 
 [permissions]
 clipboard = true
-filesystem = ["~/.claude", "~/.claude/projects"]
+filesystem = ["~/.claude", "~/.claude/projects", "~/.kimi"]
 shell = ["git"]
 store = true
 webview = true

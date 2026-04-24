@@ -359,10 +359,15 @@ struct CCSessionsPluginTests {
 
         let pluginSrcDir = tmpDir.appendingPathComponent("src")
         try FileManager.default.createDirectory(at: pluginSrcDir, withIntermediateDirectories: true)
-        let previewSrc = URL(fileURLWithPath: "/Users/fanrenhao/work/LingXi/plugins/cc-sessions/src/preview.lua")
-        let readerSrc = URL(fileURLWithPath: "/Users/fanrenhao/work/LingXi/plugins/cc-sessions/src/reader.lua")
-        try FileManager.default.copyItem(at: previewSrc, to: pluginSrcDir.appendingPathComponent("preview.lua"))
-        try FileManager.default.copyItem(at: readerSrc, to: pluginSrcDir.appendingPathComponent("reader.lua"))
+        // preview.lua transitively requires the per-source stores; copy all
+        // four so the require() calls at the top of preview.lua resolve.
+        let pluginRoot = "/Users/fanrenhao/work/LingXi/plugins/cc-sessions/src/"
+        for name in ["preview.lua", "reader.lua", "opencode_store.lua", "kimi_store.lua"] {
+            try FileManager.default.copyItem(
+                at: URL(fileURLWithPath: pluginRoot + name),
+                to: pluginSrcDir.appendingPathComponent(name)
+            )
+        }
 
         try state.doString(testLua)
         let result = state.toString(at: -1)

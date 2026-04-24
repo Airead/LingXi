@@ -4,6 +4,7 @@
 local reader = require("src.reader")
 local cache = require("src.cache")
 local opencode_store = require("src.opencode_store")
+local kimi_store = require("src.kimi_store")
 
 local M = {}
 
@@ -462,6 +463,19 @@ function M.scan_all()
         end
     end
     lingxi.log.write("[cc-sessions]   opencode: +" .. oc_added .. " sessions in " .. _elapsed(oc_start) .. "s")
+
+    -- 5b. Merge Kimi sessions (same policy as opencode: not persisted to disk
+    --     cache, deduped by session_id).
+    local km_start = os.clock()
+    local km_added = 0
+    for _, km in ipairs(kimi_store.list_sessions()) do
+        if not seen_ids[km.session_id] then
+            seen_ids[km.session_id] = true
+            table.insert(sessions, km)
+            km_added = km_added + 1
+        end
+    end
+    lingxi.log.write("[cc-sessions]   kimi: +" .. km_added .. " sessions in " .. _elapsed(km_start) .. "s")
 
     -- 6. Set memory cache with TTL
     cache.set_memory_cache(sessions)

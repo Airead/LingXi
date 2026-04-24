@@ -3,6 +3,7 @@
 
 local reader = require("src.reader")
 local opencode_store = require("src.opencode_store")
+local kimi_store = require("src.kimi_store")
 
 local M = {}
 
@@ -113,15 +114,19 @@ function M.build(session)
         detail = session.detail
     elseif session.source == opencode_store.SOURCE then
         detail = opencode_store.get_session_detail(session.session_id, 10)
+    elseif session.source == kimi_store.SOURCE then
+        detail = kimi_store.get_session_detail(session.session_id, 10)
     else
         detail = reader.read_detail(session.file_path, 10)
     end
 
     -- Build metadata pills (compact)
     local pills = {}
-    -- Lead with source pill so users can tell CC vs OpenCode at a glance.
-    if session.source == "opencode" then
+    -- Lead with source pill so users can tell CC vs OpenCode vs Kimi at a glance.
+    if session.source == opencode_store.SOURCE then
         table.insert(pills, '<span class="pill source-oc">OC</span>')
+    elseif session.source == kimi_store.SOURCE then
+        table.insert(pills, '<span class="pill source-kimi">KIMI</span>')
     else
         table.insert(pills, '<span class="pill source-cc">CC</span>')
     end
@@ -187,6 +192,7 @@ function M.build(session)
         '.pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }',
         '.pill.source-cc { background: #ede7f6; color: #4527a0; font-weight: 700; }',
         '.pill.source-oc { background: #e0f2f1; color: #00695c; font-weight: 700; }',
+        '.pill.source-kimi { background: #fff8e1; color: #b26a00; font-weight: 700; }',
         '.pill.project { background: #e3f2fd; color: #1565c0; }',
         '.pill.branch { background: #f3e5f5; color: #6a1b9a; }',
         '.pill.version { background: #e8f5e9; color: #2e7d32; }',
