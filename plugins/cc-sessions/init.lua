@@ -409,24 +409,14 @@ local function _build_result_item(session)
         end,
         cmd_subtitle = "Copy file path",
         delete_action = function()
-            -- Show confirmation dialog using osascript
-            local confirm_script = 'osascript -e \'display dialog "Move session to Trash?" & return & return & "' .. session.title:gsub('"', '\\"') .. '" buttons {"Cancel", "Move to Trash"} default button "Cancel" with icon caution\''
-            local confirm_result = lingxi.shell.exec(confirm_script)
-
-            -- Check if user confirmed (button returned is "Move to Trash")
-            if not confirm_result.stdout or not confirm_result.stdout:find("Move to Trash") then
-                return
-            end
-
-            -- Move file to trash using shell command
-            local result = lingxi.shell.exec("mv " .. session.file_path .. " ~/.Trash/")
-            if result.exitCode == 0 then
-                lingxi.alert.show("Session moved to Trash", 2.0)
-                -- Clear cache to reflect deletion
+            -- Host handles the two-press "Delete?" confirmation before calling this.
+            local ok = lingxi.file.trash(session.file_path)
+            if ok then
+                lingxi.alert.show("Session moved to Trash", 1.5)
                 local cache = require("src.cache")
-                cache.clear()
+                cache.invalidate_memory_cache()
             else
-                lingxi.alert.show("Failed to move to Trash: " .. (result.stderr or "Unknown error"), 3.0)
+                lingxi.alert.show("Failed to move to Trash", 2.0)
             end
         end,
         delete_subtitle = "Move to Trash",
