@@ -47,15 +47,17 @@ nonisolated enum LuaDBAPI {
     // MARK: - Metatable setup
 
     private static func ensureMetatables(L: OpaquePointer) {
-        // Owned DB metatable: exec + query + queryOne + close.
+        // Owned DB metatable: exec + query + queryOne + transaction + close.
         if luaL_newmetatable(L, ownedMetatableName) != 0 {
-            lua_createtable(L, 0, 4)
+            lua_createtable(L, 0, 5)
             lua_swift_pushcfunction(L, dbExec)
             lua_setfield(L, -2, "exec")
             lua_swift_pushcfunction(L, dbQuery)
             lua_setfield(L, -2, "query")
             lua_swift_pushcfunction(L, dbQueryOne)
             lua_setfield(L, -2, "queryOne")
+            lua_swift_pushcfunction(L, dbTransaction)
+            lua_setfield(L, -2, "transaction")
             lua_swift_pushcfunction(L, dbClose)
             lua_setfield(L, -2, "close")
             lua_setfield(L, -2, "__index")
@@ -379,6 +381,89 @@ nonisolated enum LuaDBAPI {
             setHandleId(L: L, at: 1, value: 0, metatables: anyDBMetatables)
         }
         return 0
+    }
+
+    // MARK: - Transaction
+
+    /// `db:transaction(fn) -> true, fn-returns...  |  false, err  |  raises`
+    /// Owned handles only (external metatable does not expose this method).
+    /// Semantics:
+    ///   - fn completes normally with truthy first return (or no returns) → COMMIT,
+    ///     pushes `true` followed by fn's returns.
+    ///   - fn returns `false` or `nil` as first value → ROLLBACK,
+    ///     returns `false, err-string` (second return from fn or default).
+    ///   - fn raises a Lua error → ROLLBACK, re-raises via `lua_error`.
+    private static let dbTransaction: @convention(c) (OpaquePointer?) -> Int32 = { L in
+        guard let L else { return 0 }
+        let hid = handleId(L: L, at: 1, metatables: [ownedMetatableName])
+        guard hid > 0 else {
+            lua_pushnil(L)
+            lua_pushstring(L, "db is closed")
+            return 2
+        }
+        guard lua_type(L, 2) == lua_swift_type_function() else {
+            lua_pushnil(L)
+            lua_pushstring(L, "transaction requires a function argument")
+            return 2
+        }
+
+        // BEGIN
+        if case .failure(let err) = PluginDBManager.shared.syncBeginTransaction(handleId: hid) {
+            lua_pushnil(L)
+            lua_pushstring(L, err.message)
+            return 2
+        }
+
+        // Call fn. Stack before pcall: self(1), fn(2). We duplicate fn so the
+        // original stays at index 2 for debugging symmetry.
+        let topBefore = lua_gettop(L)
+        lua_pushvalue(L, 2)
+        let rc = lua_swift_pcall(L, 0, LUA_MULTRET, 0)
+
+        if rc != LUA_OK {
+            // fn errored: rollback, then propagate error (stack top is err msg)
+            PluginDBManager.shared.syncRollbackTransaction(handleId: hid)
+            return lua_error(L) // does not return
+        }
+
+        // fn returned; stack now has nReturns values pushed after topBefore.
+        let nReturns = lua_gettop(L) - topBefore
+
+        let firstIsFalsy: Bool = {
+            if nReturns == 0 { return false }
+            let firstIdx = topBefore + 1
+            let t = lua_type(L, firstIdx)
+            if t == lua_swift_type_nil() { return true }
+            if t == lua_swift_type_boolean() && lua_toboolean(L, firstIdx) == 0 { return true }
+            return false
+        }()
+
+        if firstIsFalsy {
+            PluginDBManager.shared.syncRollbackTransaction(handleId: hid)
+            var errMsg = "transaction rolled back"
+            if nReturns >= 2, let c = lua_swift_tostring(L, topBefore + 2) {
+                errMsg = String(cString: c)
+            }
+            lua_settop(L, topBefore)
+            lua_pushboolean(L, 0)
+            lua_pushstring(L, errMsg)
+            return 2
+        }
+
+        // COMMIT. If it fails, best-effort ROLLBACK and surface error.
+        if case .failure(let err) = PluginDBManager.shared.syncCommitTransaction(handleId: hid) {
+            PluginDBManager.shared.syncRollbackTransaction(handleId: hid)
+            lua_settop(L, topBefore)
+            lua_pushnil(L)
+            lua_pushstring(L, err.message)
+            return 2
+        }
+
+        // Success: push `true` before the return values so callers see
+        // `true, ret1, ret2, ...`.
+        lua_pushboolean(L, 1)                       // stack: ..., ret1..retN, true
+        lua_rotate(L, topBefore + 1, 1)             // rotate true to position before ret1
+        return Int32(nReturns + 1)
     }
 
     // MARK: - openExternal implementation

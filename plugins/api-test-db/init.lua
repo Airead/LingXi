@@ -557,6 +557,92 @@ local function test_transactions_manual()
     end)
 end
 
+local function test_transaction()
+    _current_suite = "transaction"
+
+    _run_test("COMMIT on normal return", function()
+        local db = _open_clean()
+        db:exec("CREATE TABLE t (v INTEGER)")
+        local ok = db:transaction(function()
+            db:exec("INSERT INTO t(v) VALUES (1)")
+            db:exec("INSERT INTO t(v) VALUES (2)")
+        end)
+        _assert_eq(ok, true)
+        local rows = assert(db:query("SELECT v FROM t"))
+        _assert_eq(#rows, 2)
+        db:close()
+    end)
+
+    _run_test("passes through return values after ok", function()
+        local db = _open_clean()
+        db:exec("CREATE TABLE t (v INTEGER)")
+        db:exec("INSERT INTO t(v) VALUES (7)")
+        local ok, val, note = db:transaction(function()
+            local row = assert(db:queryOne("SELECT v FROM t"))
+            return row.v, "ok"
+        end)
+        _assert_eq(ok, true)
+        _assert_eq(val, 7)
+        _assert_eq(note, "ok")
+        db:close()
+    end)
+
+    _run_test("ROLLBACK on explicit false return", function()
+        local db = _open_clean()
+        db:exec("CREATE TABLE t (v INTEGER)")
+        local ok, err = db:transaction(function()
+            db:exec("INSERT INTO t(v) VALUES (100)")
+            return false, "nope"
+        end)
+        _assert_eq(ok, false)
+        _assert_eq(err, "nope")
+        local rows = assert(db:query("SELECT v FROM t"))
+        _assert_eq(#rows, 0)
+        db:close()
+    end)
+
+    _run_test("ROLLBACK + rethrow on Lua error", function()
+        local db = _open_clean()
+        db:exec("CREATE TABLE t (v INTEGER)")
+        local ok, err = pcall(function()
+            db:transaction(function()
+                db:exec("INSERT INTO t(v) VALUES (42)")
+                error("boom")
+            end)
+        end)
+        _assert_eq(ok, false)
+        _assert(tostring(err):find("boom") ~= nil, "error preserved")
+        local rows = assert(db:query("SELECT v FROM t"))
+        _assert_eq(#rows, 0, "rolled back on raise")
+        db:close()
+    end)
+
+    _run_test("nested transaction rejected", function()
+        local db = _open_clean()
+        db:exec("CREATE TABLE t (v INTEGER)")
+        local inner_err
+        pcall(function()
+            db:transaction(function()
+                local r_ok, r_err = db:transaction(function() return true end)
+                inner_err = r_err
+                error(r_err or "no error")
+            end)
+        end)
+        _assert_type(inner_err, "string")
+        _assert(inner_err:find("already") ~= nil,
+            "inner error should mention 'already': " .. tostring(inner_err))
+        db:close()
+    end)
+
+    _run_test("rejects non-function argument", function()
+        local db = _open_clean()
+        local ok, err = db:transaction("not a function")
+        _assert_eq(ok, nil)
+        _assert_type(err, "string")
+        db:close()
+    end)
+end
+
 local function test_external_demo()
     _current_suite = "external.demo"
     -- Demonstrates that openExternal is permission-gated. This plugin's
@@ -694,23 +780,25 @@ local function run_all()
     test_lifecycle()
     test_persistence()
     test_transactions_manual()
+    test_transaction()
     test_external_demo()
     return _build_result_items()
 end
 
 local _subsuites = {
-    surface     = test_surface,
-    validation  = test_open_validation,
-    ddl         = test_ddl_and_dml,
-    query       = test_query,
-    queryone    = test_queryOne,
-    types       = test_type_mapping,
-    params      = test_parameter_binding,
-    errors      = test_errors,
-    lifecycle   = test_lifecycle,
-    persistence = test_persistence,
-    transaction = test_transactions_manual,
-    external    = test_external_demo,
+    surface        = test_surface,
+    validation     = test_open_validation,
+    ddl            = test_ddl_and_dml,
+    query          = test_query,
+    queryone       = test_queryOne,
+    types          = test_type_mapping,
+    params         = test_parameter_binding,
+    errors         = test_errors,
+    lifecycle      = test_lifecycle,
+    persistence    = test_persistence,
+    manualtx       = test_transactions_manual,
+    transaction    = test_transaction,
+    external       = test_external_demo,
 }
 
 local function run_subsuite(key)
@@ -740,7 +828,8 @@ function search(query)
             { title = "test-db errors",      subtitle = "Test error paths (bad SQL, constraint, etc)" },
             { title = "test-db lifecycle",   subtitle = "Test close/__gc/double-close" },
             { title = "test-db persistence", subtitle = "Test data survival & DB isolation" },
-            { title = "test-db transaction", subtitle = "Test manual BEGIN/COMMIT/ROLLBACK" },
+            { title = "test-db transaction", subtitle = "Test db:transaction(fn) commit/rollback semantics" },
+            { title = "test-db manualtx",    subtitle = "Test manual BEGIN/COMMIT/ROLLBACK via exec" },
             { title = "test-db external",    subtitle = "Demo: openExternal permission gate (no whitelist)" },
             { title = "test-db:run-all",     subtitle = "Command: Run full test suite (copies to clipboard)" },
             { title = "test-db:clear-results", subtitle = "Command: Clear all test results" },

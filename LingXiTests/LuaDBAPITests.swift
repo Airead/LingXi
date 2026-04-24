@@ -443,4 +443,167 @@ struct LuaDBAPITests {
             assert(type(err) == 'string' and err:find("closed") ~= nil)
         """)
     }
+
+    // MARK: - Transactions
+
+    @Test func transactionCommitsOnNormalReturn() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_commit"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            local ok = db:transaction(function()
+                assert(db:exec("INSERT INTO t(v) VALUES (1)"))
+                assert(db:exec("INSERT INTO t(v) VALUES (2)"))
+            end)
+            assert(ok == true, "transaction should return true on commit")
+            local rows = assert(db:query("SELECT v FROM t ORDER BY v"))
+            assert(#rows == 2, "both inserts should be committed")
+            db:close()
+        """)
+    }
+
+    @Test func transactionPassesThroughReturnValues() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_ret"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            db:exec("INSERT INTO t(v) VALUES (42)")
+            local ok, v, note = db:transaction(function()
+                local row = assert(db:queryOne("SELECT v FROM t"))
+                return row.v, "fetched"
+            end)
+            assert(ok == true)
+            assert(v == 42, "first return value passed through")
+            assert(note == "fetched", "second return value passed through")
+            db:close()
+        """)
+    }
+
+    @Test func transactionRollbacksOnFalsyReturn() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_rollback"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            local ok, err = db:transaction(function()
+                db:exec("INSERT INTO t(v) VALUES (100)")
+                db:exec("INSERT INTO t(v) VALUES (200)")
+                return false, "user-requested rollback"
+            end)
+            assert(ok == false, "should return false on explicit rollback")
+            assert(err == "user-requested rollback", "error msg passed through: " .. tostring(err))
+            local rows = assert(db:query("SELECT v FROM t"))
+            assert(#rows == 0, "no rows should be committed")
+            db:close()
+        """)
+    }
+
+    @Test func transactionRollbacksAndRaisesOnError() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_error"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            local ok, err = pcall(function()
+                db:transaction(function()
+                    db:exec("INSERT INTO t(v) VALUES (999)")
+                    error("kaboom")
+                end)
+            end)
+            assert(ok == false, "error from fn should propagate out of transaction")
+            assert(tostring(err):find("kaboom") ~= nil, "error message preserved: " .. tostring(err))
+            local rows = assert(db:query("SELECT v FROM t"))
+            assert(#rows == 0, "rolled back on error")
+            db:close()
+        """)
+    }
+
+    @Test func transactionRejectsNestedCall() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_nested"))
+            db:exec("CREATE TABLE t (v INTEGER)")
+            -- Outer transaction attempts a nested transaction; inner BEGIN should fail.
+            local captured_err
+            local ok, err = pcall(function()
+                db:transaction(function()
+                    local r_ok, r_err = db:transaction(function()
+                        return true
+                    end)
+                    captured_err = r_err
+                    error(r_err or "no error returned")
+                end)
+            end)
+            assert(ok == false, "outer should propagate error")
+            assert(type(captured_err) == 'string' and captured_err:find("already") ~= nil,
+                   "inner transaction should fail: " .. tostring(captured_err))
+            db:close()
+        """)
+    }
+
+    @Test func transactionRequiresFunctionArg() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_bad_arg"))
+            local ok, err = db:transaction("not a function")
+            assert(ok == nil, "non-function arg rejected")
+            assert(type(err) == 'string' and err:find("function") ~= nil)
+            db:close()
+        """)
+    }
+
+    @Test func externalHandleHasNoTransaction() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let extPath = tmp.appendingPathComponent("ext_tx.sqlite").path
+        seedExternalDB(at: extPath)
+
+        let state = makeState(externalPaths: [extPath])
+        state.push(extPath)
+        state.setGlobal("EXT_PATH")
+        try state.doString("""
+            local db = assert(lingxi.db.openExternal(EXT_PATH))
+            assert(db.transaction == nil, "external handle must not expose transaction")
+            db:close()
+        """)
+    }
+
+    @Test func transactionOnClosedHandleErrors() async throws {
+        let tmp = makeTempDir()
+        defer { Task { await cleanup(tmp) } }
+        await PluginDBManager.shared.resetForTesting(baseDirectory: tmp)
+
+        let state = makeState()
+        try state.doString("""
+            local db = assert(lingxi.db.open("tx_closed"))
+            db:close()
+            local ok, err = db:transaction(function() end)
+            assert(ok == nil)
+            assert(type(err) == 'string' and err:find("closed") ~= nil)
+        """)
+    }
 }

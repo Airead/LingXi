@@ -269,6 +269,49 @@ actor PluginDBManager {
         }
     }
 
+    // MARK: - Transactions
+
+    /// Begin a transaction. Fails if the connection is already inside one.
+    /// Uses `sqlite3_get_autocommit` as the single source of truth so that
+    /// plugin code running raw `BEGIN` via `exec` stays consistent.
+    func beginTransaction(handleId: Int) -> Result<Void, PluginDBError> {
+        guard let conn = connections[handleId] else {
+            return .failure(.handleNotFound)
+        }
+        if sqlite3_get_autocommit(conn.db) == 0 {
+            return .failure(.stepFailed("already in transaction"))
+        }
+        return stepBare(db: conn.db, sql: "BEGIN")
+    }
+
+    func commitTransaction(handleId: Int) -> Result<Void, PluginDBError> {
+        guard let conn = connections[handleId] else {
+            return .failure(.handleNotFound)
+        }
+        return stepBare(db: conn.db, sql: "COMMIT")
+    }
+
+    /// Rollback is best-effort — the caller typically wants cleanup on a
+    /// broken-transaction path and cares less about the specific failure mode.
+    func rollbackTransaction(handleId: Int) {
+        guard let conn = connections[handleId] else { return }
+        _ = stepBare(db: conn.db, sql: "ROLLBACK")
+    }
+
+    private func stepBare(db: OpaquePointer, sql: String) -> Result<Void, PluginDBError> {
+        var stmt: OpaquePointer?
+        let prc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        if prc != SQLITE_OK {
+            return .failure(.prepareFailed(String(cString: sqlite3_errmsg(db))))
+        }
+        defer { sqlite3_finalize(stmt) }
+        let src = sqlite3_step(stmt)
+        if src != SQLITE_DONE && src != SQLITE_ROW {
+            return .failure(.stepFailed(String(cString: sqlite3_errmsg(db))))
+        }
+        return .success(())
+    }
+
     // MARK: - Validation / helpers
 
     private static func isValidName(_ name: String) -> Bool {
@@ -427,5 +470,36 @@ extension PluginDBManager {
         }
         semaphore.wait()
         return result
+    }
+
+    nonisolated func syncBeginTransaction(handleId: Int) -> Result<Void, PluginDBError> {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<Void, PluginDBError> = .failure(.handleNotFound)
+        Task {
+            result = await beginTransaction(handleId: handleId)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+    }
+
+    nonisolated func syncCommitTransaction(handleId: Int) -> Result<Void, PluginDBError> {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<Void, PluginDBError> = .failure(.handleNotFound)
+        Task {
+            result = await commitTransaction(handleId: handleId)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return result
+    }
+
+    nonisolated func syncRollbackTransaction(handleId: Int) {
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            await rollbackTransaction(handleId: handleId)
+            semaphore.signal()
+        }
+        semaphore.wait()
     }
 }
