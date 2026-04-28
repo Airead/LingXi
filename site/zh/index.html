@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>灵犀 — 模块化 macOS 搜索启动器，支持 Lua 插件</title>
+  <meta name="description" content="模块化的 macOS 搜索启动器，支持 Lua 插件扩展。应用、文件、书签、剪贴板、片段，一键直达。" />
+  <link rel="icon" href="../images/icon.png" />
+  <link rel="canonical" href="https://airead.github.io/LingXi/zh/" />
+  <link rel="alternate" hreflang="zh" href="https://airead.github.io/LingXi/zh/" />
+  <link rel="alternate" hreflang="en" href="https://airead.github.io/LingXi/" />
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="灵犀 — 模块化 macOS 搜索启动器，支持 Lua 插件" />
+  <meta property="og:description" content="模块化的 macOS 搜索启动器，支持 Lua 插件扩展。应用、文件、书签、剪贴板、片段，一键直达。" />
+  <meta property="og:image" content="https://airead.github.io/LingXi/images/icon.png" />
+  <meta property="og:url" content="https://airead.github.io/LingXi/zh/" />
+  <meta property="og:locale" content="zh_CN" />
+  <meta property="og:locale:alternate" content="en" />
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="灵犀 — 模块化 macOS 搜索启动器，支持 Lua 插件" />
+  <meta name="twitter:description" content="模块化的 macOS 搜索启动器。应用、文件、书签、剪贴板、片段、Lua 插件。" />
+  <meta name="twitter:image" content="https://airead.github.io/LingXi/images/icon.png" />
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "灵犀 (LingXi)",
+    "operatingSystem": "macOS",
+    "applicationCategory": "DeveloperApplication",
+    "description": "模块化的 macOS 搜索启动器，支持 Lua 插件扩展。",
+    "url": "https://airead.github.io/LingXi/zh/",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "license": "https://opensource.org/licenses/MIT"
+  }
+  </script>
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+
+<!-- ========== Header ========== -->
+<header class="site-header">
+  <nav class="nav container">
+    <a class="nav-brand" href="./">
+      <img src="../images/icon.png" alt="灵犀图标" />
+      灵犀
+    </a>
+    <ul class="nav-links">
+      <li><a href="#features" class="nav-link-text">功能</a></li>
+      <li><a href="#keybindings" class="nav-link-text">快捷键</a></li>
+      <li><a href="https://github.com/Airead/LingXi" target="_blank">GitHub</a></li>
+      <li><a href="https://discord.gg/a5HzmNMC7P" target="_blank">Discord</a></li>
+      <li><a href="../" class="lang-switch">English</a></li>
+    </ul>
+  </nav>
+</header>
+
+<!-- ========== Hero ========== -->
+<section class="hero">
+  <div class="container">
+    <img src="../images/icon.png" alt="灵犀" class="hero-icon" />
+    <h1>搜索，<span>万物</span></h1>
+    <p class="tagline">模块化的 macOS 搜索启动器，支持 Lua 插件 — 应用、文件、书签、剪贴板、片段，一键直达。</p>
+    <div class="hero-buttons">
+      <a id="download-btn" href="https://github.com/Airead/LingXi/releases/latest" class="btn btn-primary">
+        &#11015; 下载
+      </a>
+      <a href="https://github.com/Airead/LingXi" class="btn btn-secondary" target="_blank">
+        &#9733; GitHub
+      </a>
+    </div>
+    <span id="version-badge" class="version-badge">最新版本</span>
+  </div>
+</section>
+
+<!-- ========== Features ========== -->
+<section id="features">
+  <div class="container">
+    <h2 class="section-title fade-in">功能特性</h2>
+    <p class="section-subtitle fade-in">一个启动器，多种数据源</p>
+    <div class="features-grid">
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#128268;</div>
+        <h3>Lua 插件系统</h3>
+        <p>使用沙箱化 Lua 插件扩展灵犀。注册命令、构建 Webview 界面，无需重新编译即可发布功能。</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#128187;</div>
+        <h3>应用与文件搜索</h3>
+        <p>模糊匹配已安装应用和 Spotlight 文件。输入 <code>f</code> 搜索文件，<code>fd</code> 搜索文件夹 — 回车打开，或在 Finder 中显示。</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#128203;</div>
+        <h3>剪贴板历史</h3>
+        <p>使用 <code>cb</code> 前缀搜索剪贴板历史。容量受限，可即时粘贴回上一个聚焦应用。</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#9889;</div>
+        <h3>片段与自动展开</h3>
+        <p>保存文本片段，输入触发词即可在任意位置展开。使用 <code>sn</code> 搜索，或开启自动展开自动完成。</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#9881;</div>
+        <h3>系统设置与书签</h3>
+        <p>直接跳转任意系统设置面板。使用 <code>bm</code> 搜索浏览器书签 — 支持 Safari、Chrome 等。</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#128736;</div>
+        <h3>原生 macOS</h3>
+        <p>基于 SwiftUI 与 Swift 6.2 严格并发构建。默认 MainActor 隔离，原生面板，深度系统集成。</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ========== Keybindings ========== -->
+<section id="keybindings">
+  <div class="container">
+    <h2 class="section-title fade-in">快捷键</h2>
+    <p class="section-subtitle fade-in">熟悉的快捷键，完全可配置</p>
+    <div class="keybinding-grid fade-in">
+      <div class="keybinding-item">
+        <span>呼出 / 隐藏面板</span>
+        <kbd>Option + Space</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>打开选中项</span>
+        <kbd>Return</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>选择第 1–9 项</span>
+        <kbd>Cmd + 1…9</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>上下导航</span>
+        <kbd>&uarr; / &darr;</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>自动补全</span>
+        <kbd>Tab</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>删除条目</span>
+        <kbd>Cmd + Delete</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>关闭面板</span>
+        <kbd>Esc</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>替代动作</span>
+        <kbd>Cmd / Option + Return</kbd>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== Footer ========== -->
+<footer class="site-footer">
+  <div class="container">
+    <ul class="footer-links">
+      <li><a href="https://github.com/Airead/LingXi" target="_blank">GitHub</a></li>
+      <li><a href="https://github.com/Airead/LingXi/releases" target="_blank">版本发布</a></li>
+      <li><a href="https://github.com/Airead/LingXi/issues" target="_blank">问题反馈</a></li>
+      <li><a href="https://discord.gg/a5HzmNMC7P" target="_blank">Discord</a></li>
+      <li><a href="../">English</a></li>
+    </ul>
+    <p>MIT License &copy; 灵犀 (LingXi)</p>
+  </div>
+</footer>
+
+<script src="../js/main.js"></script>
+</body>
+</html>

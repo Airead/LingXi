@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LingXi — Modular macOS Search Launcher with Lua Plugins</title>
+  <meta name="description" content="A modular macOS search launcher with Lua plugin support. Apps, files, bookmarks, clipboard history, snippets, and more — all in one keystroke." />
+  <link rel="icon" href="images/icon.png" />
+  <link rel="canonical" href="https://airead.github.io/LingXi/" />
+  <link rel="alternate" hreflang="zh" href="https://airead.github.io/LingXi/zh/" />
+  <link rel="alternate" hreflang="en" href="https://airead.github.io/LingXi/" />
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="LingXi — Modular macOS Search Launcher with Lua Plugins" />
+  <meta property="og:description" content="A modular macOS search launcher with Lua plugin support. Apps, files, bookmarks, clipboard history, snippets, and more — all in one keystroke." />
+  <meta property="og:image" content="https://airead.github.io/LingXi/images/icon.png" />
+  <meta property="og:url" content="https://airead.github.io/LingXi/" />
+  <meta property="og:locale" content="en" />
+  <meta property="og:locale:alternate" content="zh_CN" />
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="LingXi — Modular macOS Search Launcher with Lua Plugins" />
+  <meta name="twitter:description" content="Modular macOS search launcher. Apps, files, bookmarks, clipboard, snippets, and Lua plugins." />
+  <meta name="twitter:image" content="https://airead.github.io/LingXi/images/icon.png" />
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "LingXi",
+    "operatingSystem": "macOS",
+    "applicationCategory": "DeveloperApplication",
+    "description": "A modular macOS search launcher with Lua plugin support.",
+    "url": "https://airead.github.io/LingXi/",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "license": "https://opensource.org/licenses/MIT"
+  }
+  </script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- ========== Header ========== -->
+<header class="site-header">
+  <nav class="nav container">
+    <a class="nav-brand" href="./">
+      <img src="images/icon.png" alt="LingXi icon" />
+      LingXi
+    </a>
+    <ul class="nav-links">
+      <li><a href="#features" class="nav-link-text">Features</a></li>
+      <li><a href="#keybindings" class="nav-link-text">Keybindings</a></li>
+      <li><a href="https://github.com/Airead/LingXi" target="_blank">GitHub</a></li>
+      <li><a href="https://discord.gg/a5HzmNMC7P" target="_blank">Discord</a></li>
+      <li><a href="zh/" class="lang-switch">中文</a></li>
+    </ul>
+  </nav>
+</header>
+
+<!-- ========== Hero ========== -->
+<section class="hero">
+  <div class="container">
+    <img src="images/icon.png" alt="LingXi" class="hero-icon" />
+    <h1>Search, <span>Anything</span></h1>
+    <p class="tagline">A modular macOS search launcher with Lua plugin support — apps, files, bookmarks, clipboard, snippets, all in one keystroke.</p>
+    <div class="hero-buttons">
+      <a id="download-btn" href="https://github.com/Airead/LingXi/releases/latest" class="btn btn-primary">
+        &#11015; Download
+      </a>
+      <a href="https://github.com/Airead/LingXi" class="btn btn-secondary" target="_blank">
+        &#9733; GitHub
+      </a>
+    </div>
+    <span id="version-badge" class="version-badge">Latest release</span>
+  </div>
+</section>
+
+<!-- ========== Features ========== -->
+<section id="features">
+  <div class="container">
+    <h2 class="section-title fade-in">Features</h2>
+    <p class="section-subtitle fade-in">One launcher, many providers</p>
+    <div class="features-grid">
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#128268;</div>
+        <h3>Lua Plugin System</h3>
+        <p>Extend LingXi with sandboxed Lua plugins. Register commands, build webview UIs, and ship features without recompiling the app.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#128187;</div>
+        <h3>App &amp; File Search</h3>
+        <p>Fuzzy-match installed apps and Spotlight files. Type <code>f</code> for files, <code>fd</code> for folders — open with Enter or reveal in Finder.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#128203;</div>
+        <h3>Clipboard History</h3>
+        <p>Searchable clipboard history with <code>cb</code> prefix. Capacity-bounded, instantly pasted back into the previously focused app.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#9889;</div>
+        <h3>Snippets &amp; Auto-Expand</h3>
+        <p>Save text snippets, then expand them by typing a trigger anywhere. Search with <code>sn</code> or let auto-expand do the work.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#9881;</div>
+        <h3>System Settings &amp; Bookmarks</h3>
+        <p>Jump straight into any System Settings pane. Search browser bookmarks with <code>bm</code> — Safari, Chrome, and more.</p>
+      </div>
+
+      <div class="feature-card fade-in">
+        <div class="feature-icon">&#128736;</div>
+        <h3>Native macOS</h3>
+        <p>Built with SwiftUI and Swift 6.2 strict concurrency. MainActor-isolated by default, native panel, and tight system integration.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ========== Keybindings ========== -->
+<section id="keybindings">
+  <div class="container">
+    <h2 class="section-title fade-in">Keybindings</h2>
+    <p class="section-subtitle fade-in">Familiar shortcuts, fully configurable</p>
+    <div class="keybinding-grid fade-in">
+      <div class="keybinding-item">
+        <span>Toggle Panel</span>
+        <kbd>Option + Space</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>Open Selected</span>
+        <kbd>Return</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>Pick Result 1–9</span>
+        <kbd>Cmd + 1…9</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>Navigate Results</span>
+        <kbd>&uarr; / &darr;</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>Autocomplete</span>
+        <kbd>Tab</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>Delete Item</span>
+        <kbd>Cmd + Delete</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>Dismiss Panel</span>
+        <kbd>Esc</kbd>
+      </div>
+      <div class="keybinding-item">
+        <span>Alternate Action</span>
+        <kbd>Cmd / Option + Return</kbd>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== Footer ========== -->
+<footer class="site-footer">
+  <div class="container">
+    <ul class="footer-links">
+      <li><a href="https://github.com/Airead/LingXi" target="_blank">GitHub</a></li>
+      <li><a href="https://github.com/Airead/LingXi/releases" target="_blank">Releases</a></li>
+      <li><a href="https://github.com/Airead/LingXi/issues" target="_blank">Issues</a></li>
+      <li><a href="https://discord.gg/a5HzmNMC7P" target="_blank">Discord</a></li>
+      <li><a href="zh/">中文</a></li>
+    </ul>
+    <p>MIT License &copy; LingXi</p>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+</body>
+</html>
