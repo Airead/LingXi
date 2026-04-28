@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-26
+    env:
+      SCHEME: LingXi
+      BUILD_DIR: ${{ github.workspace }}/build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.2
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set version in project
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          sed -i '' "s/MARKETING_VERSION = .*;/MARKETING_VERSION = ${VERSION};/g" LingXi.xcodeproj/project.pbxproj
+
+      - name: Import signing certificate
+        env:
+          P12_BASE64: ${{ secrets.SIGNING_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="ci-keychain-password"
+
+          echo "$P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          # Extract certificate from p12 and trust it (needed for self-signed certs)
+          openssl pkcs12 -in "$CERT_PATH" -passin pass:"$P12_PASSWORD" -nokeys -legacy \
+            -out "$RUNNER_TEMP/cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot \
+            -k "$KEYCHAIN_PATH" "$RUNNER_TEMP/cert.pem"
+
+      - name: Extract signing identity
+        id: identity
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No valid codesigning identity found"
+            exit 1
+          fi
+          echo "Signing identity: $IDENTITY"
+          echo "name=$IDENTITY" >> "$GITHUB_OUTPUT"
+
+      - name: Build release
+        run: |
+          xcodebuild build \
+            -scheme "$SCHEME" \
+            -destination 'platform=macOS' \
+            -configuration Release \
+            SYMROOT="$BUILD_DIR" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGN_IDENTITY="${{ steps.identity.outputs.name }}" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/signing.keychain-db"
+
+      - name: Verify signature
+        run: codesign -dvv "$BUILD_DIR/Release/LingXi.app"
+
+      - name: Generate DMG resources
+        run: |
+          swift scripts/generate_dmg_background.swift
+          swift scripts/generate_dmg_volume_icon.swift
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        run: |
+          DMG_NAME="LingXi-${{ steps.version.outputs.version }}-arm64.dmg"
+          create-dmg \
+            --volname "LingXi" \
+            --volicon "resources/dmg-volume.icns" \
+            --background "resources/dmg-background.png" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 128 \
+            --icon "LingXi.app" 175 190 \
+            --app-drop-link 425 190 \
+            --hide-extension "LingXi.app" \
+            --no-internet-enable \
+            "$BUILD_DIR/$DMG_NAME" \
+            "$BUILD_DIR/Release/LingXi.app"
+          echo "DMG_PATH=$BUILD_DIR/$DMG_NAME" >> "$GITHUB_ENV"
+          echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.DMG_PATH }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

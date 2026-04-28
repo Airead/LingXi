@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-capture-service build build-release clean install
+.PHONY: test test-unit test-capture-service build build-release clean install icon dmg-resources build-dmg
 
 SCHEME = LingXi
 PROJECT = LingXi.xcodeproj
@@ -54,3 +54,13 @@ clean:
 	xcodebuild clean \
 		-project $(PROJECT) \
 		-scheme LingXiCaptureService
+
+icon:
+	swift scripts/generate_icon.swift
+
+dmg-resources: icon
+	swift scripts/generate_dmg_background.swift
+	swift scripts/generate_dmg_volume_icon.swift
+
+build-dmg: build-release dmg-resources
+	./scripts/build-dmg.sh
