@@ -62,7 +62,19 @@ final class UpdateController {
     private let currentVersion: String
 
     private init() {
-        self.currentVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
+        self.currentVersion = Self.resolveCurrentVersion()
+    }
+
+    /// Resolve the running app's version, honoring `LINGXI_FAKE_CURRENT_VERSION`
+    /// for end-to-end testing of the update flow against a lower fake version.
+    nonisolated static func resolveCurrentVersion(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        bundleVersion: String? = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+    ) -> String {
+        if let override = env["LINGXI_FAKE_CURRENT_VERSION"], !override.isEmpty {
+            return override
+        }
+        return bundleVersion ?? "dev"
     }
 
     var isFrozen: Bool {

@@ -33,6 +33,26 @@ struct UpdaterTests {
         #expect(!UpdateController.isNewer("v1.0", than: "invalid"))
     }
 
+    // MARK: - Current-version resolution
+
+    @Test func resolveCurrentVersionUsesEnvOverride() {
+        let env = ["LINGXI_FAKE_CURRENT_VERSION": "0.0.0"]
+        #expect(UpdateController.resolveCurrentVersion(env: env, bundleVersion: "1.0") == "0.0.0")
+    }
+
+    @Test func resolveCurrentVersionFallsBackToBundle() {
+        #expect(UpdateController.resolveCurrentVersion(env: [:], bundleVersion: "1.0") == "1.0")
+    }
+
+    @Test func resolveCurrentVersionReturnsDevWhenBundleMissing() {
+        #expect(UpdateController.resolveCurrentVersion(env: [:], bundleVersion: nil) == "dev")
+    }
+
+    @Test func resolveCurrentVersionIgnoresEmptyOverride() {
+        let env = ["LINGXI_FAKE_CURRENT_VERSION": ""]
+        #expect(UpdateController.resolveCurrentVersion(env: env, bundleVersion: "1.0") == "1.0")
+    }
+
     @Test func normalizeDisplayVersionAddsPrefix() {
         #expect(UpdateController.normalizeDisplayVersion("1.0.0") == "v1.0.0")
         #expect(UpdateController.normalizeDisplayVersion("v2.0") == "v2.0")
