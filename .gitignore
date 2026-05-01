@@ -9,6 +9,10 @@ DerivedData/
 .build/
 .swiftpm/
 
+# LLVM coverage / profiling raw data
+*.profraw
+*.profdata
+
 # macOS
 .DS_Store
 
