@@ -156,7 +156,10 @@ struct LingXiApp: App {
 }
 
 private struct MenuBarMenuView: View {
+    private let updater = UpdateController.shared
+
     var body: some View {
+        updateMenuItems
         Button("Settings...") {
             AppDelegate.showSettings()
         }
@@ -167,12 +170,30 @@ private struct MenuBarMenuView: View {
         }
         .keyboardShortcut("q")
     }
+
+    @ViewBuilder
+    private var updateMenuItems: some View {
+        switch updater.state {
+        case .available(let v):
+            Button("Update available: \(v)") { updater.handleMenuClick() }
+            Divider()
+        case .downloading(let msg):
+            Text(msg)
+            Divider()
+        case .ready(let v):
+            Button("Restart to update \(v)") { updater.handleMenuClick() }
+            Divider()
+        case .idle:
+            EmptyView()
+        }
+    }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
+        UpdateController.shared.start()
     }
 
     private func setupMainMenu() {
