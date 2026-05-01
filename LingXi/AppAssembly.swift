@@ -14,6 +14,7 @@ final class AppAssembly {
         let fileSearchModule = FileSearchModule()
         let bookmarkModule = BookmarkModule()
         let systemSettingsModule = SystemSettingsModule()
+        let calculatorModule = CalculatorModule()
 
         let router = SearchRouter(defaultProvider: appModule.defaultProvider, maxResults: settings.maxSearchResults)
 
@@ -39,6 +40,7 @@ final class AppAssembly {
             fileSearchModule,
             bookmarkModule,
             systemSettingsModule,
+            calculatorModule,
             clipboardModule,
             snippetModule,
             commandModule

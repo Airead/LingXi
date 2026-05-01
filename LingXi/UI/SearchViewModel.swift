@@ -39,6 +39,7 @@ final class SearchViewModel: ObservableObject {
     private let usageBoostCap: Int = 50
     var onClipboardPaste: ((String) -> Void)?
     var onSnippetPaste: ((String) -> Void)?
+    var onCalculatorPaste: ((String) -> Void)?
     var onCommandExecute: ((SearchResult) -> Void)?
     var onDeleteItem: ((String) -> Void)?
 
@@ -156,10 +157,16 @@ final class SearchViewModel: ObservableObject {
         let pasteHandler: ((String) -> Void)? = switch selected.resultType {
         case .clipboard: onClipboardPaste
         case .snippet: onSnippetPaste
+        case .calculator: onCalculatorPaste
         default: nil
         }
         if let pasteHandler {
-            pasteHandler(selected.itemId)
+            // Calculator passes the raw numeric text via actionContext; other
+            // result types route by itemId so providers can look up state.
+            let payload = selected.resultType == .calculator
+                ? selected.actionContext
+                : selected.itemId
+            pasteHandler(payload)
             recordExecution(query: currentQuery, itemId: selected.itemId)
             return true
         }

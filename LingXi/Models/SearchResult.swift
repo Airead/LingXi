@@ -14,6 +14,7 @@ nonisolated enum SearchResultType: Sendable {
     case clipboard
     case snippet
     case systemSettings
+    case calculator
 }
 
 nonisolated enum ActionModifier: Int, Hashable, Sendable {
