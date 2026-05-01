@@ -236,14 +236,14 @@ final class UpdateController {
         updater = AppUpdater(
             dmgURL: dmgURL,
             version: version,
-            onProgress: { [weak self] msg in
-                Task { @MainActor in self?.state = .downloading(message: msg) }
+            onProgress: { msg in
+                Task { @MainActor [weak self] in self?.state = .downloading(message: msg) }
             },
-            onError: { [weak self] msg in
-                Task { @MainActor in self?.handleUpdaterError(msg) }
+            onError: { msg in
+                Task { @MainActor [weak self] in self?.handleUpdaterError(msg) }
             },
-            onReady: { [weak self] in
-                Task { @MainActor in self?.handleUpdaterReady() }
+            onReady: {
+                Task { @MainActor [weak self] in self?.handleUpdaterReady() }
             }
         )
         updater?.start()

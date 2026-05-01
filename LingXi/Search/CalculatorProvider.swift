@@ -78,7 +78,7 @@ actor CalculatorProvider: SearchProvider {
 /// only a hand-written recursive descent parser that accepts numeric literals,
 /// arithmetic operators, parenthesised sub-expressions, whitelisted constants
 /// (`pi`, `e`), and whitelisted function calls.
-enum CalculatorEngine {
+nonisolated enum CalculatorEngine {
     enum EvalError: Error, Equatable {
         case syntax
         case unknownIdentifier(String)
@@ -155,7 +155,7 @@ enum CalculatorEngine {
 
 // MARK: - Parser
 
-private struct Parser {
+private nonisolated struct Parser {
     private let chars: [Character]
     private var pos: Int = 0
 
