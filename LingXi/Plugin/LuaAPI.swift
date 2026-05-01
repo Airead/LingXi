@@ -1620,6 +1620,20 @@ nonisolated enum LuaAPI {
         state.pushFunction(webviewOnMessage)
         state.setField("on_message", at: -2)
         state.setField("webview", at: -2)
+
+        // The on_message callback ref is held in process-wide statics. Once this
+        // Lua state is closed, those statics would dangle into freed memory and
+        // a later `luaL_unref` from a different state would crash. Clear them
+        // here while L is still valid.
+        state.addOnCloseHook { L in
+            if webviewMessageState == L {
+                if webviewMessageRef != 0 {
+                    luaL_unref(L, lua_swift_registry_index(), webviewMessageRef)
+                }
+                webviewMessageRef = 0
+                webviewMessageState = nil
+            }
+        }
     }
 
     private static func registerDisabledWebView(state: LuaState) {

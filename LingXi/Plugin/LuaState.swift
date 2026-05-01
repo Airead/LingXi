@@ -21,6 +21,7 @@ enum LuaError: Error, CustomStringConvertible {
 /// Swift wrapper around a Lua state. Not thread-safe — access from a single thread only.
 nonisolated final class LuaState: @unchecked Sendable {
     private let L: OpaquePointer
+    private var onCloseHooks: [@Sendable (OpaquePointer) -> Void] = []
 
     /// Direct access to the underlying Lua state pointer for advanced C API usage.
     var raw: OpaquePointer { L }
@@ -30,7 +31,17 @@ nonisolated final class LuaState: @unchecked Sendable {
     }
 
     deinit {
+        for hook in onCloseHooks {
+            hook(L)
+        }
         lua_close(L)
+    }
+
+    /// Register a callback that runs just before `lua_close` during `deinit`.
+    /// The lua_State is still valid when the hook is invoked, so it is safe to
+    /// release registry references via `luaL_unref`.
+    func addOnCloseHook(_ hook: @escaping @Sendable (OpaquePointer) -> Void) {
+        onCloseHooks.append(hook)
     }
 
     // MARK: - Libraries

@@ -1288,6 +1288,24 @@ struct LuaAPITests {
         """)
     }
 
+    @Test func webviewOnMessageSurvivesPreviousStateClose() throws {
+        // Regression: the on_message callback ref is held in process-wide statics.
+        // Before the on-close hook fix, destroying state A after registering a
+        // callback would leave the static pointing at freed memory, and the next
+        // state's `luaL_unref(oldL, ...)` would crash.
+        let perms = PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: true, cache: false, db: false, dbExternalPaths: [])
+        do {
+            let stateA = makeState(permissions: perms)
+            try stateA.doString("lingxi.webview.on_message(function(data) end)")
+        }
+
+        let stateB = makeState(permissions: perms)
+        try stateB.doString("""
+            local ok = lingxi.webview.on_message(function(data) end)
+            assert(ok == true, "expected true, got " .. tostring(ok))
+        """)
+    }
+
     @Test func webviewOnMessageReturnsFalseWithoutPermission() throws {
         let state = makeState(permissions: PermissionConfig(network: false, clipboard: false, filesystem: [], shell: [], notify: false, store: false, webview: false, cache: false, db: false, dbExternalPaths: []))
         try state.doString("""
