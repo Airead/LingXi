@@ -165,6 +165,9 @@ private struct MenuBarMenuView: View {
         }
         .keyboardShortcut(",")
         Divider()
+        Button("Restart LingXi") {
+            AppDelegate.relaunch()
+        }
         Button("Quit LingXi") {
             NSApplication.shared.terminate(nil)
         }
@@ -204,6 +207,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsItem.target = self
         appMenu.addItem(settingsItem)
         appMenu.addItem(.separator())
+        let restartItem = NSMenuItem(title: "Restart LingXi", action: #selector(restartApp), keyEquivalent: "")
+        restartItem.target = self
+        appMenu.addItem(restartItem)
         appMenu.addItem(NSMenuItem(title: "Quit LingXi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         let appMenuItem = NSMenuItem()
@@ -211,6 +217,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc func restartApp() {
+        Self.relaunch()
+    }
+
+    /// Quit and re-launch the running app bundle.
+    ///
+    /// Spawns a detached bash that waits for this PID to exit, then
+    /// `open`s the bundle. Honors `LINGXI_APP_PATH` for testability.
+    static func relaunch() {
+        let appURL: URL
+        if let override = ProcessInfo.processInfo.environment["LINGXI_APP_PATH"] {
+            appURL = URL(fileURLWithPath: override)
+        } else {
+            appURL = Bundle.main.bundleURL
+        }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let script = relaunchScript(pid: pid, appPath: appURL.path)
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+        proc.arguments = ["-c", script]
+        do {
+            try proc.run()
+        } catch {
+            DebugLog.log("[Restart] Failed to spawn relaunch script: \(error)")
+            return
+        }
+        NSApp.terminate(nil)
+    }
+
+    nonisolated static func relaunchScript(pid: pid_t, appPath: String) -> String {
+        let q = "'" + appPath.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return """
+        #!/bin/bash
+        while kill -0 \(pid) 2>/dev/null; do
+            sleep 0.2
+        done
+        sleep 0.3
+        open \(q)
+        """
     }
 
     @objc func openSettings() {
