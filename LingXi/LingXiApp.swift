@@ -160,6 +160,9 @@ private struct MenuBarMenuView: View {
 
     var body: some View {
         updateMenuItems
+        Button("About LingXi") {
+            AppDelegate.showAbout()
+        }
         Button("Settings...") {
             AppDelegate.showSettings()
         }
@@ -203,6 +206,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mainMenu = NSMenu()
 
         let appMenu = NSMenu()
+        let aboutItem = NSMenuItem(title: "About LingXi", action: #selector(openAbout), keyEquivalent: "")
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+        appMenu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         appMenu.addItem(settingsItem)
@@ -266,6 +273,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func showSettings() {
         SettingsWindowManager.shared.show()
+    }
+
+    @objc func openAbout() {
+        Self.showAbout()
+    }
+
+    static func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(nil)
     }
 }
 
