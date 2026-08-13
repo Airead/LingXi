@@ -1,5 +1,7 @@
 # 启动器鼠标支持实现计划
 
+> **状态：已完成**（commit 7c16c61 `feat(panel): add mouse support to launcher`，后续 a23a824 修复了静止光标误抢选中的问题）。文末人工验证清单未逐项勾选，如发现交互问题可回到该清单复查。
+
 ## 背景
 
 当前启动器 (`LingXi/Panel/PanelManager.swift`) 是一个 SwiftUI 浮动面板，结果列表通过 `ScrollView` + `LazyVStack` 渲染 `SearchResultRow`。所有交互都走键盘：箭头键、回车、Tab、⌘1–9、⌘⌫。鼠标只能滚动，不能选中或触发。

@@ -1,5 +1,7 @@
 # Lua 插件 SQLite API 实现计划
 
+> **状态：已完成**。自有库（e5be186）、外部只读库、snapshot 辅助（4bf0ac9）、BLOB 支持（94d2b03）均已落地，实现见 `LingXi/Plugin/PluginDBManager.swift` 与 `LingXi/Plugin/LuaDBAPI.swift`。
+
 ## 背景
 
 当前 LingXi 的 Lua 插件已有 `lingxi.store`（KV）、`lingxi.file`（受 `filesystem` 白名单限制）、`lingxi.cache` 等能力，但缺少结构化数据查询能力。部分插件场景（例如读取 Claude Code 会话 JSONL 的索引、读取其它 app 暴露出来的 sqlite 历史库）需要真正的 SQL 查询。

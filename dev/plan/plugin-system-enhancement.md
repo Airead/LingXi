@@ -1,5 +1,16 @@
 # LingXi 插件系统增强计划
 
+> **状态：阶段 1–7 已完成，仅剩阶段 8（插件市场配置界面）待实现。**
+>
+> - 阶段 1（plugin.toml 与分级权限）：`PluginManifest.swift`、`ManifestParser.swift`、`TOMLParser.swift`
+> - 阶段 2（lingxi.store）：commit 1228429，`StoreManager.swift`
+> - 阶段 3（lingxi.file）：`LuaAPI.registerFile` + `PathValidator.swift`
+> - 阶段 4（lingxi.shell）：`LuaAPI.registerShell`
+> - 阶段 5（事件系统）：`PluginManager.dispatchEvent`
+> - 阶段 6（lingxi.ui 通知/浮动提示）：commit 4f8f4a0，`NotificationManager.swift`、`ToastManager.swift`
+> - 阶段 7（插件市场 CLI）：commit 051e732，`PluginMarket.swift`、`RegistryManager.swift`、`PluginRegistry.swift`（详细计划见 done/plugin-market-cli.md）
+> - 阶段 8（插件市场配置界面）：**未实现**，`LingXi/Settings/` 中尚无 market/registry 相关 UI
+
 ## 目标
 
 在现有 Lua 插件系统基础上，参考 WenZi 插件系统设计，引入元数据声明、分级权限、丰富 API 和插件市场，构建安全且可扩展的插件生态。

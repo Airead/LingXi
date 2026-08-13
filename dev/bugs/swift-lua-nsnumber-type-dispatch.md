@@ -1,5 +1,7 @@
 # Swift-Lua Bridge: NSNumber Type Dispatch Bug
 
+> **Status: Fixed** in commit c41a270 (`fix(lua-bridge): correct NSNumber type dispatch order and add log API`). Kept as a reference for the Foundation bridging pitfall described below.
+
 ## Summary
 `lingxi.store.get()` returned `boolean` instead of `number` for integer values (e.g. `1`, `0`), causing `demo_stats` to always show `0` in the api-showcase plugin.
 
