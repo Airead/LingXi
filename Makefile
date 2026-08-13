@@ -6,6 +6,8 @@ DESTINATION = platform=macOS
 BUILD_DIR = $(CURDIR)/build
 APP_NAME = LingXi.app
 INSTALL_DIR = /Applications
+# Version from the latest reachable git tag (v0.0.3 -> 0.0.3); empty if no tag
+GIT_TAG_VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
 test: test-unit
 
@@ -39,6 +41,7 @@ build-release:
 		-destination '$(DESTINATION)' \
 		-configuration Release \
 		SYMROOT=$(BUILD_DIR) \
+		$(if $(GIT_TAG_VERSION),MARKETING_VERSION=$(GIT_TAG_VERSION)) \
 		| xcbeautify || true
 
 install: build-release
