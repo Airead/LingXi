@@ -5,7 +5,7 @@ description = "Demonstrates every LingXi plugin API and capability. A reference 
 version = "1.0.0"
 author = "LingXi Team"
 url = "https://github.com/Airead/LingXi"
-min_lingxi_version = "1.0.0"
+min_lingxi_version = "0.0.2"
 
 files = [
     "init.lua",

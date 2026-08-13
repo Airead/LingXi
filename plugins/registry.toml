@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Demonstrates every LingXi plugin API and capability. A reference implementation for plugin developers."
 author = "LingXi Team"
 source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/api-showcase/plugin.toml"
-min_lingxi_version = "1.0.0"
+min_lingxi_version = "0.0.2"
 
 [[plugins]]
 id = "io.github.airead.lingxi.emoji-search"
@@ -17,7 +17,7 @@ version = "1.0.0"
 description = "Search and paste emoji via the launcher (prefix: e)"
 author = "LingXi Team"
 source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/emoji-search/plugin.toml"
-min_lingxi_version = "1.0.0"
+min_lingxi_version = "0.0.2"
 
 [[plugins]]
 id = "io.github.airead.lingxi.cc-sessions"
@@ -26,4 +26,4 @@ version = "1.0.0"
 description = "Browse and view Claude Code session history (prefix: cc)"
 author = "LingXi Team"
 source = "https://raw.githubusercontent.com/Airead/LingXi/main/plugins/cc-sessions/plugin.toml"
-min_lingxi_version = "1.1.0"
+min_lingxi_version = "0.0.2"

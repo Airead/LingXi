@@ -4,7 +4,7 @@ name = "API Test: SQLite DB"
 version = "1.0.0"
 author = "LingXi Team"
 description = "Test plugin for lingxi.db (owned SQLite databases)"
-min_lingxi_version = "1.1.0"
+min_lingxi_version = "0.0.2"
 
 files = ["init.lua"]
 
