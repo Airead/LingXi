@@ -5,9 +5,11 @@ final class AppAssembly {
     struct Result {
         let panelManager: PanelManager
         let pluginManager: PluginManager
+        let voiceInputController: VoiceInputController
+        let leaderKeyManager: LeaderKeyManager
     }
 
-    static func assemble(settings: AppSettings) async -> Result {
+    static func assemble(settings: AppSettings, voiceActivity: VoiceActivityModel) async -> Result {
         let database = await DatabaseManager(databasePath: DatabaseManager.defaultDatabasePath())
 
         let appModule = ApplicationModule()
@@ -80,6 +82,13 @@ final class AppAssembly {
             data: [:]
         )
 
-        return Result(panelManager: panelManager, pluginManager: pluginManager)
+        let voiceInputController = VoiceInputController(settings: settings, activityModel: voiceActivity)
+
+        return Result(
+            panelManager: panelManager,
+            pluginManager: pluginManager,
+            voiceInputController: voiceInputController,
+            leaderKeyManager: leaderKeyManager
+        )
     }
 }

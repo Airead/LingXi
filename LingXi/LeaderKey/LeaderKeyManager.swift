@@ -8,6 +8,8 @@ final class LeaderKeyManager {
 
     private let monitor = LeaderKeyMonitor()
     private let panel = LeaderKeyPanel()
+    private var excludedTriggers: Set<String> = []
+    private var running = false
 
     init() {
         monitor.delegate = self
@@ -16,17 +18,36 @@ final class LeaderKeyManager {
     // MARK: - Lifecycle
 
     func start() {
-        let loaded = LeaderKeyConfigLoader.load()
-        var configs = [String: LeaderConfig]()
-        for config in loaded { configs[config.triggerKey] = config }
+        let configs = loadConfigs()
         guard !configs.isEmpty else { return }
         monitor.updateConfigs(configs)
         monitor.start()
+        running = true
     }
 
     func stop() {
         monitor.stop()
         closePanel()
+        running = false
+    }
+
+    /// Trigger keys claimed by other features (e.g. "fn" while voice input
+    /// is enabled). Excluded triggers are dropped from the loaded configs.
+    func setExcludedTriggers(_ triggers: Set<String>) {
+        guard triggers != excludedTriggers else { return }
+        excludedTriggers = triggers
+        if running {
+            monitor.updateConfigs(loadConfigs())
+        }
+    }
+
+    private func loadConfigs() -> [String: LeaderConfig] {
+        let loaded = LeaderKeyConfigLoader.load()
+        var configs = [String: LeaderConfig]()
+        for config in loaded where !excludedTriggers.contains(config.triggerKey) {
+            configs[config.triggerKey] = config
+        }
+        return configs
     }
 
     func suppress() {

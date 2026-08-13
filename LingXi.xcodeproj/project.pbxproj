@@ -565,6 +565,8 @@
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/Vendors/lua/include";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "LingXi uses the microphone for voice input.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "LingXi uses speech recognition to transcribe your voice input.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -599,6 +601,8 @@
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/Vendors/lua/include";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "LingXi uses the microphone for voice input.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "LingXi uses speech recognition to transcribe your voice input.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

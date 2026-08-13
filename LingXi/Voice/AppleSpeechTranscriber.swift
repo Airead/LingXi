@@ -1,0 +1,129 @@
+//
+//  AppleSpeechTranscriber.swift
+//  LingXi
+//
+
+import AVFoundation
+import Foundation
+import Speech
+
+final class AppleSpeechTranscriber: SpeechTranscriber, @unchecked Sendable {
+    func makeSession(language: VoiceLanguage) async throws -> any SpeechTranscriptionSession {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            break
+        case .notDetermined:
+            let status = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+            }
+            guard status == .authorized else { throw TranscriptionError.notAuthorized }
+        default:
+            throw TranscriptionError.notAuthorized
+        }
+        let recognizer: SFSpeechRecognizer? = if let identifier = language.localeIdentifier {
+            SFSpeechRecognizer(locale: Locale(identifier: identifier))
+        } else {
+            SFSpeechRecognizer()
+        }
+        guard let recognizer, recognizer.isAvailable else {
+            throw TranscriptionError.recognizerUnavailable
+        }
+        return AppleSpeechSession(recognizer: recognizer)
+    }
+}
+
+/// Streaming recognition session. Recognition callbacks may arrive on any
+/// queue, so all mutable state is lock-protected and the pending continuation
+/// is resumed exactly once (taken out of the lock before resuming).
+final class AppleSpeechSession: SpeechTranscriptionSession, @unchecked Sendable {
+    private let recognizer: SFSpeechRecognizer
+    private let request: SFSpeechAudioBufferRecognitionRequest
+
+    private let lock = NSLock()
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private var latestText = ""
+    private var finalResult: Result<String, Error>?
+    private var continuation: CheckedContinuation<String, Error>?
+    private var cancelled = false
+    private var finishCalled = false
+
+    init(recognizer: SFSpeechRecognizer) {
+        self.recognizer = recognizer
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.addsPunctuation = true
+        // Only force on-device when supported, so languages without a local
+        // model can still fall back to server-based recognition.
+        if recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        }
+        self.request = request
+        self.recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            self?.handleRecognition(result: result, error: error)
+        }
+    }
+
+    deinit {
+        recognitionTask?.cancel()
+    }
+
+    nonisolated func append(_ buffer: AVAudioPCMBuffer) {
+        let accepting = lock.withLock { !cancelled && !finishCalled }
+        if accepting {
+            request.append(buffer)
+        }
+    }
+
+    func finish() async throws -> String {
+        lock.withLock { finishCalled = true }
+        request.endAudio()
+        return try await withCheckedThrowingContinuation { newContinuation in
+            let immediate: Result<String, Error>? = lock.withLock {
+                if let finalResult { return finalResult }
+                if cancelled { return .failure(CancellationError()) }
+                continuation = newContinuation
+                return nil
+            }
+            if let immediate {
+                newContinuation.resume(with: immediate)
+            }
+        }
+    }
+
+    nonisolated func cancel() {
+        let (pending, task): (CheckedContinuation<String, Error>?, SFSpeechRecognitionTask?) = lock.withLock {
+            cancelled = true
+            if finalResult == nil { finalResult = .failure(CancellationError()) }
+            let pending = continuation
+            continuation = nil
+            return (pending, recognitionTask)
+        }
+        task?.cancel()
+        request.endAudio()
+        pending?.resume(throwing: CancellationError())
+    }
+
+    private func handleRecognition(result: SFSpeechRecognitionResult?, error: Error?) {
+        let resumption: (CheckedContinuation<String, Error>, Result<String, Error>)? = lock.withLock {
+            if let result {
+                latestText = result.bestTranscription.formattedString
+                guard result.isFinal else { return nil }
+                if finalResult == nil { finalResult = .success(latestText) }
+            } else if let error {
+                if finalResult == nil {
+                    // endAudio often surfaces an error after partials stop;
+                    // fall back to the latest partial text if we have any.
+                    finalResult = latestText.isEmpty ? .failure(error) : .success(latestText)
+                }
+            } else {
+                return nil
+            }
+            guard let pending = continuation, let finalResult else { return nil }
+            continuation = nil
+            return (pending, finalResult)
+        }
+        if let (pending, result) = resumption {
+            pending.resume(with: result)
+        }
+    }
+}

@@ -8,6 +8,7 @@ import SwiftUI
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case search
+    case voice
     case plugins
     case permissions
 
@@ -17,6 +18,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .search: "Search"
+        case .voice: "Voice"
         case .plugins: "Plugins"
         case .permissions: "Permissions"
         }
@@ -26,6 +28,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gear"
         case .search: "magnifyingglass"
+        case .voice: "mic"
         case .plugins: "puzzlepiece.extension"
         case .permissions: "shield.lefthalf.filled"
         }
@@ -51,6 +54,8 @@ struct SettingsView: View {
                 GeneralSettingsView(settings: settings)
             case .search:
                 SearchSettingsView(settings: settings)
+            case .voice:
+                VoiceSettingsView(settings: settings)
             case .plugins:
                 if let pluginsModel {
                     PluginsSettingsView(model: pluginsModel)

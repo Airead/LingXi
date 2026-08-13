@@ -15,16 +15,20 @@ struct LingXiApp: App {
     private let settings = AppSettings.shared
     private let hotKeyManager: HotKeyManager
     private let panelHolder = PanelHolder()
+    private let voiceActivity = VoiceActivityModel()
 
     @MainActor
     private final class PanelHolder {
         var panelManager: PanelManager?
         var pluginManager: PluginManager?
+        var voiceInputController: VoiceInputController?
     }
 
     var body: some Scene {
-        MenuBarExtra("LingXi", systemImage: "atom") {
+        MenuBarExtra {
             MenuBarMenuView()
+        } label: {
+            MenuBarIconView(activity: voiceActivity)
         }
     }
 
@@ -117,11 +121,26 @@ struct LingXiApp: App {
             applyAppearance(s.appearanceMode)
         })
 
+        let voiceActivity = voiceActivity
         Task { @MainActor in
-            let result = await AppAssembly.assemble(settings: s)
+            let result = await AppAssembly.assemble(settings: s, voiceActivity: voiceActivity)
             let pm = result.panelManager
             holder.panelManager = pm
             holder.pluginManager = result.pluginManager
+            holder.voiceInputController = result.voiceInputController
+
+            let voice = result.voiceInputController
+            let leader = result.leaderKeyManager
+            let applyVoiceSettings: @MainActor () -> Void = {
+                voice.applySettings()
+                leader.setExcludedTriggers(s.voiceInputEnabled ? ["fn"] : [])
+            }
+            applyVoiceSettings()
+            observeForever({
+                _ = s.voiceInputEnabled
+            }, action: {
+                applyVoiceSettings()
+            })
 
             observeForever({
                 _ = s.maxSearchResults
@@ -153,6 +172,14 @@ struct LingXiApp: App {
         }
     }
 
+}
+
+private struct MenuBarIconView: View {
+    var activity: VoiceActivityModel
+
+    var body: some View {
+        Image(systemName: activity.symbolName)
+    }
 }
 
 private struct MenuBarMenuView: View {

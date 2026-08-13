@@ -14,7 +14,7 @@ struct PermissionCheckerTests {
 
     @Test func permissionKindCasesMatchExpected() {
         let ids = PermissionKind.allCases.map(\.id)
-        #expect(ids == ["accessibility", "screenRecording", "fullDiskAccess"])
+        #expect(ids == ["accessibility", "screenRecording", "fullDiskAccess", "microphone", "speechRecognition"])
     }
 
     @Test func allKindsHaveNonEmptyFields() {

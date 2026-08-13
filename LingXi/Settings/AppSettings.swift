@@ -137,6 +137,33 @@ final class AppSettings {
         didSet { guard leaderKeyEnabled != oldValue else { return }; save(.leaderKeyEnabled, value: leaderKeyEnabled) }
     }
 
+    // MARK: - Voice Input
+
+    var voiceInputEnabled: Bool {
+        didSet { guard voiceInputEnabled != oldValue else { return }; save(.voiceInputEnabled, value: voiceInputEnabled) }
+    }
+    var voiceBackend: VoiceBackend {
+        didSet { guard voiceBackend != oldValue else { return }; save(.voiceBackend, value: voiceBackend.rawValue) }
+    }
+    var voiceAPIBaseURL: String {
+        didSet {
+            if voiceAPIBaseURL.trimmingCharacters(in: .whitespaces).isEmpty { voiceAPIBaseURL = oldValue; return }
+            guard voiceAPIBaseURL != oldValue else { return }; save(.voiceAPIBaseURL, value: voiceAPIBaseURL)
+        }
+    }
+    var voiceAPIKey: String {
+        didSet { guard voiceAPIKey != oldValue else { return }; save(.voiceAPIKey, value: voiceAPIKey) }
+    }
+    var voiceAPIModel: String {
+        didSet {
+            if voiceAPIModel.trimmingCharacters(in: .whitespaces).isEmpty { voiceAPIModel = oldValue; return }
+            guard voiceAPIModel != oldValue else { return }; save(.voiceAPIModel, value: voiceAPIModel)
+        }
+    }
+    var voiceLanguage: VoiceLanguage {
+        didSet { guard voiceLanguage != oldValue else { return }; save(.voiceLanguage, value: voiceLanguage.rawValue) }
+    }
+
     // MARK: - Screenshot hotkeys (0/0 = not set)
 
     var screenshotRegionHotKeyKeyCode: UInt32 {
@@ -240,6 +267,12 @@ final class AppSettings {
         case commandSearchPrefix = "io.github.airead.lingxi.commandSearchPrefix"
         case disabledPlugins = "io.github.airead.lingxi.disabledPlugins"
         case leaderKeyEnabled = "io.github.airead.lingxi.leaderKeyEnabled"
+        case voiceInputEnabled = "io.github.airead.lingxi.voiceInputEnabled"
+        case voiceBackend = "io.github.airead.lingxi.voiceBackend"
+        case voiceAPIBaseURL = "io.github.airead.lingxi.voiceAPIBaseURL"
+        case voiceAPIKey = "io.github.airead.lingxi.voiceAPIKey"
+        case voiceAPIModel = "io.github.airead.lingxi.voiceAPIModel"
+        case voiceLanguage = "io.github.airead.lingxi.voiceLanguage"
         case screenshotRegionHotKeyKeyCode = "io.github.airead.lingxi.screenshotRegionHotKeyKeyCode"
         case screenshotRegionHotKeyModifiers = "io.github.airead.lingxi.screenshotRegionHotKeyModifiers"
         case screenshotFullScreenHotKeyKeyCode = "io.github.airead.lingxi.screenshotFullScreenHotKeyKeyCode"
@@ -296,6 +329,15 @@ final class AppSettings {
         disabledPlugins = Self.load(defaults, .disabledPlugins) ?? []
 
         leaderKeyEnabled = Self.load(defaults, .leaderKeyEnabled) ?? true
+
+        voiceInputEnabled = Self.load(defaults, .voiceInputEnabled) ?? false
+        let voiceBackendRaw: String? = Self.load(defaults, .voiceBackend)
+        voiceBackend = voiceBackendRaw.flatMap { VoiceBackend(rawValue: $0) } ?? .apple
+        voiceAPIBaseURL = Self.load(defaults, .voiceAPIBaseURL) ?? "https://api.openai.com/v1"
+        voiceAPIKey = Self.load(defaults, .voiceAPIKey) ?? ""
+        voiceAPIModel = Self.load(defaults, .voiceAPIModel) ?? "whisper-1"
+        let voiceLanguageRaw: String? = Self.load(defaults, .voiceLanguage)
+        voiceLanguage = voiceLanguageRaw.flatMap { VoiceLanguage(rawValue: $0) } ?? .auto
 
         screenshotRegionHotKeyKeyCode = Self.load(defaults, .screenshotRegionHotKeyKeyCode) ?? 0
         screenshotRegionHotKeyModifiers = Self.load(defaults, .screenshotRegionHotKeyModifiers) ?? 0

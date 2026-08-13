@@ -4,7 +4,9 @@
 //
 
 import AppKit
+import AVFoundation
 import ScreenCaptureKit
+import Speech
 
 enum PermissionStatus {
     case granted
@@ -17,6 +19,8 @@ enum PermissionKind: String, CaseIterable, Identifiable {
     case accessibility
     case screenRecording
     case fullDiskAccess
+    case microphone
+    case speechRecognition
 
     var id: String { rawValue }
 
@@ -25,6 +29,8 @@ enum PermissionKind: String, CaseIterable, Identifiable {
         case .accessibility: "Accessibility"
         case .screenRecording: "Screen Recording"
         case .fullDiskAccess: "Full Disk Access"
+        case .microphone: "Microphone"
+        case .speechRecognition: "Speech Recognition"
         }
     }
 
@@ -33,6 +39,8 @@ enum PermissionKind: String, CaseIterable, Identifiable {
         case .accessibility: "Required for global hotkeys, leader key, and snippet expansion"
         case .screenRecording: "Required for screen capture features"
         case .fullDiskAccess: "Required for reading Safari bookmarks"
+        case .microphone: "Required for voice input recording"
+        case .speechRecognition: "Required for voice input transcription with Apple Speech"
         }
     }
 
@@ -45,6 +53,10 @@ enum PermissionKind: String, CaseIterable, Identifiable {
         case .fullDiskAccess:
             let path = BookmarkStore.defaultSafariPath
             return FileManager.default.isReadableFile(atPath: path) ? .granted : .notGranted
+        case .microphone:
+            return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized ? .granted : .notGranted
+        case .speechRecognition:
+            return SFSpeechRecognizer.authorizationStatus() == .authorized ? .granted : .notGranted
         }
     }
 
@@ -54,6 +66,8 @@ enum PermissionKind: String, CaseIterable, Identifiable {
         case .accessibility: "Privacy_Accessibility"
         case .screenRecording: "Privacy_ScreenCapture"
         case .fullDiskAccess: "Privacy_AllFiles"
+        case .microphone: "Privacy_Microphone"
+        case .speechRecognition: "Privacy_SpeechRecognition"
         }
         return URL(string: "\(base)?\(fragment)")!
     }
