@@ -33,21 +33,24 @@ actor PluginMarket {
 
     // MARK: - Install
 
-    /// Install a plugin from the registry by ID.
-    func install(id: String) async throws {
+    /// Install a plugin from the registry by ID. Returns the installed plugin ID.
+    @discardableResult
+    func install(id: String) async throws -> String {
         let registry = try await registryManager.registry()
         guard let plugin = registry.plugins.first(where: { $0.id == id }) else {
             throw PluginMarketError.pluginNotFound(id)
         }
-        try await install(from: plugin.sourceURL, id: id)
+        return try await install(from: plugin.sourceURL, id: id)
     }
 
-    /// Install a plugin from a direct plugin.toml URL.
-    func install(url: URL) async throws {
+    /// Install a plugin from a direct plugin.toml URL. Returns the installed plugin ID.
+    @discardableResult
+    func install(url: URL) async throws -> String {
         try await install(from: url, id: nil)
     }
 
-    private func install(from sourceURL: URL, id: String?) async throws {
+    @discardableResult
+    private func install(from sourceURL: URL, id: String?) async throws -> String {
         // 1. Download plugin.toml
         let manifest = try await downloadManifest(from: sourceURL)
 
@@ -96,6 +99,7 @@ actor PluginMarket {
             try? fm.removeItem(at: pluginDir)
             throw error
         }
+        return pluginId
     }
 
     // MARK: - Uninstall
@@ -128,6 +132,8 @@ actor PluginMarket {
 
         var results: [InstalledPluginInfo] = []
         for entry in entries where entry.hasDirectoryPath {
+            // Skip backup directories left behind by a crashed update.
+            guard !entry.lastPathComponent.hasSuffix(".backup") else { continue }
             if let info = readInstalledPlugin(at: entry) {
                 results.append(info)
             }
@@ -139,6 +145,12 @@ actor PluginMarket {
     func listAvailable() async throws -> [RegistryPlugin] {
         let registry = try await registryManager.registry()
         return registry.plugins.sorted { $0.id < $1.id }
+    }
+
+    /// Force-refresh the registry cache, bypassing the TTL.
+    @discardableResult
+    func refreshRegistry() async throws -> PluginRegistry {
+        try await registryManager.refreshRegistry()
     }
 
     // MARK: - Updates
@@ -163,6 +175,44 @@ actor PluginMarket {
         return updates
     }
 
+    /// Update an installed plugin to the latest registry version.
+    ///
+    /// The current plugin directory is backed up first; on any failure the
+    /// backup is restored so the old version keeps working. Throws
+    /// `PluginMarketError.upToDate` when no newer version exists (manually
+    /// placed plugins never have updates because they carry no install.toml).
+    func update(id: String) async throws {
+        let updates = try await checkUpdates()
+        guard updates.contains(where: { $0.id == id }) else {
+            throw PluginMarketError.upToDate(id)
+        }
+        let registry = try await registryManager.registry()
+        guard let registryPlugin = registry.plugins.first(where: { $0.id == id }) else {
+            throw PluginMarketError.pluginNotFound(id)
+        }
+
+        let fm = FileManager.default
+        let pluginDir = pluginsDirectory.appendingPathComponent(sanitizeDirectoryName(id))
+        let backupDir = pluginsDirectory.appendingPathComponent(sanitizeDirectoryName(id) + ".backup")
+        if fm.fileExists(atPath: backupDir.path) {
+            try? fm.removeItem(at: backupDir)
+        }
+        try? fm.copyItem(at: pluginDir, to: backupDir)
+
+        do {
+            try uninstall(id: id)
+            try await install(from: registryPlugin.sourceURL, id: id)
+            try? fm.removeItem(at: backupDir)
+            DebugLog.log("[PluginMarket] Updated \(id) to \(registryPlugin.version)")
+        } catch {
+            if fm.fileExists(atPath: backupDir.path) {
+                try? fm.removeItem(at: pluginDir)
+                try? fm.moveItem(at: backupDir, to: pluginDir)
+            }
+            throw error
+        }
+    }
+
     // MARK: - Private
 
     private func downloadManifest(from url: URL) async throws -> PluginManifest {
@@ -183,8 +233,8 @@ actor PluginMarket {
             }
             let fileURL = baseURL.appendingPathComponent(filename)
             let (data, response) = try await URLSession.shared.data(from: fileURL)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
+            // Non-HTTP responses (e.g. file:// sources in tests) have no status code.
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 throw PluginMarketError.downloadFailed(fileURL)
             }
             let destURL = pluginDir.appendingPathComponent(filename)
@@ -230,4 +280,5 @@ enum PluginMarketError: Error, Equatable {
     case notInstalled(String)
     case downloadFailed(URL)
     case invalidFilename(String)
+    case upToDate(String)
 }

@@ -92,6 +92,67 @@ func emptyRouter() -> SearchRouter {
     SearchRouter(defaultProvider: StubSearchProvider(results: []))
 }
 
+// MARK: - Plugin market fixtures
+
+/// Write a "remote" plugin source (plugin.toml + plugin.lua) that can be
+/// installed via its file:// manifest URL. Returns the manifest URL.
+@discardableResult
+func writeMarketSourcePlugin(in dir: URL, id: String, version: String) throws -> URL {
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let manifest = """
+        [plugin]
+        id = "\(id)"
+        name = "\(id)"
+        version = "\(version)"
+        description = "Test plugin \(id)"
+        files = ["plugin.lua"]
+        """
+    let manifestURL = dir.appendingPathComponent("plugin.toml")
+    try manifest.write(to: manifestURL, atomically: true, encoding: .utf8)
+    try "function search(query) return {} end"
+        .write(to: dir.appendingPathComponent("plugin.lua"), atomically: true, encoding: .utf8)
+    return manifestURL
+}
+
+/// Write a registry TOML file with a single plugin entry.
+func writeRegistryTOML(to file: URL, id: String, version: String, sourceURL: URL) throws {
+    let toml = """
+        name = "Test Registry"
+        url = "https://example.com/test"
+
+        [[plugins]]
+        id = "\(id)"
+        name = "\(id)"
+        version = "\(version)"
+        author = "Tester"
+        description = "Test plugin \(id)"
+        source = "\(sourceURL.absoluteString)"
+        """
+    try toml.write(to: file, atomically: true, encoding: .utf8)
+}
+
+/// Write an installed plugin directory (plugin.toml + plugin.lua + install.toml).
+func writeInstalledPlugin(in pluginsDir: URL, id: String, version: String, sourceURL: URL) throws {
+    let pluginDir = pluginsDir.appendingPathComponent(id)
+    try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+    try """
+        [plugin]
+        id = "\(id)"
+        name = "\(id)"
+        version = "\(version)"
+        description = "Test plugin \(id)"
+        """.write(to: pluginDir.appendingPathComponent("plugin.toml"), atomically: true, encoding: .utf8)
+    try "function search(query) return {} end"
+        .write(to: pluginDir.appendingPathComponent("plugin.lua"), atomically: true, encoding: .utf8)
+    let installInfo = InstallInfo(
+        sourceURL: sourceURL,
+        installedVersion: version,
+        installedAt: Date(),
+        pinnedRef: ""
+    )
+    try InstallManifest.write(installInfo, to: pluginDir.appendingPathComponent("install.toml"))
+}
+
 @MainActor
 func waitUntil(timeout: Int = 1000, condition: () -> Bool) async {
     let deadline = ContinuousClock.now + .milliseconds(timeout)

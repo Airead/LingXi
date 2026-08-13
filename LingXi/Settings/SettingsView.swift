@@ -8,6 +8,7 @@ import SwiftUI
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case search
+    case plugins
     case permissions
 
     var id: String { rawValue }
@@ -16,6 +17,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .search: "Search"
+        case .plugins: "Plugins"
         case .permissions: "Permissions"
         }
     }
@@ -24,6 +26,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gear"
         case .search: "magnifyingglass"
+        case .plugins: "puzzlepiece.extension"
         case .permissions: "shield.lefthalf.filled"
         }
     }
@@ -31,6 +34,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     var settings: AppSettings
+    var pluginsModel: PluginsSettingsModel?
     @State private var selectedTab: SettingsTab = .general
 
     var body: some View {
@@ -47,6 +51,16 @@ struct SettingsView: View {
                 GeneralSettingsView(settings: settings)
             case .search:
                 SearchSettingsView(settings: settings)
+            case .plugins:
+                if let pluginsModel {
+                    PluginsSettingsView(model: pluginsModel)
+                } else {
+                    ContentUnavailableView(
+                        "Plugins Unavailable",
+                        systemImage: "puzzlepiece.extension",
+                        description: Text("The plugin system is not loaded.")
+                    )
+                }
             case .permissions:
                 PermissionsSettingsView()
             }

@@ -324,3 +324,155 @@ struct PluginMarketTests {
         #expect(updates[0].latestVersion == "1.1.0")
     }
 }
+
+// MARK: - PluginMarket Install/Update Tests (file:// fixtures, no network)
+
+struct PluginMarketUpdateTests {
+    /// Everything lives under one temp root: a "remote" source dir served via
+    /// file:// URLs, the plugins dir, and the registry cache file.
+    private struct Fixture {
+        let root: URL
+        let pluginsDir: URL
+        let sourceDir: URL
+        let cacheFile: URL
+        let market: PluginMarket
+
+        init(label: String) {
+            root = makeTestTempDir(label: label)
+            pluginsDir = root.appendingPathComponent("plugins")
+            sourceDir = root.appendingPathComponent("source")
+            cacheFile = root.appendingPathComponent("registry.toml")
+            try! FileManager.default.createDirectory(at: pluginsDir, withIntermediateDirectories: true)
+            let registryManager = RegistryManager(
+                registryURL: URL(string: "https://example.com/registry.toml")!,
+                cacheURL: cacheFile
+            )
+            market = PluginMarket(pluginsDirectory: pluginsDir, registryManager: registryManager)
+        }
+
+        func remove() {
+            try? FileManager.default.removeItem(at: root)
+        }
+    }
+
+    @Test func installFromFileURL() async throws {
+        let fixture = Fixture(label: "MarketInstall")
+        defer { fixture.remove() }
+
+        let manifestURL = try writeMarketSourcePlugin(in: fixture.sourceDir, id: "test.market", version: "1.0.0")
+        try writeRegistryTOML(to: fixture.cacheFile, id: "test.market", version: "1.0.0", sourceURL: manifestURL)
+
+        let installedID = try await fixture.market.install(id: "test.market")
+        #expect(installedID == "test.market")
+
+        let installed = await fixture.market.listInstalled()
+        #expect(installed.count == 1)
+        #expect(installed[0].id == "test.market")
+        #expect(installed[0].status == .installed)
+        #expect(installed[0].installInfo?.installedVersion == "1.0.0")
+        let luaFile = fixture.pluginsDir.appendingPathComponent("test.market/plugin.lua")
+        #expect(FileManager.default.fileExists(atPath: luaFile.path))
+    }
+
+    @Test func updateInstallsNewVersion() async throws {
+        let fixture = Fixture(label: "MarketUpdate")
+        defer { fixture.remove() }
+
+        let manifestURL = try writeMarketSourcePlugin(in: fixture.sourceDir, id: "test.market", version: "1.1.0")
+        try writeRegistryTOML(to: fixture.cacheFile, id: "test.market", version: "1.1.0", sourceURL: manifestURL)
+        try writeInstalledPlugin(in: fixture.pluginsDir, id: "test.market", version: "1.0.0", sourceURL: manifestURL)
+
+        try await fixture.market.update(id: "test.market")
+
+        let installed = await fixture.market.listInstalled()
+        #expect(installed.count == 1)
+        #expect(installed[0].installInfo?.installedVersion == "1.1.0")
+        let backupDir = fixture.pluginsDir.appendingPathComponent("test.market.backup")
+        #expect(!FileManager.default.fileExists(atPath: backupDir.path))
+    }
+
+    @Test func updateThrowsUpToDate() async throws {
+        let fixture = Fixture(label: "MarketUpToDate")
+        defer { fixture.remove() }
+
+        let manifestURL = try writeMarketSourcePlugin(in: fixture.sourceDir, id: "test.market", version: "1.0.0")
+        try writeRegistryTOML(to: fixture.cacheFile, id: "test.market", version: "1.0.0", sourceURL: manifestURL)
+        try writeInstalledPlugin(in: fixture.pluginsDir, id: "test.market", version: "1.0.0", sourceURL: manifestURL)
+
+        await #expect(throws: PluginMarketError.upToDate("test.market")) {
+            try await fixture.market.update(id: "test.market")
+        }
+    }
+
+    @Test func updateSkipsManualPlugin() async throws {
+        let fixture = Fixture(label: "MarketManual")
+        defer { fixture.remove() }
+
+        // Manual plugin: no install.toml, so checkUpdates never reports it.
+        try writeTestPlugin(in: fixture.pluginsDir, name: "test.manual", toml: """
+            [plugin]
+            id = "test.manual"
+            name = "Manual"
+            version = "1.0.0"
+        """, lua: "function search(query) return {} end")
+        let manifestURL = try writeMarketSourcePlugin(in: fixture.sourceDir, id: "test.manual", version: "2.0.0")
+        try writeRegistryTOML(to: fixture.cacheFile, id: "test.manual", version: "2.0.0", sourceURL: manifestURL)
+
+        await #expect(throws: PluginMarketError.upToDate("test.manual")) {
+            try await fixture.market.update(id: "test.manual")
+        }
+        let installed = await fixture.market.listInstalled()
+        #expect(installed.count == 1)
+        #expect(installed[0].status == .manuallyPlaced)
+    }
+
+    @Test func updateRestoresBackupOnFailure() async throws {
+        let fixture = Fixture(label: "MarketRestore")
+        defer { fixture.remove() }
+
+        // Registry points at a source that does not exist, so the re-install fails.
+        let missingURL = fixture.sourceDir.appendingPathComponent("missing/plugin.toml")
+        try writeRegistryTOML(to: fixture.cacheFile, id: "test.market", version: "1.1.0", sourceURL: missingURL)
+        try writeInstalledPlugin(in: fixture.pluginsDir, id: "test.market", version: "1.0.0", sourceURL: missingURL)
+
+        await #expect(throws: Swift.Error.self) {
+            try await fixture.market.update(id: "test.market")
+        }
+
+        // Old version restored, no backup left behind.
+        let installed = await fixture.market.listInstalled()
+        #expect(installed.count == 1)
+        #expect(installed[0].installInfo?.installedVersion == "1.0.0")
+        let backupDir = fixture.pluginsDir.appendingPathComponent("test.market.backup")
+        #expect(!FileManager.default.fileExists(atPath: backupDir.path))
+    }
+
+    @Test func refreshRegistryBypassesTTLCache() async throws {
+        let root = makeTestTempDir(label: "MarketRefresh")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pluginsDir = root.appendingPathComponent("plugins")
+        try FileManager.default.createDirectory(at: pluginsDir, withIntermediateDirectories: true)
+
+        // "Network" registry served via file:// has 2.0.0; fresh cache has 1.0.0.
+        let remoteFile = root.appendingPathComponent("remote-registry.toml")
+        try writeRegistryTOML(to: remoteFile, id: "test.market", version: "2.0.0",
+                              sourceURL: URL(string: "https://example.com/plugin.toml")!)
+        let cacheFile = root.appendingPathComponent("cache-registry.toml")
+        try writeRegistryTOML(to: cacheFile, id: "test.market", version: "1.0.0",
+                              sourceURL: URL(string: "https://example.com/plugin.toml")!)
+
+        let registryManager = RegistryManager(registryURL: remoteFile, cacheURL: cacheFile)
+        let market = PluginMarket(pluginsDirectory: pluginsDir, registryManager: registryManager)
+
+        // Fresh cache wins for the normal path.
+        let cached = try await market.listAvailable()
+        #expect(cached.first?.version == "1.0.0")
+
+        // Force refresh bypasses the TTL and rewrites the cache.
+        let refreshed = try await market.refreshRegistry()
+        #expect(refreshed.plugins.first?.version == "2.0.0")
+        let afterRefresh = try await market.listAvailable()
+        #expect(afterRefresh.first?.version == "2.0.0")
+    }
+}

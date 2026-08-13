@@ -172,20 +172,21 @@ final class CommandModule: SearchProviderModule, PluginAwareModule {
                         return
                     }
                     do {
+                        let pluginId: String
                         if target.hasPrefix("http") {
                             guard let url = URL(string: target) else {
                                 DebugLog.log("[PluginManager] Invalid URL: \(target)")
                                 return
                             }
-                            try await pluginMarket.install(url: url)
+                            pluginId = try await pluginMarket.install(url: url)
                         } else {
-                            try await pluginMarket.install(id: target)
+                            pluginId = try await pluginMarket.install(id: target)
                         }
                         // Add to disabled list by default
-                        if !settings.disabledPlugins.contains(target) {
-                            settings.disabledPlugins.append(target)
+                        if !settings.disabledPlugins.contains(pluginId) {
+                            settings.disabledPlugins.append(pluginId)
                         }
-                        DebugLog.log("[PluginManager] Installed \(target). Use plugin:enable to activate.")
+                        DebugLog.log("[PluginManager] Installed \(pluginId). Use plugin:enable to activate.")
                     } catch {
                         DebugLog.log("[PluginManager] Install failed: \(error)")
                     }
@@ -264,65 +265,17 @@ final class CommandModule: SearchProviderModule, PluginAwareModule {
                             }
                             for update in updates {
                                 DebugLog.log("[PluginManager] Updating \(update.id) from \(update.currentVersion) to \(update.latestVersion)...")
-                                // Backup old plugin
-                                let pluginDir = pluginManager.directory.appendingPathComponent(sanitizeDirectoryName(update.id))
-                                let backupDir = pluginManager.directory.appendingPathComponent(sanitizeDirectoryName(update.id) + ".backup")
-                                let fm = FileManager.default
-                                if fm.fileExists(atPath: backupDir.path) {
-                                    try? fm.removeItem(at: backupDir)
-                                }
-                                try? fm.copyItem(at: pluginDir, to: backupDir)
-
-                                do {
-                                    try await pluginMarket.uninstall(id: update.id)
-                                    let registry = try await pluginMarket.listAvailable()
-                                    guard let registryPlugin = registry.first(where: { $0.id == update.id }) else {
-                                        throw PluginMarketError.pluginNotFound(update.id)
-                                    }
-                                    try await pluginMarket.install(url: registryPlugin.sourceURL)
-                                    DebugLog.log("[PluginManager] Updated \(update.id) to \(update.latestVersion)")
-                                    try? fm.removeItem(at: backupDir)
-                                } catch {
-                                    // Restore backup on failure
-                                    if fm.fileExists(atPath: backupDir.path) {
-                                        try? fm.removeItem(at: pluginDir)
-                                        try? fm.moveItem(at: backupDir, to: pluginDir)
-                                    }
-                                    throw error
-                                }
+                                try await pluginMarket.update(id: update.id)
                             }
                             await pluginManager.reload()
                             DebugLog.log("[PluginManager] All updates completed.")
                         } else {
                             // Update single
-                            let updates = try await pluginMarket.checkUpdates()
-                            guard let update = updates.first(where: { $0.id == target }) else {
+                            do {
+                                try await pluginMarket.update(id: target)
+                            } catch PluginMarketError.upToDate {
                                 DebugLog.log("[PluginManager] No update available for \(target)")
                                 return
-                            }
-                            let pluginDir = pluginManager.directory.appendingPathComponent(sanitizeDirectoryName(target))
-                            let backupDir = pluginManager.directory.appendingPathComponent(sanitizeDirectoryName(target) + ".backup")
-                            let fm = FileManager.default
-                            if fm.fileExists(atPath: backupDir.path) {
-                                try? fm.removeItem(at: backupDir)
-                            }
-                            try? fm.copyItem(at: pluginDir, to: backupDir)
-
-                            do {
-                                try await pluginMarket.uninstall(id: target)
-                                let registry = try await pluginMarket.listAvailable()
-                                guard let registryPlugin = registry.first(where: { $0.id == target }) else {
-                                    throw PluginMarketError.pluginNotFound(target)
-                                }
-                                try await pluginMarket.install(url: registryPlugin.sourceURL)
-                                DebugLog.log("[PluginManager] Updated \(target) to \(update.latestVersion)")
-                                try? fm.removeItem(at: backupDir)
-                            } catch {
-                                if fm.fileExists(atPath: backupDir.path) {
-                                    try? fm.removeItem(at: pluginDir)
-                                    try? fm.moveItem(at: backupDir, to: pluginDir)
-                                }
-                                throw error
                             }
                             await pluginManager.reload()
                         }
@@ -336,9 +289,9 @@ final class CommandModule: SearchProviderModule, PluginAwareModule {
                 title: "Registry Refresh",
                 subtitle: "Force refresh the plugin registry cache",
                 icon: NSImage(systemSymbolName: "arrow.clockwise.circle", accessibilityDescription: "Registry"),
-                action: { args in
+                action: { _ in
                     do {
-                        _ = try await pluginMarket.listAvailable()
+                        try await pluginMarket.refreshRegistry()
                         DebugLog.log("[PluginManager] Registry refreshed.")
                     } catch {
                         DebugLog.log("[PluginManager] Registry refresh failed: \(error)")

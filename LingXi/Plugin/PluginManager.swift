@@ -268,7 +268,9 @@ final class PluginManager: PluginService {
     }
 
     /// Check if a URL is a plugin directory (real directory or symlink to directory).
+    /// Backup directories left behind by a crashed update are excluded.
     nonisolated private static func isPluginDirectory(_ url: URL) -> Bool {
+        guard !url.lastPathComponent.hasSuffix(".backup") else { return false }
         if url.hasDirectoryPath { return true }
         let rv = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
         if rv?.isSymbolicLink == true {

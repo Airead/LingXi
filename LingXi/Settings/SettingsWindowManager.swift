@@ -12,6 +12,17 @@ final class SettingsWindowManager {
 
     private var window: NSWindow?
     private var closeObserver: Any?
+    private var pluginManager: PluginManager?
+    private var pluginMarket: PluginMarket?
+    private var pluginsModel: PluginsSettingsModel?
+
+    /// Provide the plugin system dependencies so the Plugins tab can manage
+    /// the market. Called once from AppAssembly.
+    func configure(pluginManager: PluginManager, pluginMarket: PluginMarket) {
+        self.pluginManager = pluginManager
+        self.pluginMarket = pluginMarket
+        self.pluginsModel = nil // rebuilt lazily with the new dependencies
+    }
 
     func show() {
         if let window {
@@ -20,7 +31,15 @@ final class SettingsWindowManager {
             return
         }
 
-        let settingsView = SettingsView(settings: AppSettings.shared)
+        if pluginsModel == nil, let pluginManager, let pluginMarket {
+            pluginsModel = PluginsSettingsModel(
+                pluginManager: pluginManager,
+                pluginMarket: pluginMarket,
+                settings: AppSettings.shared
+            )
+        }
+
+        let settingsView = SettingsView(settings: AppSettings.shared, pluginsModel: pluginsModel)
         let hostingController = NSHostingController(rootView: settingsView)
 
         let newWindow = NSWindow(contentViewController: hostingController)

@@ -31,6 +31,7 @@ final class AppAssembly {
         let pluginManager = PluginManager(router: router, settings: settings)
         let pluginMarket = PluginMarket(pluginsDirectory: pluginManager.directory)
         ScreenshotManager.shared.pluginService = pluginManager
+        SettingsWindowManager.shared.configure(pluginManager: pluginManager, pluginMarket: pluginMarket)
 
         let clipboardModule = ClipboardModule(store: clipboardStore, pluginManager: pluginManager)
         let commandModule = CommandModule(pluginManager: pluginManager, pluginMarket: pluginMarket, settings: settings)
