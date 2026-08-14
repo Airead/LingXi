@@ -1,6 +1,15 @@
 # LingXi 语音输入 Phase 3 计划
 
-> **状态：未开始。**
+> **状态：已完成（2026-08-14）。**
+>
+> - 阶段 A（多 Provider 模型层）：commit bfadfbc
+> - 阶段 B（提示词模式）：commit 8573e81
+> - 阶段 C（预览面板增强）：commit 11cc377
+> - 阶段 D（对话历史）：commit 21a2791
+>
+> 实现说明（与计划的差异）：
+> - 面板内 ⌘1-9 / 模型下拉的切换会持久化到 `voiceEnhanceMode` / `voiceLLMSelection`（作为新会话默认值），而非仅会话内生效
+> - 重增强期间按 Enter 确认会被忽略（需等待完成或 Esc），首版接受
 >
 > 前置：Phase 2（LLM 增强 / 预览面板 / 浮动 HUD）已于 2026-08-14 完成，commit 9bc86ef。
 > 状态机 `VoiceInputController`（MainActor + 代际号），增强协议 `TextEnhancer`，
