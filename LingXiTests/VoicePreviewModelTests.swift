@@ -130,4 +130,54 @@ struct VoicePreviewModelTests {
         model.isEnhancing = true
         #expect(model.enhanceState == .enhancing)
     }
+
+    // MARK: - Transcribing phase
+
+    private func makeTranscribingSetup(currentModeID: String = "proofread") -> VoicePreviewSetup {
+        var setup = makeSetup(text: "", original: nil, currentModeID: currentModeID)
+        setup.isTranscribing = true
+        return setup
+    }
+
+    @Test func transcribingSetupStartsEmptyAndPending() {
+        let model = VoicePreviewModel(setup: makeTranscribingSetup())
+        #expect(model.isTranscribing == true)
+        #expect(model.asrText == "")
+        #expect(model.finalText == "")
+        #expect(model.enhancedText == nil)
+        // Mode is on but there is nothing to enhance yet: no state label.
+        #expect(model.enhanceState == .pending)
+    }
+
+    @Test func asrResultFillsASRAndFinal() {
+        let model = VoicePreviewModel(setup: makeTranscribingSetup())
+        model.applyASRResult(text: "hello", asrInfo: "apple · 2.0s")
+        #expect(model.isTranscribing == false)
+        #expect(model.asrText == "hello")
+        #expect(model.asrInfo == "apple · 2.0s")
+        #expect(model.finalText == "hello")
+    }
+
+    @Test func asrResultRespectsUserEdit() {
+        let model = VoicePreviewModel(setup: makeTranscribingSetup())
+        model.finalText = "typed while waiting"
+        model.userEdited = true
+        model.applyASRResult(text: "hello", asrInfo: "apple")
+        #expect(model.asrText == "hello")
+        #expect(model.finalText == "typed while waiting")
+    }
+
+    @Test func asrFailureKeepsPanelInPendingState() {
+        let model = VoicePreviewModel(setup: makeTranscribingSetup())
+        model.applyASRFailure(message: "Transcription failed")
+        #expect(model.isTranscribing == false)
+        #expect(model.asrFailureMessage == "Transcription failed")
+        // No misleading "Failed, using ASR text" label for the enhancer.
+        #expect(model.enhanceState == .pending)
+    }
+
+    @Test func offModeDuringTranscribingShowsOffState() {
+        let model = VoicePreviewModel(setup: makeTranscribingSetup(currentModeID: EnhanceMode.offModeID))
+        #expect(model.enhanceState == .off)
+    }
 }

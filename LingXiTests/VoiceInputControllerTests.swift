@@ -211,6 +211,8 @@ private final class PromptSpy {
 private final class FakePreviewPresenter: VoicePreviewPresenting {
     private(set) var shown: [(text: String, original: String?)] = []
     private(set) var setups: [VoicePreviewSetup] = []
+    private(set) var asrResults: [(text: String, info: String)] = []
+    private(set) var asrFailures: [String] = []
     private(set) var updates: [(text: String, original: String?, modeID: String, isCached: Bool)] = []
     private(set) var enhancingStates: [Bool] = []
     private(set) var closeCount = 0
@@ -220,6 +222,14 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
         shown.append((setup.text, setup.original))
         setups.append(setup)
         self.callbacks = callbacks
+    }
+
+    func setASRResult(text: String, asrInfo: String) {
+        asrResults.append((text, asrInfo))
+    }
+
+    func setASRFailed(message: String) {
+        asrFailures.append(message)
     }
 
     func update(
@@ -633,9 +643,11 @@ struct VoiceInputControllerTests {
         #expect(await waitUntil { await h.recorder.startCount == 1 })
         h.controller.fnUp()
 
+        // The panel opens in transcribing state, then the ASR result fills it.
         #expect(await waitUntil { h.preview.shown.count == 1 })
-        #expect(h.preview.shown[0].text == "raw")
-        #expect(h.preview.shown[0].original == nil)
+        #expect(h.preview.setups[0].isTranscribing == true)
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
+        #expect(h.preview.asrResults[0].text == "raw")
         // ASR info line carries the model name and a positive duration.
         #expect(h.preview.setups[0].asrInfo.hasPrefix("apple · "))
         #expect(h.spy.pasted.isEmpty)
@@ -654,7 +666,7 @@ struct VoiceInputControllerTests {
         h.controller.fnDown()
         #expect(await waitUntil { await h.recorder.startCount == 1 })
         h.controller.fnUp()
-        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
 
         h.preview.simulateCancel()
         try? await Task.sleep(for: .milliseconds(200))
@@ -671,9 +683,11 @@ struct VoiceInputControllerTests {
         #expect(await waitUntil { await h.recorder.startCount == 1 })
         h.controller.fnUp()
 
-        #expect(await waitUntil { h.preview.shown.count == 1 })
-        #expect(h.preview.shown[0].text == "polished")
-        #expect(h.preview.shown[0].original == "raw")
+        // The enhanced result arrives as an update to the open panel.
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "polished")
+        #expect(h.preview.updates[0].original == "raw")
+        #expect(h.preview.asrResults[0].text == "raw")
     }
 
     @Test func enhanceFailureWithPreviewShowsOriginalText() async {
@@ -685,9 +699,11 @@ struct VoiceInputControllerTests {
         #expect(await waitUntil { await h.recorder.startCount == 1 })
         h.controller.fnUp()
 
-        #expect(await waitUntil { h.preview.shown.count == 1 })
-        #expect(h.preview.shown[0].text == "raw")
-        #expect(h.preview.shown[0].original == nil)
+        // Degrade returns to the panel showing the ASR text.
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "raw")
+        #expect(h.preview.updates[0].original == nil)
+        #expect(h.preview.closeCount == 0)
     }
 
     @Test func fnDownDuringPreviewStartsNewSession() async {
@@ -697,14 +713,14 @@ struct VoiceInputControllerTests {
         h.controller.fnDown()
         #expect(await waitUntil { await h.recorder.startCount == 1 })
         h.controller.fnUp()
-        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
 
         // A new press discards the pending preview and records again.
         h.controller.fnDown()
         #expect(h.preview.closeCount >= 1)
         #expect(await waitUntil { await h.recorder.startCount == 2 })
         h.controller.fnUp()
-        #expect(await waitUntil { h.preview.shown.count == 2 })
+        #expect(await waitUntil { h.preview.asrResults.count == 2 })
 
         // The first preview's confirm is stale and must be discarded.
         h.preview.simulateConfirm("second")
@@ -718,7 +734,7 @@ struct VoiceInputControllerTests {
         h.controller.fnDown()
         #expect(await waitUntil { await h.recorder.startCount == 1 })
         h.controller.fnUp()
-        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
 
         h.preview.simulateCancel()
         #expect(h.activity.phase == .idle)
@@ -736,7 +752,7 @@ struct VoiceInputControllerTests {
         h.controller.fnDown()
         #expect(await waitUntil { await h.recorder.startCount == 1 })
         h.controller.fnUp()
-        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
 
         h.preview.simulateConfirm("")
         try? await Task.sleep(for: .milliseconds(200))
@@ -829,12 +845,15 @@ struct VoiceInputControllerTests {
 
     // MARK: - Phase 3C: preview panel enhancements
 
-    /// Runs one full recording session up to the preview panel.
+    /// Runs one full recording session until the panel holds the ASR result.
+    /// With enhancement on, callers should additionally wait for the
+    /// enhancement update before interacting with the preview.
     private func runToPreview(_ h: Harness, expectedShown: Int = 1) async {
         h.controller.fnDown()
-        #expect(await waitUntil { await h.recorder.startCount >= 1 })
+        #expect(await waitUntil { await h.recorder.startCount >= expectedShown })
         h.controller.fnUp()
         #expect(await waitUntil { h.preview.shown.count == expectedShown })
+        #expect(await waitUntil { h.preview.asrResults.count == expectedShown })
     }
 
     @Test func commandReturnCopiesWithoutPasting() async {
@@ -854,14 +873,15 @@ struct VoiceInputControllerTests {
         let enhancer = FakeEnhancer(results: [.success("polished-1"), .success("polished-2")])
         let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
         await runToPreview(h)
-        #expect(h.preview.shown[0].text == "polished-1")
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "polished-1")
 
         h.preview.simulateModeSwitch("translate_en")
-        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(await waitUntil { h.preview.updates.count == 2 })
         // The re-enhancement runs on the raw ASR text, not the previous result.
         #expect(enhancer.requests == ["raw", "raw"])
-        #expect(h.preview.updates[0].text == "polished-2")
-        #expect(h.preview.updates[0].isCached == false)
+        #expect(h.preview.updates[1].text == "polished-2")
+        #expect(h.preview.updates[1].isCached == false)
         #expect(h.settings.voiceEnhanceMode == "translate_en")
         // Panel stays open the whole time.
         #expect(h.preview.closeCount == 0)
@@ -872,14 +892,15 @@ struct VoiceInputControllerTests {
         let enhancer = FakeEnhancer(results: [.success("polished-1"), .success("polished-2")])
         let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
         await runToPreview(h)
-
-        h.preview.simulateModeSwitch("translate_en")
         #expect(await waitUntil { h.preview.updates.count == 1 })
 
-        h.preview.simulateModeSwitch("proofread")
+        h.preview.simulateModeSwitch("translate_en")
         #expect(await waitUntil { h.preview.updates.count == 2 })
-        #expect(h.preview.updates[1].text == "polished-1")
-        #expect(h.preview.updates[1].isCached == true)
+
+        h.preview.simulateModeSwitch("proofread")
+        #expect(await waitUntil { h.preview.updates.count == 3 })
+        #expect(h.preview.updates[2].text == "polished-1")
+        #expect(h.preview.updates[2].isCached == true)
         #expect(enhancer.requests.count == 2)
     }
 
@@ -892,18 +913,19 @@ struct VoiceInputControllerTests {
         ]
         h.settings.voiceLLMSelection = LLMSelection(provider: "p1", model: "m1")
         await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
 
         h.preview.simulateModelSwitch(LLMSelection(provider: "p1", model: "m2"))
-        #expect(await waitUntil { h.preview.updates.count == 1 })
-        #expect(h.preview.updates[0].text == "polished-2")
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+        #expect(h.preview.updates[1].text == "polished-2")
         #expect(enhancer.requests.count == 2)
         #expect(h.settings.voiceLLMSelection == LLMSelection(provider: "p1", model: "m2"))
 
         // Back to the first model: cached, no third request.
         h.preview.simulateModelSwitch(LLMSelection(provider: "p1", model: "m1"))
-        #expect(await waitUntil { h.preview.updates.count == 2 })
-        #expect(h.preview.updates[1].text == "polished-1")
-        #expect(h.preview.updates[1].isCached == true)
+        #expect(await waitUntil { h.preview.updates.count == 3 })
+        #expect(h.preview.updates[2].text == "polished-1")
+        #expect(h.preview.updates[2].isCached == true)
         #expect(enhancer.requests.count == 2)
     }
 
@@ -918,7 +940,7 @@ struct VoiceInputControllerTests {
             timing: VoiceInputTiming(minHold: .zero, enhanceTimeout: .milliseconds(30))
         )
         await runToPreview(h)
-        #expect(h.preview.shown[0].text == "raw")
+        #expect(h.preview.asrResults[0].text == "raw")
 
         // Switching modes starts a re-enhancement that never completes.
         h.preview.simulateModeSwitch("proofread")
@@ -1023,6 +1045,7 @@ struct VoiceInputControllerTests {
             enhanceEnabled: true, previewEnabled: true, historyEnabled: true
         )
         await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
 
         h.preview.simulateConfirm("edited")
         #expect(await waitUntil { await h.history.readRecords().count == 1 })
@@ -1044,6 +1067,7 @@ struct VoiceInputControllerTests {
             enhanceEnabled: true, previewEnabled: true, historyEnabled: true
         )
         await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
 
         h.preview.simulateConfirm("polished")
         #expect(await waitUntil { await h.history.readRecords().count == 1 })
@@ -1111,12 +1135,13 @@ struct VoiceInputControllerTests {
             enhanceEnabled: true, previewEnabled: true, historyEnabled: true
         )
         await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
         h.preview.simulateConfirm("fixed")
         #expect(await waitUntil { await h.history.readRecords().count == 1 })
 
         // The next session's prompt carries the confirmed correction.
         await runToPreview(h, expectedShown: 2)
-        #expect(h.prompts.prompts.count == 2)
+        #expect(await waitUntil { h.prompts.prompts.count == 2 })
         #expect(h.prompts.prompts[0] == "prompt-proofread")
         #expect(h.prompts.prompts[1].hasPrefix("prompt-proofread"))
         #expect(h.prompts.prompts[1].contains(ConversationHistory.injectionHeader))
@@ -1139,7 +1164,183 @@ struct VoiceInputControllerTests {
         ))
 
         await runToPreview(h)
+        #expect(await waitUntil { h.prompts.prompts.count == 1 })
         #expect(h.prompts.prompts == ["prompt-proofread"])
+    }
+
+    // MARK: - Transcribing-phase preview (panel opens before ASR result)
+
+    @Test func panelOpensWhileTranscribing() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        // The panel is up in transcribing state before any result exists.
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(h.preview.setups[0].isTranscribing == true)
+        #expect(h.preview.setups[0].text == "")
+        #expect(h.preview.asrResults.isEmpty)
+        #expect(h.activity.phase == .transcribing)
+
+        session.completeFinish(.success("hello"))
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
+        #expect(h.preview.asrResults[0].text == "hello")
+        #expect(h.activity.phase == .idle)
+
+        h.preview.simulateConfirm("hello")
+        #expect(await waitUntil { h.spy.pasted == ["hello"] })
+    }
+
+    @Test func escDuringTranscribingCancelsSession() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        h.preview.simulateCancel()
+        #expect(await waitUntil { h.activity.phase == .idle })
+        #expect(h.preview.closeCount >= 1)
+        #expect(session.cancelled)
+
+        // A late result must not resurrect anything.
+        session.completeFinish(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.spy.pasted.isEmpty)
+        #expect(h.preview.asrResults.isEmpty)
+    }
+
+    @Test func fnDownDuringTranscribingStartsNewSession() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        // A new press discards the in-flight transcription and records again.
+        h.controller.fnDown()
+        #expect(h.preview.closeCount >= 1)
+        #expect(session.cancelled)
+        #expect(await waitUntil { await h.recorder.startCount == 2 })
+    }
+
+    @Test func confirmDuringTranscribingAbortsAndPastesTypedText() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        h.preview.simulateConfirm("typed")
+        #expect(await waitUntil { h.spy.pasted == ["typed"] })
+        #expect(session.cancelled)
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func emptyTranscriptionShowsFailureInPanel() async {
+        let session = FakeSession(finishResult: .success(""))
+        let h = Harness(session: session, previewEnabled: true, historyEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.preview.asrFailures.count == 1 })
+        #expect(h.preview.asrFailures[0] == "Empty transcription")
+        #expect(h.preview.closeCount == 0)
+        #expect(h.activity.phase == .idle)
+
+        // The user can still type a final text and paste it; no history is
+        // recorded for a session without ASR text.
+        h.preview.simulateConfirm("typed by hand")
+        #expect(await waitUntil { h.spy.pasted == ["typed by hand"] })
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(await h.history.readRecords().isEmpty)
+    }
+
+    @Test func transcriptionFailureShowsFailureInPanel() async {
+        let session = FakeSession(finishResult: .failure(TranscriptionError.invalidResponse))
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.preview.asrFailures.count == 1 })
+        #expect(h.preview.asrFailures[0] == "Transcription failed")
+        #expect(h.preview.closeCount == 0)
+
+        h.preview.simulateCancel()
+        #expect(await waitUntil { h.activity.phase == .idle })
+        #expect(h.spy.pasted.isEmpty)
+    }
+
+    @Test func transcribeWatchdogWithPanelShowsTimeout() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(
+            session: session,
+            previewEnabled: true,
+            timing: VoiceInputTiming(minHold: .zero, transcribeTimeout: .milliseconds(30))
+        )
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.preview.asrFailures.count == 1 })
+        #expect(h.preview.asrFailures[0] == "Transcription timed out")
+        #expect(h.preview.closeCount == 0)
+        #expect(session.cancelled)
+
+        // The panel is still functional after the timeout.
+        h.preview.simulateCancel()
+        #expect(await waitUntil { h.activity.phase == .idle })
+    }
+
+    @Test func modeSwitchDuringTranscribingPreselectsMode() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, enhanceEnabled: true, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        // Switching while STT runs only records the choice.
+        h.preview.simulateModeSwitch("translate_en")
+        #expect(h.settings.voiceEnhanceMode == "translate_en")
+        #expect(h.prompts.prompts.isEmpty)
+
+        // The upcoming enhancement uses the preselected mode.
+        session.completeFinish(.success("raw"))
+        #expect(await waitUntil { h.prompts.prompts.count == 1 })
+        #expect(h.prompts.prompts[0] == "prompt-translate_en")
+    }
+
+    @Test func hudNotShownDuringTranscriptionWhenPanelOpen() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, previewEnabled: true, hudEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { h.hud.showCount == 1 })
+        h.controller.fnUp()
+
+        // The panel replaces the HUD as soon as transcription starts.
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(h.hud.hideCount == 1)
+
+        session.completeFinish(.success("hello"))
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
+        #expect(h.hud.showCount == 1)
     }
 }
 

@@ -75,9 +75,16 @@ final class VoiceInputController {
         case idle
         case starting(StartingContext)
         case recording(RecordingContext)
-        case transcribing(session: any SpeechTranscriptionSession)
+        case transcribing(TranscribingContext)
         case enhancing(EnhancingContext)
         case previewing(PreviewSession)
+    }
+
+    private struct TranscribingContext {
+        let session: any SpeechTranscriptionSession
+        /// The preview panel opened when transcription started; degrade
+        /// paths keep it open instead of going idle.
+        let panelOpen: Bool
     }
 
     private struct StartingContext {
@@ -219,6 +226,12 @@ final class VoiceInputController {
             context.task.cancel()
             previewPresenter.close()
             previousApp = nil
+        case .transcribing(let context) where context.panelOpen:
+            // The recorder is already stopped; only the STT is in flight.
+            DebugLog.log("[Voice] new session discards transcribing preview")
+            context.session.cancel()
+            previewPresenter.close()
+            previousApp = nil
         case .starting, .recording, .transcribing, .enhancing:
             DebugLog.log("[Voice] fnDown ignored: busy")
             return
@@ -345,23 +358,59 @@ final class VoiceInputController {
     }
 
     private func transcriptionDidFinish(gen: UInt64, result: Result<String, Error>) {
-        guard gen == generation, case .transcribing = state else { return }
+        guard gen == generation, case .transcribing(let context) = state else { return }
 
         switch result {
         case .success(let text) where !text.isEmpty:
             DebugLog.log("[Voice] transcribed \(text.count) characters")
-            if let prompt = enhancePromptProvider(settings.voiceEnhanceMode) {
+            if context.panelOpen {
+                let session = PreviewSession(
+                    asrText: text, lastShownText: text, audioDuration: lastAudioDuration
+                )
+                insertHistoryEntry(for: session)
+                previewPresenter.setASRResult(text: text, asrInfo: asrInfoText(for: session))
+                if let prompt = enhancePromptProvider(settings.voiceEnhanceMode) {
+                    beginEnhancing(original: text, prompt: prompt, session: session)
+                } else {
+                    becomePreviewing(session)
+                }
+            } else if let prompt = enhancePromptProvider(settings.voiceEnhanceMode) {
                 beginEnhancing(original: text, prompt: prompt, session: nil)
             } else {
                 deliver(text)
             }
         case .success:
             DebugLog.log("[Voice] empty transcription, nothing to paste")
-            toIdle()
+            if context.panelOpen {
+                presentTranscriptionFailure("Empty transcription")
+            } else {
+                toIdle()
+            }
         case .failure(let error):
             DebugLog.log("[Voice] transcription failed: \(error)")
-            toIdle()
+            if context.panelOpen {
+                presentTranscriptionFailure("Transcription failed")
+            } else {
+                toIdle()
+            }
         }
+    }
+
+    /// The open panel stays up showing the failure; the user can dismiss it
+    /// or type a final text manually. The session carries no ASR text, so
+    /// mode switches and history recording are skipped for it.
+    private func presentTranscriptionFailure(_ message: String) {
+        let session = PreviewSession(asrText: "", lastShownText: "", audioDuration: lastAudioDuration)
+        becomePreviewing(session)
+        previewPresenter.setASRFailed(message: message)
+    }
+
+    /// Transition to previewing without touching the panel content.
+    private func becomePreviewing(_ session: PreviewSession) {
+        state = .previewing(session)
+        activityModel.phase = .idle
+        watchdogTask?.cancel()
+        watchdogTask = nil
     }
 
     private func enhanceDidFinish(gen: UInt64, eGen: UInt64, original: String, result: Result<String, Error>) {
@@ -409,9 +458,16 @@ final class VoiceInputController {
         let held = pressedAt.duration(to: clock.now)
         lastAudioDuration = Double(held.components.seconds)
             + Double(held.components.attoseconds) / 1e18
-        state = .transcribing(session: session)
+        let panelOpen = settings.voicePreviewEnabled
+        state = .transcribing(TranscribingContext(session: session, panelOpen: panelOpen))
         activityModel.phase = .transcribing
-        showHUDIfEnabled()
+        if panelOpen {
+            // WenZi-style: the preview opens right away with the ASR area
+            // in a loading state; it replaces the HUD from here on.
+            presentTranscribingPanel()
+        } else {
+            showHUDIfEnabled()
+        }
         maxDurationTask?.cancel()
         maxDurationTask = nil
 
@@ -486,6 +542,11 @@ final class VoiceInputController {
             // Seed the cache with the initial enhancement result.
             session.cache[currentCacheKey()] = text
         }
+        insertHistoryEntry(for: session)
+        presentPreview(session: session, text: text, original: original, isCached: false)
+    }
+
+    private func insertHistoryEntry(for session: PreviewSession) {
         previewHistory.insert(PreviewHistoryEntry(
             token: session.token,
             asrText: session.asrText,
@@ -496,11 +557,29 @@ final class VoiceInputController {
         if previewHistory.count > Self.previewHistoryLimit {
             previewHistory.removeLast(previewHistory.count - Self.previewHistoryLimit)
         }
-        presentPreview(session: session, text: text, original: original, isCached: false)
+    }
+
+    /// Opens the panel while transcription is still running; the ASR result
+    /// arrives later via `setASRResult`/`setASRFailed`.
+    private func presentTranscribingPanel() {
+        previousApp = frontmostAppProvider()
+        hideHUD()
+        let setup = VoicePreviewSetup(
+            text: "",
+            original: nil,
+            asrInfo: asrInfoText(duration: lastAudioDuration),
+            isTranscribing: true,
+            modes: enhanceModesProvider(),
+            currentModeID: settings.voiceEnhanceMode,
+            llmOptions: llmOptions(),
+            currentLLM: currentResolvedLLM(),
+            isCached: false,
+            history: historyMenuItems()
+        )
+        previewPresenter.show(setup: setup, callbacks: makePreviewCallbacks(gen: generation))
     }
 
     private func presentPreview(session: PreviewSession, text: String, original: String?, isCached: Bool) {
-        let gen = generation
         previousApp = frontmostAppProvider()
         state = .previewing(session)
         activityModel.phase = .idle
@@ -514,23 +593,35 @@ final class VoiceInputController {
             asrInfo: asrInfoText(for: session),
             modes: enhanceModesProvider(),
             currentModeID: settings.voiceEnhanceMode,
-            llmOptions: settings.voiceLLMProviders.flatMap { provider in
-                provider.models.map { LLMSelection(provider: provider.name, model: $0) }
-            },
+            llmOptions: llmOptions(),
             currentLLM: currentResolvedLLM(),
             isCached: isCached,
-            history: previewHistory.map { entry in
-                VoicePreviewHistoryMenuItem(id: entry.token, title: Self.historyTitle(entry))
-            }
+            history: historyMenuItems()
         )
-        previewPresenter.show(setup: setup, callbacks: VoicePreviewCallbacks(
+        previewPresenter.show(setup: setup, callbacks: makePreviewCallbacks(gen: generation))
+    }
+
+    private func makePreviewCallbacks(gen: UInt64) -> VoicePreviewCallbacks {
+        VoicePreviewCallbacks(
             onConfirm: { [weak self] text in self?.previewDidConfirm(gen: gen, text: text) },
             onCopy: { [weak self] text in self?.previewDidCopy(gen: gen, text: text) },
             onCancel: { [weak self] in self?.previewDidCancel(gen: gen) },
             onModeSwitch: { [weak self] modeID in self?.previewDidSwitchMode(gen: gen, modeID: modeID) },
             onModelSwitch: { [weak self] selection in self?.previewDidSwitchModel(gen: gen, selection: selection) },
             onHistorySelect: { [weak self] token in self?.previewDidSelectHistory(gen: gen, token: token) }
-        ))
+        )
+    }
+
+    private func llmOptions() -> [LLMSelection] {
+        settings.voiceLLMProviders.flatMap { provider in
+            provider.models.map { LLMSelection(provider: provider.name, model: $0) }
+        }
+    }
+
+    private func historyMenuItems() -> [VoicePreviewHistoryMenuItem] {
+        previewHistory.map { entry in
+            VoicePreviewHistoryMenuItem(id: entry.token, title: Self.historyTitle(entry))
+        }
     }
 
     /// Back from a re-enhancement (result, cache hit or degrade) to the
@@ -552,34 +643,75 @@ final class VoiceInputController {
     }
 
     private func previewDidConfirm(gen: UInt64, text: String) {
-        guard gen == generation, case .previewing(let session) = state else { return }
-        previewPresenter.close()
-        recordFinalText(text, for: session)
-        let target = previousApp
-        previousApp = nil
-        toIdle()
+        guard gen == generation else { return }
+        switch state {
+        case .previewing(let session):
+            previewPresenter.close()
+            recordFinalText(text, for: session)
+            let target = previousApp
+            previousApp = nil
+            toIdle()
 
-        guard !text.isEmpty else { return }
-        recordSessionHistory(session, finalText: text)
-        // Give the previous app time to become active again before ⌘V.
-        Task {
-            target?.activate()
-            try? await Task.sleep(for: .milliseconds(150))
-            self.pasteAction(text)
+            guard !text.isEmpty else { return }
+            if !session.asrText.isEmpty {
+                recordSessionHistory(session, finalText: text)
+            }
+            // Give the previous app time to become active again before ⌘V.
+            Task {
+                target?.activate()
+                try? await Task.sleep(for: .milliseconds(150))
+                self.pasteAction(text)
+            }
+        case .transcribing(let context) where context.panelOpen:
+            // Confirm while STT is still running: abort it and paste
+            // whatever the user typed (usually nothing).
+            DebugLog.log("[Voice] preview confirmed during transcription, aborting STT")
+            previewPresenter.close()
+            generation &+= 1
+            context.session.cancel()
+            let target = previousApp
+            previousApp = nil
+            toIdle()
+
+            guard !text.isEmpty else { return }
+            Task {
+                target?.activate()
+                try? await Task.sleep(for: .milliseconds(150))
+                self.pasteAction(text)
+            }
+        default:
+            return
         }
     }
 
     private func previewDidCopy(gen: UInt64, text: String) {
-        guard gen == generation, case .previewing(let session) = state else { return }
-        DebugLog.log("[Voice] preview copied to clipboard without pasting")
-        previewPresenter.close()
-        recordFinalText(text, for: session)
-        previousApp = nil
-        toIdle()
+        guard gen == generation else { return }
+        switch state {
+        case .previewing(let session):
+            DebugLog.log("[Voice] preview copied to clipboard without pasting")
+            previewPresenter.close()
+            recordFinalText(text, for: session)
+            previousApp = nil
+            toIdle()
 
-        guard !text.isEmpty else { return }
-        recordSessionHistory(session, finalText: text)
-        copyAction(text)
+            guard !text.isEmpty else { return }
+            if !session.asrText.isEmpty {
+                recordSessionHistory(session, finalText: text)
+            }
+            copyAction(text)
+        case .transcribing(let context) where context.panelOpen:
+            DebugLog.log("[Voice] preview copied during transcription, aborting STT")
+            previewPresenter.close()
+            generation &+= 1
+            context.session.cancel()
+            previousApp = nil
+            toIdle()
+
+            guard !text.isEmpty else { return }
+            copyAction(text)
+        default:
+            return
+        }
     }
 
     private func previewDidCancel(gen: UInt64) {
@@ -591,6 +723,12 @@ final class VoiceInputController {
             DebugLog.log("[Voice] preview cancelled during re-enhancement")
             enhanceGeneration &+= 1
             context.task.cancel()
+        case .transcribing(let context) where context.panelOpen:
+            DebugLog.log("[Voice] preview cancelled during transcription")
+            previewPresenter.close()
+            previousApp = nil
+            abandonSession(context.session)
+            return
         default:
             return
         }
@@ -600,7 +738,15 @@ final class VoiceInputController {
     }
 
     private func previewDidSwitchMode(gen: UInt64, modeID: String) {
-        guard gen == generation, let session = interruptPreviewSession() else { return }
+        guard gen == generation else { return }
+        if case .transcribing(let context) = state, context.panelOpen {
+            // ASR not ready yet: just remember the mode for the upcoming
+            // enhancement (and future sessions).
+            DebugLog.log("[Voice] preview mode preselected: \(modeID)")
+            settings.voiceEnhanceMode = modeID
+            return
+        }
+        guard let session = interruptPreviewSession() else { return }
         if case .previewing = state, settings.voiceEnhanceMode == modeID { return }
         DebugLog.log("[Voice] preview mode switched to \(modeID)")
         settings.voiceEnhanceMode = modeID
@@ -608,7 +754,13 @@ final class VoiceInputController {
     }
 
     private func previewDidSwitchModel(gen: UInt64, selection: LLMSelection) {
-        guard gen == generation, let session = interruptPreviewSession() else { return }
+        guard gen == generation else { return }
+        if case .transcribing(let context) = state, context.panelOpen {
+            DebugLog.log("[Voice] preview LLM preselected: \(selection.provider)/\(selection.model)")
+            settings.voiceLLMSelection = selection
+            return
+        }
+        guard let session = interruptPreviewSession() else { return }
         if case .previewing = state, settings.voiceLLMSelection == selection { return }
         DebugLog.log("[Voice] preview LLM switched to \(selection.provider)/\(selection.model)")
         settings.voiceLLMSelection = selection
@@ -616,7 +768,17 @@ final class VoiceInputController {
     }
 
     private func previewDidSelectHistory(gen: UInt64, token: UUID) {
-        guard gen == generation, let session = interruptPreviewSession() else { return }
+        guard gen == generation else { return }
+        if case .transcribing(let context) = state, context.panelOpen {
+            guard let index = previewHistory.firstIndex(where: { $0.token == token }) else { return }
+            DebugLog.log("[Voice] recalling history during transcription, aborting STT")
+            context.session.cancel()
+            let entry = previewHistory.remove(at: index)
+            previewHistory.insert(entry, at: 0)
+            openHistoryEntry(entry)
+            return
+        }
+        guard let session = interruptPreviewSession() else { return }
         guard token != session.token,
               let index = previewHistory.firstIndex(where: { $0.token == token }) else {
             // Re-selecting the current entry: just make sure we're previewing.
@@ -665,6 +827,8 @@ final class VoiceInputController {
     /// Re-runs enhancement for the current (mode, model) combination, using
     /// the cache when this combination was already tried in this session.
     private func refreshPreview(_ session: PreviewSession) {
+        // Failed-transcription sessions carry no ASR text to enhance.
+        guard !session.asrText.isEmpty else { return }
         let modeID = settings.voiceEnhanceMode
         if let cached = session.cache[currentCacheKey()] {
             DebugLog.log("[Voice] preview cache hit")
@@ -719,9 +883,13 @@ final class VoiceInputController {
     /// ASR section info line, e.g. "apple · 3.2s". Recalled history entries
     /// have no duration.
     private func asrInfoText(for session: PreviewSession) -> String {
+        asrInfoText(duration: session.audioDuration)
+    }
+
+    private func asrInfoText(duration: Double) -> String {
         let model = currentASRModelDescription()
-        guard session.audioDuration > 0 else { return model }
-        return String(format: "%@ · %.1fs", model, session.audioDuration)
+        guard duration > 0 else { return model }
+        return String(format: "%@ · %.1fs", model, duration)
     }
 
     private func currentASRModelDescription() -> String {
@@ -801,9 +969,13 @@ final class VoiceInputController {
         case .recording(let context):
             DebugLog.log("[Voice] aborting session: \(reason)")
             abandonSession(context.session)
-        case .transcribing(let session):
+        case .transcribing(let context):
             DebugLog.log("[Voice] aborting transcription: \(reason)")
-            abandonSession(session)
+            if context.panelOpen {
+                previewPresenter.close()
+                previousApp = nil
+            }
+            abandonSession(context.session)
         case .enhancing(let context):
             DebugLog.log("[Voice] aborting enhancement: \(reason)")
             generation &+= 1
@@ -868,9 +1040,17 @@ final class VoiceInputController {
         watchdogTask = Task { [timeout = timing.transcribeTimeout] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
-            guard gen == self.generation, case .transcribing = self.state else { return }
-            DebugLog.log("[Voice] transcription watchdog fired, cancelling")
-            self.abandonSession(session)
+            guard gen == self.generation, case .transcribing(let context) = self.state else { return }
+            if context.panelOpen {
+                // Keep the panel (and its gen-bound callbacks) alive; the
+                // late finish is discarded by the state check.
+                DebugLog.log("[Voice] transcription watchdog fired, showing failure in preview")
+                session.cancel()
+                self.presentTranscriptionFailure("Transcription timed out")
+            } else {
+                DebugLog.log("[Voice] transcription watchdog fired, cancelling")
+                self.abandonSession(session)
+            }
         }
     }
 

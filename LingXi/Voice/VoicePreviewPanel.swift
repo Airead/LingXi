@@ -18,6 +18,9 @@ struct VoicePreviewSetup {
     var original: String?
     /// Info line next to the ASR section title, e.g. "apple · 3.2s".
     var asrInfo: String
+    /// The panel opened while transcription is still running; the ASR area
+    /// shows a progress state until `setASRResult`/`setASRFailed` arrives.
+    var isTranscribing = false
     /// Ordered mode list; the panel prepends an "Off" segment, so ⌘1 is Off
     /// and ⌘2 is the first mode.
     var modes: [EnhanceMode]
@@ -50,6 +53,12 @@ struct VoicePreviewCallbacks {
 @MainActor
 protocol VoicePreviewPresenting: AnyObject {
     func show(setup: VoicePreviewSetup, callbacks: VoicePreviewCallbacks)
+    /// Fills the ASR area once a pending transcription finishes; the final
+    /// text follows unless the user already edited it.
+    func setASRResult(text: String, asrInfo: String)
+    /// Shows a transcription failure in the ASR area; the panel stays open
+    /// so the user can dismiss it or type a final text manually.
+    func setASRFailed(message: String)
     /// Replaces the displayed result after a re-enhancement, cache hit or
     /// degrade. `original` non-nil means `text` is an enhancement result;
     /// nil means no enhancement (mode off or reverted to the ASR text).
@@ -144,6 +153,14 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         positionPanel(newPanel)
         newPanel.makeKeyAndOrderFront(nil)
         panel = newPanel
+    }
+
+    func setASRResult(text: String, asrInfo: String) {
+        model?.applyASRResult(text: text, asrInfo: asrInfo)
+    }
+
+    func setASRFailed(message: String) {
+        model?.applyASRFailure(message: message)
     }
 
     func update(
@@ -243,8 +260,12 @@ private final class KeyCapturePanel: NSPanel {
 @Observable
 @MainActor
 final class VoicePreviewModel {
-    let asrText: String
-    let asrInfo: String
+    var asrText: String
+    var asrInfo: String
+    /// Transcription still running in the background.
+    var isTranscribing: Bool
+    /// Transcription failed or came back empty; shown in the ASR area.
+    var asrFailureMessage: String?
     var enhancedText: String?
     var finalText: String
     /// Set when the user types in the final area; blocks programmatic
@@ -270,6 +291,7 @@ final class VoicePreviewModel {
     init(setup: VoicePreviewSetup) {
         asrText = setup.original ?? setup.text
         asrInfo = setup.asrInfo
+        isTranscribing = setup.isTranscribing
         enhancedText = setup.original != nil ? setup.text : nil
         finalText = setup.text
         modes = setup.modes
@@ -288,6 +310,8 @@ final class VoicePreviewModel {
 
     enum EnhanceState: Equatable {
         case off
+        /// Transcription not finished (or failed): nothing to enhance yet.
+        case pending
         case enhancing
         case result(cached: Bool)
         /// Enhancement failed or timed out; the ASR text is shown instead.
@@ -297,7 +321,25 @@ final class VoicePreviewModel {
     var enhanceState: EnhanceState {
         if isEnhancing { return .enhancing }
         if enhancedText != nil { return .result(cached: isCached) }
-        return currentModeID == EnhanceMode.offModeID ? .off : .reverted
+        if currentModeID == EnhanceMode.offModeID { return .off }
+        if isTranscribing || asrFailureMessage != nil || asrText.isEmpty { return .pending }
+        return .reverted
+    }
+
+    /// Fills the ASR area after a background transcription completes.
+    func applyASRResult(text: String, asrInfo: String) {
+        asrText = text
+        self.asrInfo = asrInfo
+        isTranscribing = false
+        asrFailureMessage = nil
+        if !userEdited {
+            finalText = text
+        }
+    }
+
+    func applyASRFailure(message: String) {
+        isTranscribing = false
+        asrFailureMessage = message
     }
 
     /// Applies a re-enhancement result, cache hit or degrade outcome. The
@@ -361,7 +403,25 @@ private struct VoicePreviewContent: View {
                     .foregroundStyle(.secondary)
                 Spacer()
             }
-            readOnlyArea(model.asrText, background: Color(nsColor: .quaternarySystemFill))
+            readOnlyContainer {
+                if model.isTranscribing {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Transcribing…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(6)
+                } else if let failure = model.asrFailureMessage {
+                    Text(failure)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                        .padding(6)
+                } else {
+                    readOnlyText(model.asrText)
+                }
+            }
         }
     }
 
@@ -398,6 +458,9 @@ private struct VoicePreviewContent: View {
                         ForEach(model.llmOptions, id: \.self) { option in
                             Button("\(option.provider) · \(option.model)") {
                                 model.userEdited = false
+                                // Optimistic label update; the controller's
+                                // next update() confirms or corrects it.
+                                model.currentLLM = option
                                 model.onModelSwitch?(option)
                             }
                         }
@@ -411,7 +474,9 @@ private struct VoicePreviewContent: View {
                 enhanceStateView
                 Spacer()
             }
-            readOnlyArea(model.enhancedText ?? "", background: Color.accentColor.opacity(0.06))
+            readOnlyContainer(background: Color.accentColor.opacity(0.06)) {
+                readOnlyText(model.enhancedText ?? "")
+            }
         }
     }
 
@@ -425,6 +490,8 @@ private struct VoicePreviewContent: View {
         switch model.enhanceState {
         case .off:
             stateText("Not enabled")
+        case .pending:
+            EmptyView()
         case .enhancing:
             ProgressView()
                 .controlSize(.small)
@@ -522,18 +589,26 @@ private struct VoicePreviewContent: View {
 
     // MARK: Helpers
 
-    private func readOnlyArea(_ text: String, background: Color) -> some View {
+    private func readOnlyContainer(
+        background: Color = Color(nsColor: .quaternarySystemFill),
+        @ViewBuilder content: () -> some View
+    ) -> some View {
         ScrollView {
-            Text(text)
-                .font(.system(size: 12, design: .monospaced))
-                .textSelection(.enabled)
+            content()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(6)
         }
         .frame(height: VoicePreviewLayout.readOnlyAreaHeight)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(background)
         )
+    }
+
+    private func readOnlyText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
     }
 }
