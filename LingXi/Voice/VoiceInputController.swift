@@ -135,6 +135,9 @@ final class VoiceInputController {
         /// Mutable: an in-panel ASR model switch re-transcribes and replaces it.
         var asrText: String
         var cache: [CacheKey: String] = [:]
+        /// The full system prompt (mode prompt + history injection) each
+        /// combination was enhanced with, for the panel's prompt viewer.
+        var prompts: [CacheKey: String] = [:]
         /// Last text displayed in the panel, for the user-corrected check.
         var lastShownText: String
         /// Length of the source recording in seconds; 0 for recalled entries.
@@ -581,6 +584,12 @@ final class VoiceInputController {
                let block = await self.conversationHistory.injectionBlock(mode: self.settings.voiceEnhanceMode) {
                 fullPrompt += "\n\n" + block
             }
+            if let session, gen == self.generation, eGen == self.enhanceGeneration {
+                // Keep the exact prompt for the panel's prompt viewer, also
+                // for later cache hits of this combination.
+                session.prompts[self.currentCacheKey()] = fullPrompt
+                self.previewPresenter.setSystemPrompt(fullPrompt)
+            }
             let enhancer = self.enhancerFactory(self.settings, fullPrompt)
             do {
                 let enhanced: String
@@ -757,6 +766,8 @@ final class VoiceInputController {
             currentLLM: currentResolvedLLM(),
             isCached: isCached
         )
+        // Degrades and mode-off carry no enhancement, hence no prompt.
+        previewPresenter.setSystemPrompt(original != nil ? session.prompts[currentCacheKey()] : nil)
         syncHistoryResults(session)
     }
 
@@ -975,6 +986,7 @@ final class VoiceInputController {
             session.asrText = text
             // The source text changed: every cached enhancement is stale.
             session.cache.removeAll()
+            session.prompts.removeAll()
             session.lastShownText = text
             if previewHistory.contains(where: { $0.token == session.token }) {
                 syncHistoryASRText(session)

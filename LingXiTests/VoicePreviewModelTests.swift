@@ -243,4 +243,16 @@ struct VoicePreviewModelTests {
         model.savePanelShown = false
         #expect(model.suppressesCancelOnResign == false)
     }
+
+    @Test func promptPopoverSuppressesCancelOnResign() {
+        let model = VoicePreviewModel(setup: makeSetup())
+        // No prompt yet: the viewer button is disabled.
+        #expect(model.systemPrompt == nil)
+
+        model.systemPrompt = "prompt with injection"
+        model.promptPopoverShown = true
+        #expect(model.suppressesCancelOnResign == true)
+        model.promptPopoverShown = false
+        #expect(model.suppressesCancelOnResign == false)
+    }
 }

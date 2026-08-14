@@ -81,6 +81,9 @@ protocol VoicePreviewPresenting: AnyObject {
     func setEnhancing(_ enhancing: Bool)
     /// Appends one streamed chunk to the enhance area.
     func appendEnhanceDelta(_ delta: String)
+    /// The full system prompt behind the displayed enhancement (mode prompt
+    /// plus history injection); nil hides/disables the prompt viewer.
+    func setSystemPrompt(_ prompt: String?)
     func close()
 }
 
@@ -175,6 +178,10 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         model.onHistorySelect = callbacks.onHistorySelect
         model.onPlayToggle = { [weak self] in self?.togglePlayback() }
         model.onSaveAudio = { [weak self] in self?.saveAudio() }
+        // The popover took key status; restore it so Return/Esc keep working.
+        model.onPromptPopoverDismissed = { [weak self] in
+            self?.panel?.makeKeyAndOrderFront(nil)
+        }
 
         positionPanel(newPanel)
         newPanel.makeKeyAndOrderFront(nil)
@@ -223,6 +230,10 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
 
     func appendEnhanceDelta(_ delta: String) {
         model?.appendEnhanceDelta(delta)
+    }
+
+    func setSystemPrompt(_ prompt: String?) {
+        model?.systemPrompt = prompt
     }
 
     func close() {
@@ -391,11 +402,14 @@ final class VoicePreviewModel {
     var isPlaying = false
     /// A modal save dialog is open; suppresses cancel-on-resign.
     var savePanelShown = false
+    /// System prompt of the displayed enhancement; nil disables the viewer.
+    var systemPrompt: String?
+    var promptPopoverShown = false
 
     /// Key status is expected to move to a child window (save dialog,
     /// popover); losing it must not dismiss the panel.
     var suppressesCancelOnResign: Bool {
-        savePanelShown
+        savePanelShown || promptPopoverShown
     }
     var enhancedText: String?
     var finalText: String
@@ -420,6 +434,7 @@ final class VoicePreviewModel {
     var onHistorySelect: (@MainActor (UUID) -> Void)?
     var onPlayToggle: (@MainActor () -> Void)?
     var onSaveAudio: (@MainActor () -> Void)?
+    var onPromptPopoverDismissed: (@MainActor () -> Void)?
     var onConfirmTap: (@MainActor () -> Void)?
     var onCopyTap: (@MainActor () -> Void)?
     var onCancelTap: (@MainActor () -> Void)?
@@ -674,6 +689,28 @@ private struct VoicePreviewContent: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
+                }
+                Button {
+                    model.promptPopoverShown = true
+                } label: {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.systemPrompt == nil)
+                .opacity(model.systemPrompt == nil ? 0.3 : 1)
+                .help("Show the system prompt used for this enhancement")
+                .popover(isPresented: $model.promptPopoverShown) {
+                    ScrollView {
+                        Text(model.systemPrompt ?? "")
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    .frame(width: 420, height: 260)
+                    .onDisappear { model.onPromptPopoverDismissed?() }
                 }
                 enhanceStateView
                 Spacer()

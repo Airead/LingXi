@@ -348,6 +348,7 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
     private(set) var updates: [(text: String, original: String?, modeID: String, isCached: Bool)] = []
     private(set) var enhancingStates: [Bool] = []
     private(set) var deltas: [String] = []
+    private(set) var systemPrompts: [String?] = []
     private(set) var closeCount = 0
     private var callbacks: VoicePreviewCallbacks?
 
@@ -389,6 +390,10 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
 
     func appendEnhanceDelta(_ delta: String) {
         deltas.append(delta)
+    }
+
+    func setSystemPrompt(_ prompt: String?) {
+        systemPrompts.append(prompt)
     }
 
     func close() {
@@ -1485,6 +1490,63 @@ struct VoiceInputControllerTests {
         #expect(h.settings.voiceASRSelection == remoteASR)
         #expect(h.transcriber.wavRequests.isEmpty)
         #expect(h.preview.asrTranscribing.isEmpty)
+    }
+
+    // MARK: - System prompt viewer
+
+    @Test func panelReceivesFullPromptIncludingInjection() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(
+            session: session, enhancer: enhancer,
+            enhanceEnabled: true, previewEnabled: true, historyEnabled: true
+        )
+        // A confirmed correction from an earlier session gets injected.
+        await h.history.record(ConversationRecord(
+            timestamp: ConversationRecord.makeTimestamp(),
+            asrText: "erly", enhancedText: nil, finalText: "early",
+            enhanceMode: "proofread", previewEnabled: true,
+            asrModel: "apple", llmModel: "", userCorrected: true, audioDuration: 1
+        ))
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+
+        let prompt = try? #require(h.preview.systemPrompts.last ?? nil)
+        #expect(prompt?.hasPrefix("prompt-proofread") == true)
+        #expect(prompt?.contains(ConversationHistory.injectionHeader) == true)
+        #expect(prompt?.contains("erly → early") == true)
+    }
+
+    @Test func cacheHitShowsThePromptItWasEnhancedWith() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(results: [.success("polished-1"), .success("polished-2")])
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.systemPrompts.last == "prompt-proofread")
+
+        h.preview.simulateModeSwitch("translate_en")
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+        #expect(h.preview.systemPrompts.last == "prompt-translate_en")
+
+        // Back to the cached combination: its original prompt is restored.
+        h.preview.simulateModeSwitch("proofread")
+        #expect(await waitUntil { h.preview.updates.count == 3 })
+        #expect(h.preview.updates[2].isCached == true)
+        #expect(h.preview.systemPrompts.last == "prompt-proofread")
+        #expect(enhancer.requests.count == 2)
+    }
+
+    @Test func modeOffClearsSystemPrompt() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+
+        h.preview.simulateModeSwitch(EnhanceMode.offModeID)
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+        #expect(h.preview.systemPrompts.last == .some(nil))
     }
 
     // MARK: - Streaming enhancement
