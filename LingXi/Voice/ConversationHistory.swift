@@ -109,11 +109,16 @@ actor ConversationHistory {
             return
         }
 
-        // Keep the in-memory injection list append-stable.
+        // Keep the in-memory injection list append-stable. On first use the
+        // rebuild reads the file, which already contains the entry just
+        // written — appending it again would duplicate it.
         if entry.previewEnabled {
-            var list = injectionLists[entry.enhanceMode] ?? rebuildInjectionList(mode: entry.enhanceMode)
-            list.append(Self.formatInjectionLine(entry))
-            injectionLists[entry.enhanceMode] = list
+            if var list = injectionLists[entry.enhanceMode] {
+                list.append(Self.formatInjectionLine(entry))
+                injectionLists[entry.enhanceMode] = list
+            } else {
+                injectionLists[entry.enhanceMode] = rebuildInjectionList(mode: entry.enhanceMode)
+            }
         }
 
         rotateIfNeeded()
