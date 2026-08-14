@@ -9,7 +9,7 @@ import Foundation
 
 /// An OpenAI-compatible endpoint offering one or more models.
 /// Used both for ASR (audio/transcriptions) and LLM (chat/completions).
-struct VoiceProvider: Codable, Sendable, Equatable, Identifiable {
+nonisolated struct VoiceProvider: Codable, Sendable, Equatable, Identifiable {
     /// Unique user-chosen identifier, e.g. "groq", "ollama".
     var name: String
     var baseURL: String
@@ -23,13 +23,13 @@ struct VoiceProvider: Codable, Sendable, Equatable, Identifiable {
 
 /// Which speech recognizer to use: on-device Apple Speech or a remote
 /// provider/model pair from `voiceASRProviders`.
-enum ASRSelection: Codable, Sendable, Equatable, Hashable {
+nonisolated enum ASRSelection: Codable, Sendable, Equatable, Hashable {
     case apple
     case remote(provider: String, model: String)
 }
 
 /// Which chat model to use for enhancement, referencing `voiceLLMProviders`.
-struct LLMSelection: Codable, Sendable, Equatable, Hashable {
+nonisolated struct LLMSelection: Codable, Sendable, Equatable, Hashable {
     var provider: String
     var model: String
 }

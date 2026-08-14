@@ -34,7 +34,9 @@ final class VoiceInputController {
     private let activityModel: VoiceActivityModel
     private let recorder: any AudioRecording
     private let transcriberFactory: (AppSettings) -> any SpeechTranscriber
-    private let enhancerFactory: (AppSettings) -> any TextEnhancer
+    private let enhancerFactory: (AppSettings, String) -> any TextEnhancer
+    /// Resolves a mode ID to its system prompt; nil disables enhancement.
+    private let enhancePromptProvider: (String) -> String?
     private let pasteAction: (String) -> Void
     private let ensureMicrophonePermission: @Sendable () async throws -> Void
     private let frontmostAppProvider: () -> NSRunningApplication?
@@ -82,7 +84,8 @@ final class VoiceInputController {
         activityModel: VoiceActivityModel,
         recorder: (any AudioRecording)? = nil,
         transcriberFactory: ((AppSettings) -> any SpeechTranscriber)? = nil,
-        enhancerFactory: ((AppSettings) -> any TextEnhancer)? = nil,
+        enhancerFactory: ((AppSettings, String) -> any TextEnhancer)? = nil,
+        enhancePromptProvider: ((String) -> String?)? = nil,
         pasteAction: ((String) -> Void)? = nil,
         ensureMicrophonePermission: (@Sendable () async throws -> Void)? = nil,
         previewPresenter: (any VoicePreviewPresenting)? = nil,
@@ -95,6 +98,9 @@ final class VoiceInputController {
         self.recorder = recorder ?? VoiceAudioRecorder()
         self.transcriberFactory = transcriberFactory ?? Self.defaultTranscriberFactory
         self.enhancerFactory = enhancerFactory ?? Self.defaultEnhancerFactory
+        self.enhancePromptProvider = enhancePromptProvider ?? { modeID in
+            EnhanceModeStore().resolvePrompt(modeID: modeID)
+        }
         self.pasteAction = pasteAction ?? Self.defaultPasteAction
         self.ensureMicrophonePermission = ensureMicrophonePermission ?? Self.defaultMicrophonePermission
         self.injectedPreviewPresenter = previewPresenter
@@ -267,8 +273,8 @@ final class VoiceInputController {
         switch result {
         case .success(let text) where !text.isEmpty:
             DebugLog.log("[Voice] transcribed \(text.count) characters")
-            if settings.voiceEnhanceEnabled {
-                beginEnhancing(original: text)
+            if let prompt = enhancePromptProvider(settings.voiceEnhanceMode) {
+                beginEnhancing(original: text, prompt: prompt)
             } else {
                 deliver(text)
             }
@@ -325,9 +331,9 @@ final class VoiceInputController {
         scheduleWatchdog(gen: gen, session: session)
     }
 
-    private func beginEnhancing(original: String) {
+    private func beginEnhancing(original: String, prompt: String) {
         let gen = generation
-        let enhancer = enhancerFactory(settings)
+        let enhancer = enhancerFactory(settings, prompt)
         let task = Task {
             do {
                 let enhanced = try await enhancer.enhance(original)
@@ -517,7 +523,7 @@ final class VoiceInputController {
         }
     }
 
-    private static let defaultEnhancerFactory: @MainActor (AppSettings) -> any TextEnhancer = { settings in
+    private static let defaultEnhancerFactory: @MainActor (AppSettings, String) -> any TextEnhancer = { settings, prompt in
         let selection = settings.voiceLLMSelection
         guard let resolved = VoiceProviderResolver.resolveLLM(
             selection: selection, providers: settings.voiceLLMProviders
@@ -527,7 +533,7 @@ final class VoiceInputController {
             DebugLog.log("[Voice] no LLM provider configured for enhancement")
             return LLMTextEnhancer(configuration: LLMEnhancerConfiguration(
                 baseURL: "", apiKey: "", model: "",
-                systemPrompt: settings.voiceEnhancePrompt
+                systemPrompt: prompt
             ))
         }
         if resolved.provider.name != selection.provider || resolved.model != selection.model {
@@ -537,7 +543,7 @@ final class VoiceInputController {
             baseURL: resolved.provider.baseURL,
             apiKey: resolved.provider.apiKey,
             model: resolved.model,
-            systemPrompt: settings.voiceEnhancePrompt
+            systemPrompt: prompt
         ))
     }
 

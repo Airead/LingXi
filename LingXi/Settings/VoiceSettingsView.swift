@@ -13,6 +13,8 @@ struct VoiceSettingsView: View {
     @State private var leaderUsesFn = false
     @State private var managingASRProviders = false
     @State private var managingLLMProviders = false
+    @State private var enhanceModes: [EnhanceMode] = []
+    private let enhanceModeStore = EnhanceModeStore()
 
     var body: some View {
         Form {
@@ -66,11 +68,24 @@ struct VoiceSettingsView: View {
             }
 
             Section("Enhancement") {
-                Toggle("Polish with LLM", isOn: $settings.voiceEnhanceEnabled)
-                Text("After transcription, send the text to an OpenAI-compatible chat endpoint to fix typos and punctuation. On failure or timeout the raw transcription is pasted unchanged.")
+                Picker("Mode", selection: $settings.voiceEnhanceMode) {
+                    Text("Off").tag(EnhanceMode.offModeID)
+                    ForEach(enhanceModes) { mode in
+                        Text(mode.label).tag(mode.id)
+                    }
+                }
+                Text("After transcription, send the text to an OpenAI-compatible chat endpoint using the selected mode's prompt. On failure or timeout the raw transcription is pasted unchanged.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if settings.voiceEnhanceEnabled {
+                HStack {
+                    Button("Open Modes Folder") {
+                        NSWorkspace.shared.open(enhanceModeStore.directory)
+                    }
+                    Text("Modes are Markdown files; edits are picked up on the next recording, new files after reopening this page.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if settings.voiceEnhanceMode != EnhanceMode.offModeID {
                     if settings.voiceLLMProviders.isEmpty {
                         Text("No LLM provider configured. Add one to enable enhancement.")
                             .font(.caption)
@@ -88,16 +103,6 @@ struct VoiceSettingsView: View {
                         }
                     }
                     Button("Manage Providers…") { managingLLMProviders = true }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("System Prompt")
-                        TextEditor(text: $settings.voiceEnhancePrompt)
-                            .font(.system(size: 12))
-                            .frame(minHeight: 60, maxHeight: 120)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                            )
-                    }
                 }
             }
 
@@ -119,6 +124,8 @@ struct VoiceSettingsView: View {
         .onAppear {
             checker.refresh()
             leaderUsesFn = LeaderKeyConfigLoader.load().contains { $0.triggerKey == "fn" }
+            enhanceModeStore.seedBuiltInModes()
+            enhanceModes = enhanceModeStore.loadModes()
         }
         .onChange(of: settings.voiceInputEnabled) { _, enabled in
             if enabled { requestPermissions() }

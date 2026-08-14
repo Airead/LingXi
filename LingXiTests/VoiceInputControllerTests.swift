@@ -253,7 +253,7 @@ private struct Harness {
         let defaults = UserDefaults(suiteName: "io.github.airead.lingxi.test.\(UUID().uuidString)")!
         settings = AppSettings(defaults: defaults)
         settings.voiceInputEnabled = true
-        settings.voiceEnhanceEnabled = enhanceEnabled
+        settings.voiceEnhanceMode = enhanceEnabled ? "proofread" : EnhanceMode.offModeID
         settings.voicePreviewEnabled = previewEnabled
         settings.voiceHUDEnabled = hudEnabled
         transcriber = FakeTranscriber(session: session, gated: gated)
@@ -266,7 +266,8 @@ private struct Harness {
             activityModel: activity,
             recorder: recorder,
             transcriberFactory: { _ in transcriber },
-            enhancerFactory: { _ in enhancer },
+            enhancerFactory: { _, _ in enhancer },
+            enhancePromptProvider: { $0 == EnhanceMode.offModeID ? nil : "test prompt" },
             pasteAction: { spy.pasted.append($0) },
             ensureMicrophonePermission: {},
             previewPresenter: preview,
@@ -819,8 +820,7 @@ struct VoiceSettingsPersistenceTests {
         #expect(settings.voiceLLMProviders.isEmpty)
         #expect(settings.voiceLLMSelection == LLMSelection(provider: "", model: ""))
         #expect(settings.voiceLanguage == .auto)
-        #expect(settings.voiceEnhanceEnabled == false)
-        #expect(settings.voiceEnhancePrompt == LLMEnhancerConfiguration.defaultSystemPrompt)
+        #expect(settings.voiceEnhanceMode == EnhanceMode.offModeID)
         #expect(settings.voicePreviewEnabled == false)
         #expect(settings.voiceHUDEnabled == true)
     }
@@ -843,8 +843,7 @@ struct VoiceSettingsPersistenceTests {
         settings1.voiceLLMProviders = [ollama]
         settings1.voiceLLMSelection = LLMSelection(provider: "ollama", model: "qwen3")
         settings1.voiceLanguage = .chinese
-        settings1.voiceEnhanceEnabled = true
-        settings1.voiceEnhancePrompt = "custom prompt"
+        settings1.voiceEnhanceMode = "translate_en"
         settings1.voicePreviewEnabled = true
         settings1.voiceHUDEnabled = false
 
@@ -855,8 +854,7 @@ struct VoiceSettingsPersistenceTests {
         #expect(settings2.voiceLLMProviders == [ollama])
         #expect(settings2.voiceLLMSelection == LLMSelection(provider: "ollama", model: "qwen3"))
         #expect(settings2.voiceLanguage == .chinese)
-        #expect(settings2.voiceEnhanceEnabled == true)
-        #expect(settings2.voiceEnhancePrompt == "custom prompt")
+        #expect(settings2.voiceEnhanceMode == "translate_en")
         #expect(settings2.voicePreviewEnabled == true)
         #expect(settings2.voiceHUDEnabled == false)
     }
@@ -875,9 +873,9 @@ struct VoiceSettingsPersistenceTests {
         #expect(settings.voiceLLMSelection == LLMSelection(provider: "", model: ""))
     }
 
-    @Test func rejectsEmptyPrompt() {
+    @Test func rejectsEmptyMode() {
         let settings = AppSettings(defaults: makeDefaults())
-        settings.voiceEnhancePrompt = "  "
-        #expect(settings.voiceEnhancePrompt == LLMEnhancerConfiguration.defaultSystemPrompt)
+        settings.voiceEnhanceMode = "  "
+        #expect(settings.voiceEnhanceMode == EnhanceMode.offModeID)
     }
 }

@@ -82,7 +82,13 @@ final class AppAssembly {
             data: [:]
         )
 
-        let voiceInputController = VoiceInputController(settings: settings, activityModel: voiceActivity)
+        let enhanceModeStore = EnhanceModeStore()
+        enhanceModeStore.seedBuiltInModes(legacyCustomPrompt: settings.consumeLegacyEnhancePrompt())
+        let voiceInputController = VoiceInputController(
+            settings: settings,
+            activityModel: voiceActivity,
+            enhancePromptProvider: { enhanceModeStore.resolvePrompt(modeID: $0) }
+        )
 
         return Result(
             panelManager: panelManager,

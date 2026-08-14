@@ -157,13 +157,11 @@ final class AppSettings {
     var voiceLanguage: VoiceLanguage {
         didSet { guard voiceLanguage != oldValue else { return }; save(.voiceLanguage, value: voiceLanguage.rawValue) }
     }
-    var voiceEnhanceEnabled: Bool {
-        didSet { guard voiceEnhanceEnabled != oldValue else { return }; save(.voiceEnhanceEnabled, value: voiceEnhanceEnabled) }
-    }
-    var voiceEnhancePrompt: String {
+    /// Current enhancement mode ID; `EnhanceMode.offModeID` disables enhancement.
+    var voiceEnhanceMode: String {
         didSet {
-            if voiceEnhancePrompt.trimmingCharacters(in: .whitespaces).isEmpty { voiceEnhancePrompt = oldValue; return }
-            guard voiceEnhancePrompt != oldValue else { return }; save(.voiceEnhancePrompt, value: voiceEnhancePrompt)
+            if voiceEnhanceMode.trimmingCharacters(in: .whitespaces).isEmpty { voiceEnhanceMode = oldValue; return }
+            guard voiceEnhanceMode != oldValue else { return }; save(.voiceEnhanceMode, value: voiceEnhanceMode)
         }
     }
     var voicePreviewEnabled: Bool {
@@ -287,11 +285,13 @@ final class AppSettings {
         case voiceLLMProviders = "io.github.airead.lingxi.voiceLLMProviders"
         case voiceLLMSelection = "io.github.airead.lingxi.voiceLLMSelection"
         case voiceLanguage = "io.github.airead.lingxi.voiceLanguage"
+        // Legacy enhancement keys, read once by the voice migrations.
         case voiceEnhanceEnabled = "io.github.airead.lingxi.voiceEnhanceEnabled"
         case voiceEnhanceBaseURL = "io.github.airead.lingxi.voiceEnhanceBaseURL"
         case voiceEnhanceAPIKey = "io.github.airead.lingxi.voiceEnhanceAPIKey"
         case voiceEnhanceModel = "io.github.airead.lingxi.voiceEnhanceModel"
         case voiceEnhancePrompt = "io.github.airead.lingxi.voiceEnhancePrompt"
+        case voiceEnhanceMode = "io.github.airead.lingxi.voiceEnhanceMode"
         case voicePreviewEnabled = "io.github.airead.lingxi.voicePreviewEnabled"
         case voiceHUDEnabled = "io.github.airead.lingxi.voiceHUDEnabled"
         case screenshotRegionHotKeyKeyCode = "io.github.airead.lingxi.screenshotRegionHotKeyKeyCode"
@@ -359,8 +359,8 @@ final class AppSettings {
         voiceLLMSelection = Self.loadCodable(defaults, .voiceLLMSelection) ?? LLMSelection(provider: "", model: "")
         let voiceLanguageRaw: String? = Self.load(defaults, .voiceLanguage)
         voiceLanguage = voiceLanguageRaw.flatMap { VoiceLanguage(rawValue: $0) } ?? .auto
-        voiceEnhanceEnabled = Self.load(defaults, .voiceEnhanceEnabled) ?? false
-        voiceEnhancePrompt = Self.load(defaults, .voiceEnhancePrompt) ?? LLMEnhancerConfiguration.defaultSystemPrompt
+        Self.migrateVoiceEnhanceModeIfNeeded(defaults)
+        voiceEnhanceMode = Self.load(defaults, .voiceEnhanceMode) ?? EnhanceMode.offModeID
         voicePreviewEnabled = Self.load(defaults, .voicePreviewEnabled) ?? false
         voiceHUDEnabled = Self.load(defaults, .voiceHUDEnabled) ?? true
 
@@ -456,6 +456,28 @@ final class AppSettings {
             write(.voiceLLMSelection, LLMSelection(provider: provider.name, model: model))
             DebugLog.log("[Settings] migrated legacy LLM endpoint to provider list")
         }
+    }
+
+    /// One-shot migration from the Phase 2 on/off toggle to a mode ID.
+    private static func migrateVoiceEnhanceModeIfNeeded(_ defaults: UserDefaults) {
+        guard defaults.object(forKey: Key.voiceEnhanceMode.rawValue) == nil else { return }
+        let wasEnabled = (defaults.object(forKey: Key.voiceEnhanceEnabled.rawValue) as? Bool) ?? false
+        defaults.set(wasEnabled ? "proofread" : EnhanceMode.offModeID, forKey: Key.voiceEnhanceMode.rawValue)
+        if wasEnabled {
+            DebugLog.log("[Settings] migrated voiceEnhanceEnabled to mode 'proofread'")
+        }
+    }
+
+    /// Returns the Phase 2 custom prompt (if the user changed it from the
+    /// default) and deletes the legacy key, so a later deletion of the
+    /// migrated `custom.md` doesn't resurrect it. Call once at assembly time.
+    func consumeLegacyEnhancePrompt() -> String? {
+        let key = Key.voiceEnhancePrompt.rawValue
+        guard let prompt = defaults.string(forKey: key) else { return nil }
+        defaults.removeObject(forKey: key)
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != LLMEnhancerConfiguration.defaultSystemPrompt else { return nil }
+        return trimmed
     }
 
     // MARK: - Launch at login
