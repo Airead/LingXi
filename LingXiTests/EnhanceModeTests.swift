@@ -87,9 +87,10 @@ struct EnhanceModeStoreTests {
         store.seedBuiltInModes()
 
         let modes = store.loadModes()
-        #expect(modes.map(\.id) == ["proofread", "translate_en"])
+        #expect(modes.map(\.id) == ["proofread", "translate_en", "commandline_master"])
         #expect(modes[0].label == "纠错润色")
         #expect(modes[0].prompt == LLMEnhancerConfiguration.defaultSystemPrompt)
+        #expect(modes[2].label == "命令行大神")
     }
 
     @Test func seedDoesNotOverwriteExistingFiles() throws {
