@@ -126,13 +126,25 @@ actor ConversationHistory {
 
     // MARK: - Prompt injection
 
+    /// WenZi-style context section: a `---`-fenced block with one combined
+    /// instruction header followed by labelled subsections. Only the
+    /// conversation-record subsection exists for now; keeping the structure
+    /// leaves room for vocabulary / input-environment sections later.
     static let injectionHeader = """
-    以下是用户此前确认过的转写示例（格式：识别 → 确认；只有一段表示无需修改），\
-    请与这些示例保持一致的用词、术语和纠错习惯：
+    ---
+    以下是辅助纠错的参考上下文：
+    - 对话记录（优先参考）：反映用户此前确认过的纠错偏好和话题上下文，\
+    格式为“识别 → 确认”，只有一段表示该条无需修改。
+
+    对话记录：
     """
 
+    static let injectionFooter = "---"
+
     /// The history block to append to the mode's system prompt, or nil when
-    /// there is nothing to inject (or reading the file failed).
+    /// there is nothing to inject (or reading the file failed). Entries are
+    /// append-only between rebuilds so everything before the closing fence
+    /// stays a stable prefix for LLM prompt caching.
     func injectionBlock(mode: String) -> String? {
         var list = injectionLists[mode] ?? rebuildInjectionList(mode: mode)
         if list.count >= limits.refreshThreshold
@@ -141,7 +153,9 @@ actor ConversationHistory {
         }
         injectionLists[mode] = list
         guard !list.isEmpty else { return nil }
-        return Self.injectionHeader + "\n" + list.joined(separator: "\n")
+        return Self.injectionHeader + "\n"
+            + list.map { "- " + $0 }.joined(separator: "\n")
+            + "\n" + Self.injectionFooter
     }
 
     private func rebuildInjectionList(mode: String) -> [String] {

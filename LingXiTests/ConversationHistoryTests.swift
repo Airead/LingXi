@@ -109,6 +109,24 @@ struct ConversationHistoryStoreTests {
 
 struct ConversationHistoryInjectionTests {
 
+    /// The bare entry lines between the "对话记录：" label and the closing
+    /// fence, without their "- " prefixes.
+    private func entryLines(_ block: String?) -> [String] {
+        guard let block else { return [] }
+        var lines = block.components(separatedBy: "\n")
+        guard let label = lines.firstIndex(of: "对话记录：") else { return [] }
+        lines = Array(lines[(label + 1)...])
+        if lines.last == ConversationHistory.injectionFooter { lines.removeLast() }
+        return lines.map { $0.hasPrefix("- ") ? String($0.dropFirst(2)) : $0 }
+    }
+
+    /// The block without the closing fence; entries append at the tail, so
+    /// this part must stay a stable prefix across appends.
+    private func stableBody(_ block: String) -> Substring {
+        let footer = "\n" + ConversationHistory.injectionFooter
+        return block.hasSuffix(footer) ? block.dropLast(footer.count) : block[...]
+    }
+
     @Test func filtersByModeAndPreviewConfirmed() async {
         let history = ConversationHistory(directory: makeTempDirectory())
         await history.record(makeRecord(asr: "p1", final: "p1c", mode: "proofread"))
@@ -127,10 +145,9 @@ struct ConversationHistoryInjectionTests {
         await history.record(makeRecord(asr: "typo", final: "fixed"))
 
         let block = await history.injectionBlock(mode: "proofread")
-        let lines = block?.components(separatedBy: "\n") ?? []
-        #expect(lines.first == ConversationHistory.injectionHeader)
-        #expect(lines.contains("unchanged"))
-        #expect(lines.contains("typo → fixed"))
+        #expect(block?.hasPrefix(ConversationHistory.injectionHeader) == true)
+        #expect(block?.hasSuffix("\n" + ConversationHistory.injectionFooter) == true)
+        #expect(entryLines(block) == ["unchanged", "typo → fixed"])
     }
 
     @Test func emptyHistoryInjectsNothing() async {
@@ -152,14 +169,15 @@ struct ConversationHistoryInjectionTests {
         await history.record(makeRecord(asr: "c", final: "c"))
         let block3 = await history.injectionBlock(mode: "proofread")
 
-        // Entries append at the tail; earlier blocks stay as prefixes even
-        // beyond maxEntries (no rebuild until refreshThreshold).
+        // Entries append at the tail (before the closing fence); earlier
+        // blocks stay as prefixes even beyond maxEntries (no rebuild until
+        // refreshThreshold).
         let b1 = try #require(block1)
         let b2 = try #require(block2)
         let b3 = try #require(block3)
-        #expect(b2.hasPrefix(b1))
-        #expect(b3.hasPrefix(b2))
-        #expect(b3.contains("a") && b3.contains("b") && b3.contains("c"))
+        #expect(stableBody(b2).hasPrefix(stableBody(b1)))
+        #expect(stableBody(b3).hasPrefix(stableBody(b2)))
+        #expect(entryLines(b3) == ["a", "b", "c"])
     }
 
     @Test func rebuildsToMaxEntriesAtRefreshThreshold() async {
@@ -172,8 +190,7 @@ struct ConversationHistoryInjectionTests {
         }
         // The list grew to 4 (>= 3), so it rebuilds to the last 2 records.
         let block = await history.injectionBlock(mode: "proofread")
-        let lines = block?.components(separatedBy: "\n").dropFirst() ?? []
-        #expect(Array(lines) == ["c", "d"])
+        #expect(entryLines(block) == ["c", "d"])
     }
 
     @Test func rebuildsWhenCharBudgetExceeded() async {
@@ -184,8 +201,7 @@ struct ConversationHistoryInjectionTests {
         await history.record(makeRecord(asr: "aaaaaaaaaa", final: "aaaaaaaaaa"))
         await history.record(makeRecord(asr: "bbbb", final: "bbbb"))
         let block = await history.injectionBlock(mode: "proofread")
-        let lines = block?.components(separatedBy: "\n").dropFirst() ?? []
-        #expect(Array(lines) == ["bbbb"])
+        #expect(entryLines(block) == ["bbbb"])
     }
 
     @Test func unreadableFileMeansNoInjection() async {
