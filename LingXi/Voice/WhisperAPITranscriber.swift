@@ -114,6 +114,10 @@ final class WhisperAPISession: SpeechTranscriptionSession, @unchecked Sendable {
         }
     }
 
+    nonisolated func setPartialHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        // Batch backend: no streaming partials.
+    }
+
     func finish() async throws -> String {
         let work: Task<String, Error>? = lock.withLock {
             guard !finished else { return nil }

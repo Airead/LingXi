@@ -86,6 +86,10 @@ protocol SpeechTranscriptionSession: AnyObject, Sendable {
     /// Called from the realtime audio thread; must be fast and non-blocking.
     nonisolated func append(_ buffer: AVAudioPCMBuffer)
 
+    /// Registers a callback invoked on an arbitrary queue with the latest
+    /// partial text. Implementations without streaming support never call it.
+    nonisolated func setPartialHandler(_ handler: @escaping @Sendable (String) -> Void)
+
     /// Stops accepting audio and waits for the final text. Call at most once.
     func finish() async throws -> String
 

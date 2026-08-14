@@ -1,6 +1,7 @@
 # LingXi 语音输入 Phase 2 计划
 
-> **状态：未开始。**
+> **状态：已完成（2026-08-14）。** 三个阶段（B 增强 / C 预览 / A HUD）全部实现并通过单测；
+> 手测项（Ollama/云端点连通、HUD 不抢焦点、多屏面板位置等）待用户验证。
 >
 > 前置：Phase 1（按住 Fn 说话 → 转写 → 直接粘贴）已于 2026-08-14 完成，commit 66c61bc。
 > 核心代码位于 `LingXi/Voice/`，状态机为 `VoiceInputController`（MainActor + 代际号），

@@ -46,6 +46,7 @@ final class AppleSpeechSession: SpeechTranscriptionSession, @unchecked Sendable 
     private var continuation: CheckedContinuation<String, Error>?
     private var cancelled = false
     private var finishCalled = false
+    private var partialHandler: (@Sendable (String) -> Void)?
 
     init(recognizer: SFSpeechRecognizer) {
         self.recognizer = recognizer
@@ -72,6 +73,10 @@ final class AppleSpeechSession: SpeechTranscriptionSession, @unchecked Sendable 
         if accepting {
             request.append(buffer)
         }
+    }
+
+    nonisolated func setPartialHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        lock.withLock { partialHandler = handler }
     }
 
     func finish() async throws -> String {
@@ -104,9 +109,15 @@ final class AppleSpeechSession: SpeechTranscriptionSession, @unchecked Sendable 
     }
 
     private func handleRecognition(result: SFSpeechRecognitionResult?, error: Error?) {
+        // Take the handler inside the lock, invoke it outside (same
+        // discipline as the continuation) so user code never runs locked.
+        var partialNotification: (@Sendable (String) -> Void, String)?
         let resumption: (CheckedContinuation<String, Error>, Result<String, Error>)? = lock.withLock {
             if let result {
                 latestText = result.bestTranscription.formattedString
+                if !cancelled, let handler = partialHandler {
+                    partialNotification = (handler, latestText)
+                }
                 guard result.isFinal else { return nil }
                 if finalResult == nil { finalResult = .success(latestText) }
             } else if let error {
@@ -121,6 +132,9 @@ final class AppleSpeechSession: SpeechTranscriptionSession, @unchecked Sendable 
             guard let pending = continuation, let finalResult else { return nil }
             continuation = nil
             return (pending, finalResult)
+        }
+        if let (handler, text) = partialNotification {
+            handler(text)
         }
         if let (pending, result) = resumption {
             pending.resume(with: result)

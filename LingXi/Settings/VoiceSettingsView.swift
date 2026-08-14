@@ -22,6 +22,10 @@ struct VoiceSettingsView: View {
                 Text("Tip: in System Settings → Keyboard, set \u{201C}Press 🌐 key to\u{201D} to \u{201C}Do Nothing\u{201D} so holding Fn doesn't switch input sources.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle("Show Recording HUD", isOn: $settings.voiceHUDEnabled)
+                Text("A floating indicator at the bottom of the screen with the audio level and live partial text while recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if leaderUsesFn && settings.voiceInputEnabled {
                     Label(
                         "Your leader key config uses Fn; that trigger is disabled while voice input is on.",
@@ -54,6 +58,38 @@ struct VoiceSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            Section("Enhancement") {
+                Toggle("Polish with LLM", isOn: $settings.voiceEnhanceEnabled)
+                Text("After transcription, send the text to an OpenAI-compatible chat endpoint to fix typos and punctuation. On failure or timeout the raw transcription is pasted unchanged.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.voiceEnhanceEnabled {
+                    TextField("Base URL", text: $settings.voiceEnhanceBaseURL)
+                    SecureField("API Key (optional for local servers)", text: $settings.voiceEnhanceAPIKey)
+                    TextField("Model", text: $settings.voiceEnhanceModel)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("System Prompt")
+                        TextEditor(text: $settings.voiceEnhancePrompt)
+                            .font(.system(size: 12))
+                            .frame(minHeight: 60, maxHeight: 120)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            )
+                    }
+                    Text("Works with a local Ollama server (e.g. http://localhost:11434/v1) or any cloud endpoint.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Preview") {
+                Toggle("Preview before pasting", isOn: $settings.voicePreviewEnabled)
+                Text("Show the final text in a floating panel before pasting: press Return to paste (after optional edits), Escape to discard. When off, text is pasted immediately.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Permissions") {

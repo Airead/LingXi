@@ -15,6 +15,9 @@ struct VoiceInputTiming: Sendable {
     var maxRecording: Duration = .seconds(120)
     /// Watchdog for a transcription that never completes.
     var transcribeTimeout: Duration = .seconds(30)
+    /// Watchdog for an enhancement request; on timeout the original
+    /// transcription is used (degrade, not discard).
+    var enhanceTimeout: Duration = .seconds(15)
 }
 
 /// Push-to-talk state machine: hold Fn → record → release → transcribe → paste.
@@ -31,8 +34,10 @@ final class VoiceInputController {
     private let activityModel: VoiceActivityModel
     private let recorder: any AudioRecording
     private let transcriberFactory: (AppSettings) -> any SpeechTranscriber
+    private let enhancerFactory: (AppSettings) -> any TextEnhancer
     private let pasteAction: (String) -> Void
     private let ensureMicrophonePermission: @Sendable () async throws -> Void
+    private let frontmostAppProvider: () -> NSRunningApplication?
     private let timing: VoiceInputTiming
     private let clock = ContinuousClock()
 
@@ -41,12 +46,24 @@ final class VoiceInputController {
     private var state: State = .idle
     private var maxDurationTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
+    private var previousApp: NSRunningApplication?
+
+    private var injectedPreviewPresenter: (any VoicePreviewPresenting)?
+    private lazy var previewPresenter: any VoicePreviewPresenting =
+        injectedPreviewPresenter ?? VoicePreviewPanel()
+
+    private var injectedHUDPresenter: (any VoiceHUDPresenting)?
+    private lazy var hudPresenter: any VoiceHUDPresenting =
+        injectedHUDPresenter ?? VoiceHUDPanel(activityModel: activityModel)
+    private var hudShown = false
 
     private enum State {
         case idle
         case starting(StartingContext)
         case recording(RecordingContext)
         case transcribing(session: any SpeechTranscriptionSession)
+        case enhancing(original: String, task: Task<Void, Never>)
+        case previewing
     }
 
     private struct StartingContext {
@@ -65,16 +82,24 @@ final class VoiceInputController {
         activityModel: VoiceActivityModel,
         recorder: (any AudioRecording)? = nil,
         transcriberFactory: ((AppSettings) -> any SpeechTranscriber)? = nil,
+        enhancerFactory: ((AppSettings) -> any TextEnhancer)? = nil,
         pasteAction: ((String) -> Void)? = nil,
         ensureMicrophonePermission: (@Sendable () async throws -> Void)? = nil,
+        previewPresenter: (any VoicePreviewPresenting)? = nil,
+        hudPresenter: (any VoiceHUDPresenting)? = nil,
+        frontmostAppProvider: (() -> NSRunningApplication?)? = nil,
         timing: VoiceInputTiming = VoiceInputTiming()
     ) {
         self.settings = settings
         self.activityModel = activityModel
         self.recorder = recorder ?? VoiceAudioRecorder()
         self.transcriberFactory = transcriberFactory ?? Self.defaultTranscriberFactory
+        self.enhancerFactory = enhancerFactory ?? Self.defaultEnhancerFactory
         self.pasteAction = pasteAction ?? Self.defaultPasteAction
         self.ensureMicrophonePermission = ensureMicrophonePermission ?? Self.defaultMicrophonePermission
+        self.injectedPreviewPresenter = previewPresenter
+        self.injectedHUDPresenter = hudPresenter
+        self.frontmostAppProvider = frontmostAppProvider ?? { NSWorkspace.shared.frontmostApplication }
         self.timing = timing
     }
 
@@ -103,7 +128,15 @@ final class VoiceInputController {
 
     func fnDown() {
         guard settings.voiceInputEnabled else { return }
-        guard case .idle = state else {
+        switch state {
+        case .idle:
+            break
+        case .previewing:
+            // A new press discards the pending preview and starts fresh.
+            DebugLog.log("[Voice] new session discards pending preview")
+            previewPresenter.close()
+            previousApp = nil
+        case .starting, .recording, .transcribing, .enhancing:
             DebugLog.log("[Voice] fnDown ignored: busy")
             return
         }
@@ -112,6 +145,16 @@ final class VoiceInputController {
         let gen = generation
         state = .starting(StartingContext(pressedAt: clock.now))
         activityModel.phase = .recording
+        activityModel.level = 0
+        activityModel.partialText = ""
+
+        let hudEnabled = settings.voiceHUDEnabled
+        let levelMeter: AudioLevelMeter? = hudEnabled
+            ? AudioLevelMeter { [weak self] level in
+                guard let self, gen == self.generation else { return }
+                self.activityModel.level = level
+            }
+            : nil
 
         let transcriber = transcriberFactory(settings)
         let language = settings.voiceLanguage
@@ -121,8 +164,19 @@ final class VoiceInputController {
                 try await self.ensureMicrophonePermission()
                 let newSession = try await transcriber.makeSession(language: language)
                 session = newSession
+                if hudEnabled {
+                    newSession.setPartialHandler { text in
+                        Task { @MainActor in
+                            guard gen == self.generation else { return }
+                            self.activityModel.partialText = text
+                        }
+                    }
+                }
                 try await self.recorder.start(
-                    sink: { buffer in newSession.append(buffer) },
+                    sink: { buffer in
+                        newSession.append(buffer)
+                        levelMeter?.ingest(buffer)
+                    },
                     onConfigurationChange: {
                         Task { @MainActor in self.audioConfigurationChanged(gen: gen) }
                     }
@@ -150,7 +204,7 @@ final class VoiceInputController {
                 DebugLog.log("[Voice] short press, cancelled")
                 abandonSession(context.session)
             }
-        case .idle, .transcribing:
+        case .idle, .transcribing, .enhancing, .previewing:
             break
         }
     }
@@ -163,7 +217,7 @@ final class VoiceInputController {
         case .recording(let context):
             DebugLog.log("[Voice] Fn used as combo modifier, cancelled")
             abandonSession(context.session)
-        case .idle, .transcribing:
+        case .idle, .transcribing, .enhancing, .previewing:
             break
         }
     }
@@ -203,6 +257,7 @@ final class VoiceInputController {
         }
 
         state = .recording(RecordingContext(session: session, pressedAt: context.pressedAt))
+        showHUDIfEnabled()
         scheduleMaxDuration(gen: gen)
     }
 
@@ -212,13 +267,34 @@ final class VoiceInputController {
         switch result {
         case .success(let text) where !text.isEmpty:
             DebugLog.log("[Voice] transcribed \(text.count) characters")
-            pasteAction(text)
+            if settings.voiceEnhanceEnabled {
+                beginEnhancing(original: text)
+            } else {
+                deliver(text)
+            }
         case .success:
             DebugLog.log("[Voice] empty transcription, nothing to paste")
+            toIdle()
         case .failure(let error):
             DebugLog.log("[Voice] transcription failed: \(error)")
+            toIdle()
         }
-        toIdle()
+    }
+
+    private func enhanceDidFinish(gen: UInt64, original: String, result: Result<String, Error>) {
+        guard gen == generation, case .enhancing = state else { return }
+
+        switch result {
+        case .success(let text) where !text.isEmpty:
+            DebugLog.log("[Voice] enhanced \(text.count) characters")
+            deliver(text, original: original)
+        case .success:
+            DebugLog.log("[Voice] empty enhancement, falling back to transcription")
+            deliver(original)
+        case .failure(let error):
+            DebugLog.log("[Voice] enhancement failed, falling back to transcription: \(error)")
+            deliver(original)
+        }
     }
 
     private func audioConfigurationChanged(gen: UInt64) {
@@ -233,6 +309,7 @@ final class VoiceInputController {
         let gen = generation
         state = .transcribing(session: session)
         activityModel.phase = .transcribing
+        showHUDIfEnabled()
         maxDurationTask?.cancel()
         maxDurationTask = nil
 
@@ -246,6 +323,75 @@ final class VoiceInputController {
             }
         }
         scheduleWatchdog(gen: gen, session: session)
+    }
+
+    private func beginEnhancing(original: String) {
+        let gen = generation
+        let enhancer = enhancerFactory(settings)
+        let task = Task {
+            do {
+                let enhanced = try await enhancer.enhance(original)
+                self.enhanceDidFinish(gen: gen, original: original, result: .success(enhanced))
+            } catch {
+                self.enhanceDidFinish(gen: gen, original: original, result: .failure(error))
+            }
+        }
+        state = .enhancing(original: original, task: task)
+        activityModel.phase = .enhancing
+        watchdogTask?.cancel()
+        scheduleEnhanceWatchdog(gen: gen, original: original)
+    }
+
+    /// Delivery of a finished session's text: preview if enabled, else paste
+    /// directly and go idle. `original` is the raw transcription when `text`
+    /// came from the enhancer, for the preview's read-only comparison.
+    private func deliver(_ text: String, original: String? = nil) {
+        if settings.voicePreviewEnabled {
+            beginPreviewing(text: text, original: original)
+        } else {
+            pasteAction(text)
+            toIdle()
+        }
+    }
+
+    private func beginPreviewing(text: String, original: String?) {
+        let gen = generation
+        previousApp = frontmostAppProvider()
+        state = .previewing
+        activityModel.phase = .idle
+        hideHUD()
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        previewPresenter.show(
+            text: text,
+            original: original,
+            onConfirm: { [weak self] edited in self?.previewDidConfirm(gen: gen, text: edited) },
+            onCancel: { [weak self] in self?.previewDidCancel(gen: gen) }
+        )
+    }
+
+    private func previewDidConfirm(gen: UInt64, text: String) {
+        guard gen == generation, case .previewing = state else { return }
+        previewPresenter.close()
+        let target = previousApp
+        previousApp = nil
+        toIdle()
+
+        guard !text.isEmpty else { return }
+        // Give the previous app time to become active again before ⌘V.
+        Task {
+            target?.activate()
+            try? await Task.sleep(for: .milliseconds(150))
+            self.pasteAction(text)
+        }
+    }
+
+    private func previewDidCancel(gen: UInt64) {
+        guard gen == generation, case .previewing = state else { return }
+        DebugLog.log("[Voice] preview cancelled, text discarded")
+        previewPresenter.close()
+        previousApp = nil
+        toIdle()
     }
 
     /// Cancels the given session, invalidates in-flight callbacks, returns to idle.
@@ -269,16 +415,42 @@ final class VoiceInputController {
         case .transcribing(let session):
             DebugLog.log("[Voice] aborting transcription: \(reason)")
             abandonSession(session)
+        case .enhancing(_, let task):
+            DebugLog.log("[Voice] aborting enhancement: \(reason)")
+            generation &+= 1
+            task.cancel()
+            toIdle()
+        case .previewing:
+            DebugLog.log("[Voice] discarding preview: \(reason)")
+            generation &+= 1
+            previewPresenter.close()
+            previousApp = nil
+            toIdle()
         }
     }
 
     private func toIdle() {
         state = .idle
         activityModel.phase = .idle
+        activityModel.level = 0
+        activityModel.partialText = ""
+        hideHUD()
         maxDurationTask?.cancel()
         maxDurationTask = nil
         watchdogTask?.cancel()
         watchdogTask = nil
+    }
+
+    private func showHUDIfEnabled() {
+        guard settings.voiceHUDEnabled else { return }
+        hudPresenter.show()
+        hudShown = true
+    }
+
+    private func hideHUD() {
+        guard hudShown else { return }
+        hudShown = false
+        hudPresenter.hide()
     }
 
     private func heldLongEnough(since pressedAt: ContinuousClock.Instant) -> Bool {
@@ -309,6 +481,20 @@ final class VoiceInputController {
         }
     }
 
+    private func scheduleEnhanceWatchdog(gen: UInt64, original: String) {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [timeout = timing.enhanceTimeout] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            guard gen == self.generation, case .enhancing(_, let task) = self.state else { return }
+            DebugLog.log("[Voice] enhancement watchdog fired, falling back to transcription")
+            // Invalidate the in-flight enhance callback, then degrade.
+            self.generation &+= 1
+            task.cancel()
+            self.deliver(original)
+        }
+    }
+
     // MARK: - Defaults
 
     private static let defaultTranscriberFactory: @MainActor (AppSettings) -> any SpeechTranscriber = { settings in
@@ -322,6 +508,15 @@ final class VoiceInputController {
                 model: settings.voiceAPIModel
             ))
         }
+    }
+
+    private static let defaultEnhancerFactory: @MainActor (AppSettings) -> any TextEnhancer = { settings in
+        LLMTextEnhancer(configuration: LLMEnhancerConfiguration(
+            baseURL: settings.voiceEnhanceBaseURL,
+            apiKey: settings.voiceEnhanceAPIKey,
+            model: settings.voiceEnhanceModel,
+            systemPrompt: settings.voiceEnhancePrompt
+        ))
     }
 
     private static let defaultPasteAction: @MainActor (String) -> Void = { text in

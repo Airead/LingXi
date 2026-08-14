@@ -163,6 +163,36 @@ final class AppSettings {
     var voiceLanguage: VoiceLanguage {
         didSet { guard voiceLanguage != oldValue else { return }; save(.voiceLanguage, value: voiceLanguage.rawValue) }
     }
+    var voiceEnhanceEnabled: Bool {
+        didSet { guard voiceEnhanceEnabled != oldValue else { return }; save(.voiceEnhanceEnabled, value: voiceEnhanceEnabled) }
+    }
+    var voiceEnhanceBaseURL: String {
+        didSet {
+            if voiceEnhanceBaseURL.trimmingCharacters(in: .whitespaces).isEmpty { voiceEnhanceBaseURL = oldValue; return }
+            guard voiceEnhanceBaseURL != oldValue else { return }; save(.voiceEnhanceBaseURL, value: voiceEnhanceBaseURL)
+        }
+    }
+    var voiceEnhanceAPIKey: String {
+        didSet { guard voiceEnhanceAPIKey != oldValue else { return }; save(.voiceEnhanceAPIKey, value: voiceEnhanceAPIKey) }
+    }
+    var voiceEnhanceModel: String {
+        didSet {
+            if voiceEnhanceModel.trimmingCharacters(in: .whitespaces).isEmpty { voiceEnhanceModel = oldValue; return }
+            guard voiceEnhanceModel != oldValue else { return }; save(.voiceEnhanceModel, value: voiceEnhanceModel)
+        }
+    }
+    var voiceEnhancePrompt: String {
+        didSet {
+            if voiceEnhancePrompt.trimmingCharacters(in: .whitespaces).isEmpty { voiceEnhancePrompt = oldValue; return }
+            guard voiceEnhancePrompt != oldValue else { return }; save(.voiceEnhancePrompt, value: voiceEnhancePrompt)
+        }
+    }
+    var voicePreviewEnabled: Bool {
+        didSet { guard voicePreviewEnabled != oldValue else { return }; save(.voicePreviewEnabled, value: voicePreviewEnabled) }
+    }
+    var voiceHUDEnabled: Bool {
+        didSet { guard voiceHUDEnabled != oldValue else { return }; save(.voiceHUDEnabled, value: voiceHUDEnabled) }
+    }
 
     // MARK: - Screenshot hotkeys (0/0 = not set)
 
@@ -273,6 +303,13 @@ final class AppSettings {
         case voiceAPIKey = "io.github.airead.lingxi.voiceAPIKey"
         case voiceAPIModel = "io.github.airead.lingxi.voiceAPIModel"
         case voiceLanguage = "io.github.airead.lingxi.voiceLanguage"
+        case voiceEnhanceEnabled = "io.github.airead.lingxi.voiceEnhanceEnabled"
+        case voiceEnhanceBaseURL = "io.github.airead.lingxi.voiceEnhanceBaseURL"
+        case voiceEnhanceAPIKey = "io.github.airead.lingxi.voiceEnhanceAPIKey"
+        case voiceEnhanceModel = "io.github.airead.lingxi.voiceEnhanceModel"
+        case voiceEnhancePrompt = "io.github.airead.lingxi.voiceEnhancePrompt"
+        case voicePreviewEnabled = "io.github.airead.lingxi.voicePreviewEnabled"
+        case voiceHUDEnabled = "io.github.airead.lingxi.voiceHUDEnabled"
         case screenshotRegionHotKeyKeyCode = "io.github.airead.lingxi.screenshotRegionHotKeyKeyCode"
         case screenshotRegionHotKeyModifiers = "io.github.airead.lingxi.screenshotRegionHotKeyModifiers"
         case screenshotFullScreenHotKeyKeyCode = "io.github.airead.lingxi.screenshotFullScreenHotKeyKeyCode"
@@ -338,6 +375,13 @@ final class AppSettings {
         voiceAPIModel = Self.load(defaults, .voiceAPIModel) ?? "whisper-1"
         let voiceLanguageRaw: String? = Self.load(defaults, .voiceLanguage)
         voiceLanguage = voiceLanguageRaw.flatMap { VoiceLanguage(rawValue: $0) } ?? .auto
+        voiceEnhanceEnabled = Self.load(defaults, .voiceEnhanceEnabled) ?? false
+        voiceEnhanceBaseURL = Self.load(defaults, .voiceEnhanceBaseURL) ?? "http://localhost:11434/v1"
+        voiceEnhanceAPIKey = Self.load(defaults, .voiceEnhanceAPIKey) ?? ""
+        voiceEnhanceModel = Self.load(defaults, .voiceEnhanceModel) ?? "qwen3"
+        voiceEnhancePrompt = Self.load(defaults, .voiceEnhancePrompt) ?? LLMEnhancerConfiguration.defaultSystemPrompt
+        voicePreviewEnabled = Self.load(defaults, .voicePreviewEnabled) ?? false
+        voiceHUDEnabled = Self.load(defaults, .voiceHUDEnabled) ?? true
 
         screenshotRegionHotKeyKeyCode = Self.load(defaults, .screenshotRegionHotKeyKeyCode) ?? 0
         screenshotRegionHotKeyModifiers = Self.load(defaults, .screenshotRegionHotKeyModifiers) ?? 0

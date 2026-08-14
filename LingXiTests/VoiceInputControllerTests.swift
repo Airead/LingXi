@@ -11,6 +11,7 @@ private final class FakeSession: SpeechTranscriptionSession, @unchecked Sendable
     private var _cancelled = false
     private var finishContinuation: CheckedContinuation<String, Error>?
     private var storedManualResult: Result<String, Error>?
+    private var partialHandler: (@Sendable (String) -> Void)?
 
     private let manualFinish: Bool
     private let finishResult: Result<String, Error>
@@ -26,6 +27,18 @@ private final class FakeSession: SpeechTranscriptionSession, @unchecked Sendable
     nonisolated func append(_ buffer: AVAudioPCMBuffer) {
         lock.withLock { _appendCount += 1 }
     }
+
+    nonisolated func setPartialHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        lock.withLock { partialHandler = handler }
+    }
+
+    /// Fires the registered partial handler, as the recognizer would.
+    func emitPartial(_ text: String) {
+        let handler = lock.withLock { partialHandler }
+        handler?(text)
+    }
+
+    var hasPartialHandler: Bool { lock.withLock { partialHandler != nil } }
 
     func finish() async throws -> String {
         if !manualFinish {
@@ -106,6 +119,56 @@ private final class FakeTranscriber: SpeechTranscriber, @unchecked Sendable {
     }
 }
 
+private final class FakeEnhancer: TextEnhancer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<String, Error>?
+    private var storedManualResult: Result<String, Error>?
+    private var _requests: [String] = []
+
+    private let manual: Bool
+    private let result: Result<String, Error>
+
+    init(result: Result<String, Error> = .success("enhanced"), manual: Bool = false) {
+        self.result = result
+        self.manual = manual
+    }
+
+    var requests: [String] { lock.withLock { _requests } }
+
+    func enhance(_ text: String) async throws -> String {
+        lock.withLock { _requests.append(text) }
+        if !manual { return try result.get() }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { newContinuation in
+                let immediate: Result<String, Error>? = lock.withLock {
+                    if let stored = storedManualResult { return stored }
+                    continuation = newContinuation
+                    return nil
+                }
+                if let immediate { newContinuation.resume(with: immediate) }
+            }
+        } onCancel: {
+            let pending: CheckedContinuation<String, Error>? = lock.withLock {
+                let pending = continuation
+                continuation = nil
+                return pending
+            }
+            pending?.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Completes a manual-mode enhance(). No effect if already cancelled.
+    func complete(_ result: Result<String, Error>) {
+        let pending: CheckedContinuation<String, Error>? = lock.withLock {
+            let pending = continuation
+            continuation = nil
+            if pending == nil { storedManualResult = result }
+            return pending
+        }
+        pending?.resume(with: result)
+    }
+}
+
 private actor FakeRecorder: AudioRecording {
     private(set) var startCount = 0
     private(set) var stopCount = 0
@@ -129,6 +192,41 @@ private final class PasteSpy {
     var pasted: [String] = []
 }
 
+@MainActor
+private final class FakePreviewPresenter: VoicePreviewPresenting {
+    private(set) var shown: [(text: String, original: String?)] = []
+    private(set) var closeCount = 0
+    private var onConfirm: (@MainActor (String) -> Void)?
+    private var onCancel: (@MainActor () -> Void)?
+
+    func show(
+        text: String,
+        original: String?,
+        onConfirm: @escaping @MainActor (String) -> Void,
+        onCancel: @escaping @MainActor () -> Void
+    ) {
+        shown.append((text, original))
+        self.onConfirm = onConfirm
+        self.onCancel = onCancel
+    }
+
+    func close() {
+        closeCount += 1
+    }
+
+    func simulateConfirm(_ text: String) { onConfirm?(text) }
+    func simulateCancel() { onCancel?() }
+}
+
+@MainActor
+private final class FakeHUDPresenter: VoiceHUDPresenting {
+    private(set) var showCount = 0
+    private(set) var hideCount = 0
+
+    func show() { showCount += 1 }
+    func hide() { hideCount += 1 }
+}
+
 // MARK: - Harness
 
 @MainActor
@@ -137,18 +235,29 @@ private struct Harness {
     let activity = VoiceActivityModel()
     let recorder = FakeRecorder()
     let transcriber: FakeTranscriber
+    let enhancer: FakeEnhancer
+    let preview = FakePreviewPresenter()
+    let hud = FakeHUDPresenter()
     let spy = PasteSpy()
     let controller: VoiceInputController
 
     init(
         session: FakeSession,
         gated: Bool = false,
+        enhancer: FakeEnhancer = FakeEnhancer(),
+        enhanceEnabled: Bool = false,
+        previewEnabled: Bool = false,
+        hudEnabled: Bool = false,
         timing: VoiceInputTiming = VoiceInputTiming(minHold: .zero)
     ) {
         let defaults = UserDefaults(suiteName: "io.github.airead.lingxi.test.\(UUID().uuidString)")!
         settings = AppSettings(defaults: defaults)
         settings.voiceInputEnabled = true
+        settings.voiceEnhanceEnabled = enhanceEnabled
+        settings.voicePreviewEnabled = previewEnabled
+        settings.voiceHUDEnabled = hudEnabled
         transcriber = FakeTranscriber(session: session, gated: gated)
+        self.enhancer = enhancer
 
         let transcriber = self.transcriber
         let spy = self.spy
@@ -157,8 +266,12 @@ private struct Harness {
             activityModel: activity,
             recorder: recorder,
             transcriberFactory: { _ in transcriber },
+            enhancerFactory: { _ in enhancer },
             pasteAction: { spy.pasted.append($0) },
             ensureMicrophonePermission: {},
+            previewPresenter: preview,
+            hudPresenter: hud,
+            frontmostAppProvider: { nil },
             timing: timing
         )
     }
@@ -343,6 +456,315 @@ struct VoiceInputControllerTests {
         #expect(h.activity.phase == .idle)
     }
 
+    @Test func enhanceSuccessPastesEnhancedText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.spy.pasted == ["polished"] })
+        #expect(h.activity.phase == .idle)
+        #expect(enhancer.requests == ["raw"])
+    }
+
+    @Test func enhanceFailureFallsBackToOriginal() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .failure(TranscriptionError.invalidResponse))
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.spy.pasted == ["raw"] })
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func enhanceEmptyResultFallsBackToOriginal() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success(""))
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.spy.pasted == ["raw"] })
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func enhanceDisabledPastesRawText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: false)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.spy.pasted == ["raw"] })
+        #expect(enhancer.requests.isEmpty)
+    }
+
+    @Test func enhanceWatchdogFallsBackAndDiscardsLateResult() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(
+            session: session,
+            enhancer: enhancer,
+            enhanceEnabled: true,
+            timing: VoiceInputTiming(minHold: .zero, enhanceTimeout: .milliseconds(30))
+        )
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.activity.phase == .enhancing })
+
+        // The enhancement never completes; the watchdog must degrade to raw.
+        #expect(await waitUntil { h.spy.pasted == ["raw"] })
+        #expect(h.activity.phase == .idle)
+
+        // A late result from the abandoned enhancement must be discarded.
+        enhancer.complete(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.spy.pasted == ["raw"])
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func fnDownIgnoredWhileEnhancing() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.activity.phase == .enhancing })
+
+        // Busy: a second press must not start a new session.
+        h.controller.fnDown()
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(await h.recorder.startCount == 1)
+        #expect(h.activity.phase == .enhancing)
+
+        enhancer.complete(.success("polished"))
+        #expect(await waitUntil { h.spy.pasted == ["polished"] })
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func disablingVoiceInputAbortsEnhancement() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true)
+        h.controller.applySettings()
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.activity.phase == .enhancing })
+
+        h.settings.voiceInputEnabled = false
+        h.controller.applySettings()
+
+        #expect(await waitUntil { h.activity.phase == .idle })
+        enhancer.complete(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.spy.pasted.isEmpty)
+    }
+
+    @Test func previewConfirmPastesEditedText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(h.preview.shown[0].text == "raw")
+        #expect(h.preview.shown[0].original == nil)
+        #expect(h.spy.pasted.isEmpty)
+
+        // The user edits the text in the panel before confirming.
+        h.preview.simulateConfirm("edited")
+        #expect(await waitUntil { h.spy.pasted == ["edited"] })
+        #expect(h.activity.phase == .idle)
+        #expect(h.preview.closeCount >= 1)
+    }
+
+    @Test func previewCancelDiscards() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        h.preview.simulateCancel()
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(h.spy.pasted.isEmpty)
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func previewShowsOriginalAlongsideEnhancedText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(h.preview.shown[0].text == "polished")
+        #expect(h.preview.shown[0].original == "raw")
+    }
+
+    @Test func enhanceFailureWithPreviewShowsOriginalText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .failure(TranscriptionError.invalidResponse))
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(h.preview.shown[0].text == "raw")
+        #expect(h.preview.shown[0].original == nil)
+    }
+
+    @Test func fnDownDuringPreviewStartsNewSession() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        // A new press discards the pending preview and records again.
+        h.controller.fnDown()
+        #expect(h.preview.closeCount >= 1)
+        #expect(await waitUntil { await h.recorder.startCount == 2 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 2 })
+
+        // The first preview's confirm is stale and must be discarded.
+        h.preview.simulateConfirm("second")
+        #expect(await waitUntil { h.spy.pasted == ["second"] })
+    }
+
+    @Test func staleConfirmAfterCancelIsDiscarded() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        h.preview.simulateCancel()
+        #expect(h.activity.phase == .idle)
+
+        // Confirm arriving after cancel must not paste.
+        h.preview.simulateConfirm("late")
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(h.spy.pasted.isEmpty)
+    }
+
+    @Test func emptyPreviewConfirmPastesNothing() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        h.preview.simulateConfirm("")
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(h.spy.pasted.isEmpty)
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func hudShownWhileRecordingAndHiddenWhenIdle() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, hudEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { h.hud.showCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.activity.phase == .transcribing })
+        #expect(h.hud.hideCount == 0)
+
+        session.completeFinish(.success("x"))
+        #expect(await waitUntil { h.activity.phase == .idle })
+        #expect(h.hud.hideCount == 1)
+    }
+
+    @Test func hudDisabledNeverShows() async {
+        let session = FakeSession(finishResult: .success("hello"))
+        let h = Harness(session: session, hudEnabled: false)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.spy.pasted == ["hello"] })
+
+        #expect(h.hud.showCount == 0)
+        #expect(session.hasPartialHandler == false)
+    }
+
+    @Test func partialTextFlowsToActivityModelAndResetsOnIdle() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, hudEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        #expect(await waitUntil { session.hasPartialHandler })
+
+        session.emitPartial("hello wor")
+        #expect(await waitUntil { h.activity.partialText == "hello wor" })
+
+        h.controller.fnUp()
+        session.completeFinish(.success("hello world"))
+        #expect(await waitUntil { h.activity.phase == .idle })
+        #expect(h.activity.partialText == "")
+        #expect(h.activity.level == 0)
+    }
+
+    @Test func stalePartialAfterCancelIsDiscarded() async {
+        let session = FakeSession(finishResult: .success("hello"))
+        let h = Harness(session: session, hudEnabled: true, timing: VoiceInputTiming(minHold: .seconds(10)))
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp() // short press cancels and bumps generation
+        #expect(await waitUntil { h.activity.phase == .idle })
+
+        session.emitPartial("stale")
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.activity.partialText == "")
+    }
+
+    @Test func hudHiddenWhenPreviewOpens() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true, hudEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { h.hud.showCount == 1 })
+        h.controller.fnUp()
+
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+        #expect(h.hud.hideCount == 1)
+    }
+
     @Test func disabledSettingIgnoresFnDown() async {
         let session = FakeSession()
         let h = Harness(session: session)
@@ -397,6 +819,13 @@ struct VoiceSettingsPersistenceTests {
         #expect(settings.voiceAPIKey == "")
         #expect(settings.voiceAPIModel == "whisper-1")
         #expect(settings.voiceLanguage == .auto)
+        #expect(settings.voiceEnhanceEnabled == false)
+        #expect(settings.voiceEnhanceBaseURL == "http://localhost:11434/v1")
+        #expect(settings.voiceEnhanceAPIKey == "")
+        #expect(settings.voiceEnhanceModel == "qwen3")
+        #expect(settings.voiceEnhancePrompt == LLMEnhancerConfiguration.defaultSystemPrompt)
+        #expect(settings.voicePreviewEnabled == false)
+        #expect(settings.voiceHUDEnabled == true)
     }
 
     @Test func roundTrip() {
@@ -408,6 +837,13 @@ struct VoiceSettingsPersistenceTests {
         settings1.voiceAPIKey = "gsk_test"
         settings1.voiceAPIModel = "whisper-large-v3"
         settings1.voiceLanguage = .chinese
+        settings1.voiceEnhanceEnabled = true
+        settings1.voiceEnhanceBaseURL = "https://api.example.com/v1"
+        settings1.voiceEnhanceAPIKey = "sk-enhance"
+        settings1.voiceEnhanceModel = "gpt-test"
+        settings1.voiceEnhancePrompt = "custom prompt"
+        settings1.voicePreviewEnabled = true
+        settings1.voiceHUDEnabled = false
 
         let settings2 = AppSettings(defaults: defaults)
         #expect(settings2.voiceInputEnabled == true)
@@ -416,6 +852,13 @@ struct VoiceSettingsPersistenceTests {
         #expect(settings2.voiceAPIKey == "gsk_test")
         #expect(settings2.voiceAPIModel == "whisper-large-v3")
         #expect(settings2.voiceLanguage == .chinese)
+        #expect(settings2.voiceEnhanceEnabled == true)
+        #expect(settings2.voiceEnhanceBaseURL == "https://api.example.com/v1")
+        #expect(settings2.voiceEnhanceAPIKey == "sk-enhance")
+        #expect(settings2.voiceEnhanceModel == "gpt-test")
+        #expect(settings2.voiceEnhancePrompt == "custom prompt")
+        #expect(settings2.voicePreviewEnabled == true)
+        #expect(settings2.voiceHUDEnabled == false)
     }
 
     @Test func rejectsEmptyBaseURLAndModel() {
@@ -424,5 +867,11 @@ struct VoiceSettingsPersistenceTests {
         #expect(settings.voiceAPIBaseURL == "https://api.openai.com/v1")
         settings.voiceAPIModel = ""
         #expect(settings.voiceAPIModel == "whisper-1")
+        settings.voiceEnhanceBaseURL = " "
+        #expect(settings.voiceEnhanceBaseURL == "http://localhost:11434/v1")
+        settings.voiceEnhanceModel = ""
+        #expect(settings.voiceEnhanceModel == "qwen3")
+        settings.voiceEnhancePrompt = "  "
+        #expect(settings.voiceEnhancePrompt == LLMEnhancerConfiguration.defaultSystemPrompt)
     }
 }
