@@ -91,7 +91,7 @@ protocol AudioRetaining: AnyObject, Sendable {
 
 /// Buffer accumulation is lock-protected because append() runs on the
 /// realtime audio thread; conversion happens off the main actor.
-final class RetainedAudio: AudioRetaining, @unchecked Sendable {
+nonisolated final class RetainedAudio: AudioRetaining, @unchecked Sendable {
     private let lock = NSLock()
     private var buffers: [AVAudioPCMBuffer] = []
     private var accepting = true
@@ -110,9 +110,12 @@ final class RetainedAudio: AudioRetaining, @unchecked Sendable {
     }
 
     func wavData() async throws -> Data {
-        if let conversion { return try await conversion.value }
-        let task = Task { try await performConversion() }
-        conversion = task
+        let task: Task<Data, Error> = lock.withLock {
+            if let conversion { return conversion }
+            let task = Task { try await self.performConversion() }
+            conversion = task
+            return task
+        }
         return try await task.value
     }
 

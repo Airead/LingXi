@@ -119,7 +119,7 @@ final class WhisperAPITranscriber: SpeechTranscriber, @unchecked Sendable {
 /// lock-protected because append() runs on the realtime audio thread while
 /// finish()/cancel() run elsewhere. Format conversion and networking happen
 /// off the main actor via @concurrent.
-final class WhisperAPISession: SpeechTranscriptionSession, @unchecked Sendable {
+nonisolated final class WhisperAPISession: SpeechTranscriptionSession, @unchecked Sendable {
     private let configuration: WhisperAPIConfiguration
     private let languageCode: String?
     private let urlSession: URLSession

@@ -24,7 +24,7 @@ enum VoiceBackend: String, CaseIterable, Identifiable, Sendable {
 
 // MARK: - Language
 
-enum VoiceLanguage: String, CaseIterable, Identifiable, Sendable {
+nonisolated enum VoiceLanguage: String, CaseIterable, Identifiable, Sendable {
     case auto
     case chinese
     case english

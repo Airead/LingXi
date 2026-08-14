@@ -70,7 +70,7 @@ final class AppleSpeechTranscriber: SpeechTranscriber, @unchecked Sendable {
 /// Streaming recognition session. Recognition callbacks may arrive on any
 /// queue, so all mutable state is lock-protected and the pending continuation
 /// is resumed exactly once (taken out of the lock before resuming).
-final class AppleSpeechSession: SpeechTranscriptionSession, @unchecked Sendable {
+nonisolated final class AppleSpeechSession: SpeechTranscriptionSession, @unchecked Sendable {
     private let recognizer: SFSpeechRecognizer
     private let request: SFSpeechAudioBufferRecognitionRequest
 

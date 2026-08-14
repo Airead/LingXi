@@ -8,7 +8,7 @@ import AVFoundation
 import Foundation
 
 /// Timing knobs, injectable for tests.
-struct VoiceInputTiming: Sendable {
+nonisolated struct VoiceInputTiming: Sendable {
     /// Presses shorter than this are treated as accidental and cancelled.
     var minHold: Duration = .milliseconds(250)
     /// Recording is force-stopped (and transcribed) after this duration.
