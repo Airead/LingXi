@@ -511,6 +511,7 @@ final class VoiceInputController {
         let setup = VoicePreviewSetup(
             text: text,
             original: original,
+            asrInfo: asrInfoText(for: session),
             modes: enhanceModesProvider(),
             currentModeID: settings.voiceEnhanceMode,
             llmOptions: settings.voiceLLMProviders.flatMap { provider in
@@ -713,6 +714,14 @@ final class VoiceInputController {
         )
         let history = conversationHistory
         Task { await history.record(record) }
+    }
+
+    /// ASR section info line, e.g. "apple · 3.2s". Recalled history entries
+    /// have no duration.
+    private func asrInfoText(for session: PreviewSession) -> String {
+        let model = currentASRModelDescription()
+        guard session.audioDuration > 0 else { return model }
+        return String(format: "%@ · %.1fs", model, session.audioDuration)
     }
 
     private func currentASRModelDescription() -> String {

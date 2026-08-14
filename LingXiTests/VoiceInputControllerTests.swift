@@ -636,6 +636,8 @@ struct VoiceInputControllerTests {
         #expect(await waitUntil { h.preview.shown.count == 1 })
         #expect(h.preview.shown[0].text == "raw")
         #expect(h.preview.shown[0].original == nil)
+        // ASR info line carries the model name and a positive duration.
+        #expect(h.preview.setups[0].asrInfo.hasPrefix("apple · "))
         #expect(h.spy.pasted.isEmpty)
 
         // The user edits the text in the panel before confirming.

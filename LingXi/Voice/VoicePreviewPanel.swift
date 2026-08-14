@@ -9,12 +9,17 @@ import SwiftUI
 
 // MARK: - Presenting protocol (test seam)
 
-/// Everything the preview panel needs at open time.
+/// Everything the preview panel needs at open time. `text` is the initial
+/// final text (enhanced result, or the ASR text when no enhancement ran);
+/// `original` carries the raw ASR text only when `text` came from the
+/// enhancer.
 struct VoicePreviewSetup {
     var text: String
-    /// Raw ASR text when `text` came from the enhancer, for comparison.
     var original: String?
-    /// Ordered mode list; the first nine are reachable via ⌘1-9.
+    /// Info line next to the ASR section title, e.g. "apple · 3.2s".
+    var asrInfo: String
+    /// Ordered mode list; the panel prepends an "Off" segment, so ⌘1 is Off
+    /// and ⌘2 is the first mode.
     var modes: [EnhanceMode]
     var currentModeID: String
     /// Flattened provider × model choices for the in-panel LLM dropdown.
@@ -38,13 +43,16 @@ struct VoicePreviewCallbacks {
     var onHistorySelect: @MainActor (UUID) -> Void
 }
 
-/// Shows the final text before pasting. Return confirms with the (possibly
-/// user-edited) current text, ⌘Return copies without pasting, Escape or
-/// losing key status cancels, ⌘1-9 switches the enhancement mode.
+/// Shows the transcription, the enhancement result and an editable final
+/// text before pasting. Return confirms with the final text, ⌘Return copies
+/// without pasting, Escape or losing key status cancels, ⌘1-9 switches the
+/// enhancement mode (⌘1 = Off).
 @MainActor
 protocol VoicePreviewPresenting: AnyObject {
     func show(setup: VoicePreviewSetup, callbacks: VoicePreviewCallbacks)
-    /// Replaces the displayed result after a re-enhancement or cache hit.
+    /// Replaces the displayed result after a re-enhancement, cache hit or
+    /// degrade. `original` non-nil means `text` is an enhancement result;
+    /// nil means no enhancement (mode off or reverted to the ASR text).
     func update(text: String, original: String?, currentModeID: String, currentLLM: LLMSelection?, isCached: Bool)
     /// Toggles the in-panel progress indicator while re-enhancing.
     func setEnhancing(_ enhancing: Bool)
@@ -54,10 +62,14 @@ protocol VoicePreviewPresenting: AnyObject {
 // MARK: - Layout
 
 private enum VoicePreviewLayout {
-    static let width: CGFloat = 480
-    static let height: CGFloat = 210
+    static let width: CGFloat = 640
+    /// Golden-ratio height, matching WenZi's result window.
+    static let fullHeight: CGFloat = 396
+    /// Height without the mode segment and enhance section.
+    static let compactHeight: CGFloat = 280
     static let cornerRadius: CGFloat = 12
     static let bottomOffset: CGFloat = 140
+    static let readOnlyAreaHeight: CGFloat = 74
 }
 
 // MARK: - Panel manager
@@ -71,13 +83,13 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         close()
 
         let model = VoicePreviewModel(setup: setup)
-        model.onModeSwitch = callbacks.onModeSwitch
-        model.onModelSwitch = callbacks.onModelSwitch
-        model.onHistorySelect = callbacks.onHistorySelect
         self.model = model
 
+        let height = setup.modes.isEmpty
+            ? VoicePreviewLayout.compactHeight
+            : VoicePreviewLayout.fullHeight
         let newPanel = KeyCapturePanel(
-            contentRect: NSRect(x: 0, y: 0, width: VoicePreviewLayout.width, height: VoicePreviewLayout.height),
+            contentRect: NSRect(x: 0, y: 0, width: VoicePreviewLayout.width, height: height),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -90,26 +102,44 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         newPanel.isMovableByWindowBackground = true
         newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         newPanel.contentView = NSHostingView(rootView: VoicePreviewContent(model: model))
-        newPanel.onReturn = { [weak self, weak model] in
+
+        let confirm: @MainActor () -> Void = { [weak self, weak model] in
             guard let self else { return }
-            let current = model?.text ?? setup.text
+            let current = model?.finalText ?? setup.text
             self.close()
             callbacks.onConfirm(current)
         }
-        newPanel.onCommandReturn = { [weak self, weak model] in
+        let copy: @MainActor () -> Void = { [weak self, weak model] in
             guard let self else { return }
-            let current = model?.text ?? setup.text
+            let current = model?.finalText ?? setup.text
             self.close()
             callbacks.onCopy(current)
         }
-        newPanel.onEscape = { [weak self] in
+        let cancel: @MainActor () -> Void = { [weak self] in
             self?.close()
             callbacks.onCancel()
         }
+
+        newPanel.onReturn = confirm
+        newPanel.onCommandReturn = copy
+        newPanel.onEscape = cancel
         newPanel.onDigit = { [weak model] digit in
-            guard let model, model.modes.indices.contains(digit - 1) else { return }
-            callbacks.onModeSwitch(model.modes[digit - 1].id)
+            guard let model else { return }
+            let segments = model.segments
+            guard segments.indices.contains(digit - 1) else { return }
+            model.userEdited = false
+            callbacks.onModeSwitch(segments[digit - 1].id)
         }
+        newPanel.onCommandFlagChanged = { [weak model] held in
+            model?.cmdHeld = held
+        }
+
+        model.onConfirmTap = confirm
+        model.onCopyTap = copy
+        model.onCancelTap = cancel
+        model.onModeSwitch = callbacks.onModeSwitch
+        model.onModelSwitch = callbacks.onModelSwitch
+        model.onHistorySelect = callbacks.onHistorySelect
 
         positionPanel(newPanel)
         newPanel.makeKeyAndOrderFront(nil)
@@ -123,14 +153,13 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         currentLLM: LLMSelection?,
         isCached: Bool
     ) {
-        guard let model else { return }
-        model.text = text
-        model.original = original
-        if original == nil { model.showOriginal = false }
-        model.currentModeID = currentModeID
-        model.currentLLM = currentLLM
-        model.isCached = isCached
-        model.isEnhancing = false
+        model?.apply(
+            text: text,
+            original: original,
+            currentModeID: currentModeID,
+            currentLLM: currentLLM,
+            isCached: isCached
+        )
     }
 
     func setEnhancing(_ enhancing: Bool) {
@@ -146,6 +175,7 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         p.onCommandReturn = nil
         p.onEscape = nil
         p.onDigit = nil
+        p.onCommandFlagChanged = nil
         p.orderOut(nil)
     }
 
@@ -167,10 +197,14 @@ private final class KeyCapturePanel: NSPanel {
     var onCommandReturn: (() -> Void)?
     var onEscape: (() -> Void)?
     var onDigit: ((Int) -> Void)?
+    var onCommandFlagChanged: ((Bool) -> Void)?
 
     override var canBecomeKey: Bool { true }
 
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .flagsChanged {
+            onCommandFlagChanged?(event.modifierFlags.contains(.command))
+        }
         if event.type == .keyDown {
             let flags = event.modifierFlags
             switch Int(event.keyCode) {
@@ -204,29 +238,40 @@ private final class KeyCapturePanel: NSPanel {
     }
 }
 
-// MARK: - Model & content
+// MARK: - Model
 
 @Observable
 @MainActor
 final class VoicePreviewModel {
-    var text: String
-    var original: String?
-    var showOriginal = false
+    let asrText: String
+    let asrInfo: String
+    var enhancedText: String?
+    var finalText: String
+    /// Set when the user types in the final area; blocks programmatic
+    /// overwrites of the final text until the next mode/model switch.
+    var userEdited = false
     var modes: [EnhanceMode]
     var currentModeID: String
     var llmOptions: [LLMSelection]
     var currentLLM: LLMSelection?
     var isCached: Bool
     var isEnhancing = false
+    /// Command key is held: the confirm button becomes "Copy".
+    var cmdHeld = false
     var history: [VoicePreviewHistoryMenuItem]
 
     var onModeSwitch: (@MainActor (String) -> Void)?
     var onModelSwitch: (@MainActor (LLMSelection) -> Void)?
     var onHistorySelect: (@MainActor (UUID) -> Void)?
+    var onConfirmTap: (@MainActor () -> Void)?
+    var onCopyTap: (@MainActor () -> Void)?
+    var onCancelTap: (@MainActor () -> Void)?
 
     init(setup: VoicePreviewSetup) {
-        text = setup.text
-        original = setup.original
+        asrText = setup.original ?? setup.text
+        asrInfo = setup.asrInfo
+        enhancedText = setup.original != nil ? setup.text : nil
+        finalText = setup.text
         modes = setup.modes
         currentModeID = setup.currentModeID
         llmOptions = setup.llmOptions
@@ -235,120 +280,260 @@ final class VoicePreviewModel {
         history = setup.history
     }
 
-    var currentModeLabel: String {
-        modes.first { $0.id == currentModeID }?.label ?? currentModeID
+    /// Segment items for the mode bar: Off first, then the mode files.
+    /// ⌘1-9 indexes into this list.
+    var segments: [(id: String, label: String)] {
+        [(EnhanceMode.offModeID, "Off")] + modes.map { ($0.id, $0.label) }
+    }
+
+    enum EnhanceState: Equatable {
+        case off
+        case enhancing
+        case result(cached: Bool)
+        /// Enhancement failed or timed out; the ASR text is shown instead.
+        case reverted
+    }
+
+    var enhanceState: EnhanceState {
+        if isEnhancing { return .enhancing }
+        if enhancedText != nil { return .result(cached: isCached) }
+        return currentModeID == EnhanceMode.offModeID ? .off : .reverted
+    }
+
+    /// Applies a re-enhancement result, cache hit or degrade outcome. The
+    /// final text follows the result unless the user already edited it.
+    func apply(
+        text: String,
+        original: String?,
+        currentModeID: String,
+        currentLLM: LLMSelection?,
+        isCached: Bool
+    ) {
+        enhancedText = original != nil ? text : nil
+        self.currentModeID = currentModeID
+        self.currentLLM = currentLLM
+        self.isCached = isCached
+        isEnhancing = false
+        if !userEdited {
+            finalText = text
+        }
     }
 }
 
+// MARK: - Content view
+
 private struct VoicePreviewContent: View {
     @Bindable var model: VoicePreviewModel
-    @FocusState private var isEditorFocused: Bool
+    @FocusState private var isFinalFocused: Bool
 
     var body: some View {
-        VStack(spacing: 6) {
-            toolbar
-
-            if model.showOriginal, let original = model.original {
-                ScrollView {
-                    Text(original)
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(4)
-                }
-            } else {
-                TextEditor(text: $model.text)
-                    .font(.system(size: 14))
-                    .scrollContentBackground(.hidden)
-                    .focused($isEditorFocused)
+        VStack(alignment: .leading, spacing: 8) {
+            asrSection
+            if !model.modes.isEmpty {
+                segmentBar
+                enhanceSection
             }
-
-            HStack {
-                if model.original != nil {
-                    Toggle("Show original", isOn: $model.showOriginal)
-                        .toggleStyle(.checkbox)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text("⏎ Paste · ⌘⏎ Copy · Esc Cancel")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            finalSection
+            Divider()
+            buttonBar
         }
         .padding(12)
-        .frame(width: VoicePreviewLayout.width, height: VoicePreviewLayout.height)
+        .frame(
+            width: VoicePreviewLayout.width,
+            height: model.modes.isEmpty
+                ? VoicePreviewLayout.compactHeight
+                : VoicePreviewLayout.fullHeight
+        )
         .background(.ultraThickMaterial)
         .clipShape(RoundedRectangle(cornerRadius: VoicePreviewLayout.cornerRadius))
-        .onAppear { isEditorFocused = true }
+        .onAppear { isFinalFocused = true }
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 8) {
-            if !model.modes.isEmpty {
-                Menu {
-                    ForEach(Array(model.modes.enumerated()), id: \.element.id) { index, mode in
-                        Button {
-                            model.onModeSwitch?(mode.id)
-                        } label: {
-                            if index < 9 {
-                                Text("\(mode.label)  ⌘\(index + 1)")
-                            } else {
-                                Text(mode.label)
+    // MARK: ASR
+
+    private var asrSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("ASR")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(model.asrInfo)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            readOnlyArea(model.asrText, background: Color(nsColor: .quaternarySystemFill))
+        }
+    }
+
+    // MARK: Mode segment
+
+    private var segmentBar: some View {
+        Picker("Mode", selection: Binding(
+            get: { model.currentModeID },
+            set: { newID in
+                // Switching modes means the user wants that result: allow
+                // the final text to follow it again.
+                model.userEdited = false
+                model.currentModeID = newID
+                model.onModeSwitch?(newID)
+            }
+        )) {
+            ForEach(model.segments, id: \.id) { segment in
+                Text(segment.label).tag(segment.id)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+    }
+
+    // MARK: Enhance
+
+    private var enhanceSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("AI Enhance")
+                    .font(.system(size: 12, weight: .semibold))
+                if !model.llmOptions.isEmpty {
+                    Menu {
+                        ForEach(model.llmOptions, id: \.self) { option in
+                            Button("\(option.provider) · \(option.model)") {
+                                model.userEdited = false
+                                model.onModelSwitch?(option)
                             }
                         }
+                    } label: {
+                        Text(llmLabel)
+                            .font(.system(size: 10))
                     }
-                } label: {
-                    Label(model.currentModeLabel, systemImage: "wand.and.stars")
-                        .font(.caption)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
+                enhanceStateView
+                Spacer()
             }
+            readOnlyArea(model.enhancedText ?? "", background: Color.accentColor.opacity(0.06))
+        }
+    }
 
-            if !model.llmOptions.isEmpty {
-                Menu {
-                    ForEach(model.llmOptions, id: \.self) { option in
-                        Button("\(option.provider) · \(option.model)") {
-                            model.onModelSwitch?(option)
-                        }
-                    }
-                } label: {
-                    Label(model.currentLLM?.model ?? "model", systemImage: "cpu")
-                        .font(.caption)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            }
+    private var llmLabel: String {
+        guard let llm = model.currentLLM else { return "model" }
+        return "\(llm.provider) · \(llm.model)"
+    }
 
-            if model.isEnhancing {
-                ProgressView()
-                    .controlSize(.small)
-            } else if model.isCached {
+    @ViewBuilder
+    private var enhanceStateView: some View {
+        switch model.enhanceState {
+        case .off:
+            stateText("Not enabled")
+        case .enhancing:
+            ProgressView()
+                .controlSize(.small)
+            stateText("Enhancing…")
+        case .result(let cached):
+            if cached {
                 Text("cached")
-                    .font(.caption2)
+                    .font(.system(size: 9))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(Color.secondary.opacity(0.2))
                     .clipShape(Capsule())
             }
+        case .reverted:
+            stateText("Failed, using ASR text")
+                .foregroundStyle(.orange)
+        }
+    }
+
+    private func stateText(_ text: String) -> Text {
+        Text(text)
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+    }
+
+    // MARK: Final
+
+    private var finalSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Final")
+                .font(.system(size: 12, weight: .semibold))
+            TextEditor(text: Binding(
+                get: { model.finalText },
+                set: { newValue in
+                    // Only user typing goes through this binding;
+                    // programmatic updates assign model.finalText directly.
+                    model.finalText = newValue
+                    model.userEdited = true
+                }
+            ))
+            .font(.system(size: 12, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .padding(4)
+            .frame(maxHeight: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+            )
+            .focused($isFinalFocused)
+        }
+    }
+
+    // MARK: Buttons
+
+    private var buttonBar: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(model.history) { item in
+                    Button(item.title) {
+                        model.onHistorySelect?(item.id)
+                    }
+                }
+            } label: {
+                Text("History (\(model.history.count))")
+                    .font(.system(size: 11))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(model.history.isEmpty)
+
+            Text("⏎ Paste · ⌘⏎ Copy · Esc Cancel · ⌘1-9 Mode")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
 
             Spacer()
 
-            if !model.history.isEmpty {
-                Menu {
-                    ForEach(model.history) { item in
-                        Button(item.title) {
-                            model.onHistorySelect?(item.id)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "clock")
-                        .font(.caption)
+            Button("Cancel") { model.onCancelTap?() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            Button(model.cmdHeld ? "Copy" : "Confirm") {
+                if model.cmdHeld {
+                    model.onCopyTap?()
+                } else {
+                    model.onConfirmTap?()
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
+    }
+
+    // MARK: Helpers
+
+    private func readOnlyArea(_ text: String, background: Color) -> some View {
+        ScrollView {
+            Text(text)
+                .font(.system(size: 12, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+        }
+        .frame(height: VoicePreviewLayout.readOnlyAreaHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(background)
+        )
     }
 }
