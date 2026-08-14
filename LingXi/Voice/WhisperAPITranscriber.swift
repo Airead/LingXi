@@ -50,6 +50,21 @@ nonisolated enum WhisperRequestBuilder {
         request.httpBody = body
         return request
     }
+
+    static func parseResponse(data: Data, response: URLResponse) throws -> String {
+        guard let http = response as? HTTPURLResponse else {
+            throw TranscriptionError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let body = String(data: data.prefix(500), encoding: .utf8) ?? ""
+            throw TranscriptionError.apiError(statusCode: http.statusCode, body: body)
+        }
+        struct WhisperResponse: Decodable { let text: String }
+        guard let decoded = try? JSONDecoder().decode(WhisperResponse.self, from: data) else {
+            throw TranscriptionError.invalidResponse
+        }
+        return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 // MARK: - Transcriber
@@ -78,6 +93,22 @@ final class WhisperAPITranscriber: SpeechTranscriber, @unchecked Sendable {
             languageCode: language.whisperCode,
             urlSession: urlSession
         )
+    }
+
+    /// Re-transcription: the retained WAV is already in upload format.
+    @concurrent
+    func transcribe(wavData: Data, language: VoiceLanguage) async throws -> String {
+        guard !configuration.apiKey.trimmingCharacters(in: .whitespaces).isEmpty else {
+            throw TranscriptionError.invalidConfiguration("Whisper API key is not set")
+        }
+        let request = try WhisperRequestBuilder.makeRequest(
+            configuration: configuration,
+            languageCode: language.whisperCode,
+            wavData: wavData
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try Task.checkCancellation()
+        return try WhisperRequestBuilder.parseResponse(data: data, response: response)
     }
 }
 
@@ -158,19 +189,6 @@ final class WhisperAPISession: SpeechTranscriptionSession, @unchecked Sendable {
 
         let (data, response) = try await urlSession.data(for: request)
         try Task.checkCancellation()
-
-        guard let http = response as? HTTPURLResponse else {
-            throw TranscriptionError.invalidResponse
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let body = String(data: data.prefix(500), encoding: .utf8) ?? ""
-            throw TranscriptionError.apiError(statusCode: http.statusCode, body: body)
-        }
-
-        struct WhisperResponse: Decodable { let text: String }
-        guard let decoded = try? JSONDecoder().decode(WhisperResponse.self, from: data) else {
-            throw TranscriptionError.invalidResponse
-        }
-        return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try WhisperRequestBuilder.parseResponse(data: data, response: response)
     }
 }

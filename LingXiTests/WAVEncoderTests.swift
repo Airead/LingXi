@@ -58,3 +58,44 @@ struct WAVEncoderTests {
         #expect(readUInt32LE(data, at: 28) == 96000)
     }
 }
+
+struct WAVDecoderTests {
+
+    @Test func roundTripsEncodedSamples() {
+        let samples: [Int16] = [0, 100, -100, 32767, -32768, 0x1234]
+        let data = WAVEncoder.encode(samples: samples, sampleRate: 16000)
+        #expect(WAVDecoder.decodeSamples(data) == samples)
+    }
+
+    @Test func rejectsNonWAVData() {
+        #expect(WAVDecoder.decodeSamples(Data("not a wav at all, truly".utf8).padded(to: 60)) == nil)
+        #expect(WAVDecoder.decodeSamples(Data()) == nil)
+        // Header-only WAV (no samples) has nothing to decode.
+        #expect(WAVDecoder.decodeSamples(WAVEncoder.encode(samples: [], sampleRate: 16000)) == nil)
+    }
+
+    @Test func skipsUnknownChunksBeforeData() {
+        // RIFF + WAVE + fmt + a bogus "LIST" chunk + data.
+        var data = WAVEncoder.encode(samples: [7, -7], sampleRate: 16000)
+        // Splice a LIST chunk between fmt (ends at 36) and data.
+        var list = Data("LIST".utf8)
+        list.append(contentsOf: [4, 0, 0, 0]) // size 4 LE
+        list.append(contentsOf: [1, 2, 3, 4])
+        data.insert(contentsOf: list, at: 36)
+        #expect(WAVDecoder.decodeSamples(data) == [7, -7])
+    }
+
+    @Test func truncatedDataChunkIsClamped() {
+        var data = WAVEncoder.encode(samples: [1, 2, 3], sampleRate: 16000)
+        data.removeLast(2) // drop the last sample's bytes
+        #expect(WAVDecoder.decodeSamples(data) == [1, 2])
+    }
+}
+
+private extension Data {
+    func padded(to count: Int) -> Data {
+        var copy = self
+        while copy.count < count { copy.append(0) }
+        return copy
+    }
+}

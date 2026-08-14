@@ -30,6 +30,41 @@ final class AppleSpeechTranscriber: SpeechTranscriber, @unchecked Sendable {
         }
         return AppleSpeechSession(recognizer: recognizer)
     }
+
+    /// Re-transcription: decodes the retained WAV and replays it through a
+    /// fresh streaming session (faster-than-realtime feeding is fine).
+    func transcribe(wavData: Data, language: VoiceLanguage) async throws -> String {
+        guard let samples = WAVDecoder.decodeSamples(wavData), !samples.isEmpty,
+              let format = AVAudioFormat(
+                  commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true
+              ) else {
+            throw TranscriptionError.emptyAudio
+        }
+        let session = try await makeSession(language: language)
+
+        var index = 0
+        while index < samples.count {
+            let count = min(4096, samples.count - index)
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: format, frameCapacity: AVAudioFrameCount(count)
+            ), let channel = buffer.int16ChannelData else {
+                session.cancel()
+                throw TranscriptionError.emptyAudio
+            }
+            buffer.frameLength = AVAudioFrameCount(count)
+            samples.withUnsafeBufferPointer { source in
+                channel[0].update(from: source.baseAddress! + index, count: count)
+            }
+            session.append(buffer)
+            index += count
+        }
+
+        return try await withTaskCancellationHandler {
+            try await session.finish()
+        } onCancel: {
+            session.cancel()
+        }
+    }
 }
 
 /// Streaming recognition session. Recognition callbacks may arrive on any

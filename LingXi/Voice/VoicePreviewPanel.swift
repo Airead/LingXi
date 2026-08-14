@@ -23,6 +23,10 @@ struct VoicePreviewSetup {
     /// The panel opened while transcription is still running; the ASR area
     /// shows a progress state until `setASRResult`/`setASRFailed` arrives.
     var isTranscribing = false
+    /// Apple Speech plus every provider × model pair, for the in-panel
+    /// re-transcribe dropdown.
+    var asrOptions: [ASRSelection] = []
+    var currentASR: ASRSelection = .apple
     /// Ordered mode list; the panel prepends an "Off" segment, so ⌘1 is Off
     /// and ⌘2 is the first mode.
     var modes: [EnhanceMode]
@@ -45,6 +49,7 @@ struct VoicePreviewCallbacks {
     var onCancel: @MainActor () -> Void
     var onModeSwitch: @MainActor (String) -> Void
     var onModelSwitch: @MainActor (LLMSelection) -> Void
+    var onASRSwitch: @MainActor (ASRSelection) -> Void
     var onHistorySelect: @MainActor (UUID) -> Void
 }
 
@@ -64,6 +69,9 @@ protocol VoicePreviewPresenting: AnyObject {
     /// Provides the recording as WAV once converted; enables the playback
     /// and save controls in the ASR section.
     func setAudioAvailable(wavData: Data)
+    /// Puts the ASR area back into a progress state while an in-panel model
+    /// switch re-transcribes the retained audio.
+    func setASRTranscribing(info: String)
     /// Replaces the displayed result after a re-enhancement, cache hit or
     /// degrade. `original` non-nil means `text` is an enhancement result;
     /// nil means no enhancement (mode off or reverted to the ASR text).
@@ -160,6 +168,7 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         model.onCancelTap = cancel
         model.onModeSwitch = callbacks.onModeSwitch
         model.onModelSwitch = callbacks.onModelSwitch
+        model.onASRSwitch = callbacks.onASRSwitch
         model.onHistorySelect = callbacks.onHistorySelect
         model.onPlayToggle = { [weak self] in self?.togglePlayback() }
         model.onSaveAudio = { [weak self] in self?.saveAudio() }
@@ -179,6 +188,10 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
 
     func setAudioAvailable(wavData: Data) {
         model?.audioData = wavData
+    }
+
+    func setASRTranscribing(info: String) {
+        model?.applyASRTranscribing(info: info)
     }
 
     func update(
@@ -382,6 +395,8 @@ final class VoicePreviewModel {
     var currentModeID: String
     var llmOptions: [LLMSelection]
     var currentLLM: LLMSelection?
+    var asrOptions: [ASRSelection]
+    var currentASR: ASRSelection
     var isCached: Bool
     var isEnhancing = false
     /// Command key is held: the confirm button becomes "Copy".
@@ -390,6 +405,7 @@ final class VoicePreviewModel {
 
     var onModeSwitch: (@MainActor (String) -> Void)?
     var onModelSwitch: (@MainActor (LLMSelection) -> Void)?
+    var onASRSwitch: (@MainActor (ASRSelection) -> Void)?
     var onHistorySelect: (@MainActor (UUID) -> Void)?
     var onPlayToggle: (@MainActor () -> Void)?
     var onSaveAudio: (@MainActor () -> Void)?
@@ -407,6 +423,8 @@ final class VoicePreviewModel {
         currentModeID = setup.currentModeID
         llmOptions = setup.llmOptions
         currentLLM = setup.currentLLM
+        asrOptions = setup.asrOptions
+        currentASR = setup.currentASR
         isCached = setup.isCached
         history = setup.history
     }
@@ -449,6 +467,13 @@ final class VoicePreviewModel {
     func applyASRFailure(message: String) {
         isTranscribing = false
         asrFailureMessage = message
+    }
+
+    /// An in-panel ASR model switch re-runs transcription: back to progress.
+    func applyASRTranscribing(info: String) {
+        isTranscribing = true
+        asrInfo = info
+        asrFailureMessage = nil
     }
 
     /// Applies a re-enhancement result, cache hit or degrade outcome. The
@@ -510,6 +535,31 @@ private struct VoicePreviewContent: View {
                 Text(model.asrInfo)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                if !model.asrOptions.isEmpty && model.audioData != nil {
+                    Menu {
+                        ForEach(model.asrOptions, id: \.self) { option in
+                            Button {
+                                model.userEdited = false
+                                model.currentASR = option
+                                model.onASRSwitch?(option)
+                            } label: {
+                                if option == model.currentASR {
+                                    Label(asrOptionLabel(option), systemImage: "checkmark")
+                                } else {
+                                    Text(asrOptionLabel(option))
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .disabled(model.isTranscribing)
+                    .help("Re-transcribe with another model")
+                }
                 if model.audioData != nil {
                     Button {
                         model.onPlayToggle?()
@@ -612,6 +662,13 @@ private struct VoicePreviewContent: View {
     private var llmLabel: String {
         guard let llm = model.currentLLM else { return "model" }
         return "\(llm.provider) · \(llm.model)"
+    }
+
+    private func asrOptionLabel(_ option: ASRSelection) -> String {
+        switch option {
+        case .apple: "apple"
+        case .remote(let provider, let model): "\(provider) · \(model)"
+        }
     }
 
     @ViewBuilder

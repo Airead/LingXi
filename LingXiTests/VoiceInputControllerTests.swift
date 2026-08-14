@@ -82,15 +82,67 @@ private final class FakeTranscriber: SpeechTranscriber, @unchecked Sendable {
     private let lock = NSLock()
     private var pendingGate: CheckedContinuation<Void, Never>?
     private var gateReleased = false
+    private var reContinuation: CheckedContinuation<String, Error>?
+    private var storedReResult: Result<String, Error>?
+    private var _wavRequests: [Data] = []
+    /// Consumed in call order; the last one repeats.
+    private var reResults: [Result<String, Error>]
+    private let reManual: Bool
 
     private let session: FakeSession
     private let gated: Bool
     private let makeSessionError: Error?
 
-    init(session: FakeSession, gated: Bool = false, makeSessionError: Error? = nil) {
+    init(
+        session: FakeSession,
+        gated: Bool = false,
+        makeSessionError: Error? = nil,
+        reTranscribeResults: [Result<String, Error>] = [.success("re-transcribed")],
+        reTranscribeManual: Bool = false
+    ) {
         self.session = session
         self.gated = gated
         self.makeSessionError = makeSessionError
+        self.reResults = reTranscribeResults
+        self.reManual = reTranscribeManual
+    }
+
+    var wavRequests: [Data] { lock.withLock { _wavRequests } }
+
+    func transcribe(wavData: Data, language: VoiceLanguage) async throws -> String {
+        let result: Result<String, Error> = lock.withLock {
+            _wavRequests.append(wavData)
+            return reResults.count > 1 ? reResults.removeFirst() : reResults[0]
+        }
+        if !reManual { return try result.get() }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { newContinuation in
+                let immediate: Result<String, Error>? = lock.withLock {
+                    if let stored = storedReResult { return stored }
+                    reContinuation = newContinuation
+                    return nil
+                }
+                if let immediate { newContinuation.resume(with: immediate) }
+            }
+        } onCancel: {
+            let pending: CheckedContinuation<String, Error>? = lock.withLock {
+                let pending = reContinuation
+                reContinuation = nil
+                return pending
+            }
+            pending?.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Completes a manual-mode transcribe(wavData:). No effect if cancelled.
+    func completeReTranscribe(_ result: Result<String, Error>) {
+        let pending: CheckedContinuation<String, Error>? = lock.withLock {
+            let pending = reContinuation
+            reContinuation = nil
+            if pending == nil { storedReResult = result }
+            return pending
+        }
+        pending?.resume(with: result)
     }
 
     func makeSession(language: VoiceLanguage) async throws -> any SpeechTranscriptionSession {
@@ -235,6 +287,7 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
     private(set) var asrResults: [(text: String, info: String)] = []
     private(set) var asrFailures: [String] = []
     private(set) var audioAvailable: [Data] = []
+    private(set) var asrTranscribing: [String] = []
     private(set) var updates: [(text: String, original: String?, modeID: String, isCached: Bool)] = []
     private(set) var enhancingStates: [Bool] = []
     private(set) var closeCount = 0
@@ -256,6 +309,10 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
 
     func setAudioAvailable(wavData: Data) {
         audioAvailable.append(wavData)
+    }
+
+    func setASRTranscribing(info: String) {
+        asrTranscribing.append(info)
     }
 
     func update(
@@ -281,6 +338,7 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
     func simulateCancel() { callbacks?.onCancel() }
     func simulateModeSwitch(_ modeID: String) { callbacks?.onModeSwitch(modeID) }
     func simulateModelSwitch(_ selection: LLMSelection) { callbacks?.onModelSwitch(selection) }
+    func simulateASRSwitch(_ selection: ASRSelection) { callbacks?.onASRSwitch(selection) }
     func simulateHistorySelect(_ token: UUID) { callbacks?.onHistorySelect(token) }
 }
 
@@ -319,6 +377,8 @@ private struct Harness {
         previewEnabled: Bool = false,
         hudEnabled: Bool = false,
         historyEnabled: Bool = false,
+        reTranscribeResults: [Result<String, Error>] = [.success("re-transcribed")],
+        reTranscribeManual: Bool = false,
         timing: VoiceInputTiming = VoiceInputTiming(minHold: .zero)
     ) {
         let defaults = UserDefaults(suiteName: "io.github.airead.lingxi.test.\(UUID().uuidString)")!
@@ -328,7 +388,12 @@ private struct Harness {
         settings.voicePreviewEnabled = previewEnabled
         settings.voiceHUDEnabled = hudEnabled
         settings.voiceHistoryEnabled = historyEnabled
-        transcriber = FakeTranscriber(session: session, gated: gated)
+        transcriber = FakeTranscriber(
+            session: session,
+            gated: gated,
+            reTranscribeResults: reTranscribeResults,
+            reTranscribeManual: reTranscribeManual
+        )
         self.enhancer = enhancer
         history = ConversationHistory(directory: FileManager.default.temporaryDirectory
             .appendingPathComponent("lingxi-voice-history-\(UUID().uuidString)", isDirectory: true))
@@ -1120,6 +1185,243 @@ struct VoiceInputControllerTests {
         #expect(h.preview.shown.count == 2)
         try? await Task.sleep(for: .milliseconds(50))
         #expect(h.preview.audioAvailable.count == 1)
+    }
+
+    // MARK: - ASR switch & re-transcribe
+
+    private let remoteASR = ASRSelection.remote(provider: "groq", model: "m1")
+
+    private func addASRProvider(_ h: Harness) {
+        h.settings.voiceASRProviders = [
+            VoiceProvider(name: "groq", baseURL: "http://x.test/v1", apiKey: "k", models: ["m1"])
+        ]
+    }
+
+    @Test func asrSwitchReTranscribesClearsCacheAndPersists() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(results: [.success("polished-1"), .success("polished-2")])
+        let h = Harness(
+            session: session, enhancer: enhancer,
+            enhanceEnabled: true, previewEnabled: true, historyEnabled: true
+        )
+        addASRProvider(h)
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "polished-1")
+
+        h.preview.simulateASRSwitch(remoteASR)
+        // The ASR area goes back to a progress state, then fills with the
+        // re-transcription; the cache is stale so enhancement re-runs.
+        #expect(await waitUntil { h.preview.asrTranscribing.count == 1 })
+        #expect(await waitUntil { h.preview.asrResults.count == 2 })
+        #expect(h.preview.asrResults[1].text == "re-transcribed")
+        #expect(h.settings.voiceASRSelection == remoteASR)
+        #expect(h.transcriber.wavRequests == [h.audioRetainer.wav])
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+        #expect(h.preview.updates[1].text == "polished-2")
+        #expect(enhancer.requests == ["raw", "re-transcribed"])
+        #expect(h.preview.closeCount == 0)
+
+        // The confirmed record carries the new ASR model.
+        h.preview.simulateConfirm("final")
+        #expect(await waitUntil { await h.history.readRecords().count == 1 })
+        let record = await h.history.readRecords()[0]
+        #expect(record.asrText == "re-transcribed")
+        #expect(record.asrModel == "groq/m1")
+    }
+
+    @Test func asrSwitchToSameSelectionIsNoop() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+        await runToPreview(h)
+
+        h.preview.simulateASRSwitch(.apple)
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.preview.asrTranscribing.isEmpty)
+        #expect(h.transcriber.wavRequests.isEmpty)
+    }
+
+    @Test func asrSwitchFailureKeepsPreviousText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(
+            session: session, previewEnabled: true,
+            reTranscribeResults: [.failure(TranscriptionError.invalidResponse)]
+        )
+        addASRProvider(h)
+        await runToPreview(h)
+
+        h.preview.simulateASRSwitch(remoteASR)
+        #expect(await waitUntil { h.preview.asrResults.count == 2 })
+        #expect(h.preview.asrResults[1].text == "raw")
+        #expect(h.preview.asrResults[1].info.contains("switch failed"))
+        #expect(h.settings.voiceASRSelection == remoteASR)
+        #expect(h.preview.closeCount == 0)
+
+        // The panel is still functional: confirm pastes the previous text.
+        h.preview.simulateConfirm("raw")
+        #expect(await waitUntil { h.spy.pasted == ["raw"] })
+    }
+
+    @Test func asrSwitchDuringTranscribingOnlyPreselects() async {
+        let session = FakeSession(manualFinish: true)
+        let h = Harness(session: session, previewEnabled: true)
+        addASRProvider(h)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 1 })
+
+        h.preview.simulateASRSwitch(remoteASR)
+        #expect(h.settings.voiceASRSelection == remoteASR)
+        #expect(h.transcriber.wavRequests.isEmpty)
+        #expect(h.preview.asrTranscribing.isEmpty)
+
+        session.completeFinish(.success("raw"))
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
+    }
+
+    @Test func escDuringReTranscribeDiscardsAndIgnoresLateResult() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true, reTranscribeManual: true)
+        addASRProvider(h)
+        await runToPreview(h)
+
+        h.preview.simulateASRSwitch(remoteASR)
+        #expect(await waitUntil { h.preview.asrTranscribing.count == 1 })
+
+        h.preview.simulateCancel()
+        #expect(await waitUntil { h.activity.phase == .idle })
+        #expect(h.preview.closeCount >= 1)
+
+        h.transcriber.completeReTranscribe(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.preview.asrResults.count == 1)
+        #expect(h.spy.pasted.isEmpty)
+    }
+
+    @Test func fnDownDuringReTranscribeStartsNewSession() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true, reTranscribeManual: true)
+        addASRProvider(h)
+        await runToPreview(h)
+
+        h.preview.simulateASRSwitch(remoteASR)
+        #expect(await waitUntil { h.preview.asrTranscribing.count == 1 })
+
+        h.controller.fnDown()
+        #expect(h.preview.closeCount >= 1)
+        #expect(await waitUntil { await h.recorder.startCount == 2 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 2 })
+    }
+
+    @Test func confirmDuringReTranscribePastesCurrentText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true, reTranscribeManual: true)
+        addASRProvider(h)
+        await runToPreview(h)
+
+        h.preview.simulateASRSwitch(remoteASR)
+        #expect(await waitUntil { h.preview.asrTranscribing.count == 1 })
+
+        h.preview.simulateConfirm("typed")
+        #expect(await waitUntil { h.spy.pasted == ["typed"] })
+        #expect(h.activity.phase == .idle)
+
+        // A late result must not resurrect anything.
+        h.transcriber.completeReTranscribe(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.preview.asrResults.count == 1)
+    }
+
+    @Test func reTranscribeWatchdogKeepsPreviousTextAndDiscardsLateResult() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(
+            session: session, previewEnabled: true, reTranscribeManual: true,
+            timing: VoiceInputTiming(minHold: .zero, transcribeTimeout: .milliseconds(30))
+        )
+        addASRProvider(h)
+        await runToPreview(h)
+
+        h.preview.simulateASRSwitch(remoteASR)
+        #expect(await waitUntil { h.preview.asrTranscribing.count == 1 })
+
+        // Watchdog restores the old text with a failure hint.
+        #expect(await waitUntil { h.preview.asrResults.count == 2 })
+        #expect(h.preview.asrResults[1].text == "raw")
+        #expect(h.preview.asrResults[1].info.contains("switch failed"))
+        #expect(h.preview.closeCount == 0)
+
+        h.transcriber.completeReTranscribe(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.preview.asrResults.count == 2)
+    }
+
+    @Test func modeSwitchDuringReTranscribeCancelsAndEnhancesOldText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(
+            session: session, enhancer: enhancer,
+            enhanceEnabled: false, previewEnabled: true, reTranscribeManual: true
+        )
+        addASRProvider(h)
+        await runToPreview(h)
+
+        h.preview.simulateASRSwitch(remoteASR)
+        #expect(await waitUntil { h.preview.asrTranscribing.count == 1 })
+
+        // Switching modes interrupts the re-transcription and enhances the
+        // previous ASR text.
+        h.preview.simulateModeSwitch("proofread")
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "polished")
+        #expect(enhancer.requests == ["raw"])
+        // The ASR area was restored before the enhancement started.
+        #expect(h.preview.asrResults.count == 2)
+        #expect(h.preview.asrResults[1].text == "raw")
+    }
+
+    @Test func failedTranscriptionRecoveredByASRSwitch() async {
+        let session = FakeSession(finishResult: .failure(TranscriptionError.invalidResponse))
+        let h = Harness(session: session, previewEnabled: true)
+        addASRProvider(h)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.asrFailures.count == 1 })
+
+        // Switching the ASR model re-transcribes the retained audio and
+        // recovers the failed session.
+        h.preview.simulateASRSwitch(remoteASR)
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
+        #expect(h.preview.asrResults[0].text == "re-transcribed")
+
+        h.preview.simulateConfirm("re-transcribed")
+        #expect(await waitUntil { h.spy.pasted == ["re-transcribed"] })
+
+        // The recovered session became a preview-history entry.
+        h.controller.showLastPreview()
+        #expect(h.preview.shown.count == 2)
+        #expect(h.preview.shown[1].text == "re-transcribed")
+    }
+
+    @Test func asrSwitchOnRecalledEntryOnlyPersistsSelection() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+        addASRProvider(h)
+        await runToPreview(h)
+        h.preview.simulateConfirm("raw")
+        #expect(await waitUntil { h.activity.phase == .idle })
+
+        h.controller.showLastPreview()
+        #expect(h.preview.shown.count == 2)
+        h.preview.simulateASRSwitch(remoteASR)
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.settings.voiceASRSelection == remoteASR)
+        #expect(h.transcriber.wavRequests.isEmpty)
+        #expect(h.preview.asrTranscribing.isEmpty)
     }
 
     // MARK: - Phase 3D: conversation history

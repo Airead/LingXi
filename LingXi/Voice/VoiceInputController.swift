@@ -83,6 +83,14 @@ final class VoiceInputController {
         case transcribing(TranscribingContext)
         case enhancing(EnhancingContext)
         case previewing(PreviewSession)
+        /// The panel's ASR model switch re-runs transcription on the
+        /// session's retained audio.
+        case reTranscribing(ReTranscribingContext)
+    }
+
+    private struct ReTranscribingContext {
+        let session: PreviewSession
+        let task: Task<Void, Never>
     }
 
     private struct TranscribingContext {
@@ -121,7 +129,8 @@ final class VoiceInputController {
         }
 
         let token: UUID
-        let asrText: String
+        /// Mutable: an in-panel ASR model switch re-transcribes and replaces it.
+        var asrText: String
         var cache: [CacheKey: String] = [:]
         /// Last text displayed in the panel, for the user-corrected check.
         var lastShownText: String
@@ -150,7 +159,7 @@ final class VoiceInputController {
 
     private struct PreviewHistoryEntry {
         let token: UUID
-        let asrText: String
+        var asrText: String
         var results: [PreviewSession.CacheKey: String]
         var finalText: String?
         let date: Date
@@ -249,6 +258,11 @@ final class VoiceInputController {
             context.session.cancel()
             previewPresenter.close()
             previousApp = nil
+        case .reTranscribing(let context):
+            DebugLog.log("[Voice] new session discards re-transcribing preview")
+            context.task.cancel()
+            previewPresenter.close()
+            previousApp = nil
         case .starting, .recording, .transcribing, .enhancing:
             DebugLog.log("[Voice] fnDown ignored: busy")
             return
@@ -322,7 +336,7 @@ final class VoiceInputController {
                 DebugLog.log("[Voice] short press, cancelled")
                 abandonSession(context.session)
             }
-        case .idle, .transcribing, .enhancing, .previewing:
+        case .idle, .transcribing, .enhancing, .previewing, .reTranscribing:
             break
         }
     }
@@ -335,7 +349,7 @@ final class VoiceInputController {
         case .recording(let context):
             DebugLog.log("[Voice] Fn used as combo modifier, cancelled")
             abandonSession(context.session)
-        case .idle, .transcribing, .enhancing, .previewing:
+        case .idle, .transcribing, .enhancing, .previewing, .reTranscribing:
             break
         }
     }
@@ -632,6 +646,8 @@ final class VoiceInputController {
             original: nil,
             asrInfo: asrInfoText(duration: lastAudioDuration),
             isTranscribing: true,
+            asrOptions: asrOptions(),
+            currentASR: currentResolvedASR(),
             modes: enhanceModesProvider(),
             currentModeID: settings.voiceEnhanceMode,
             llmOptions: llmOptions(),
@@ -654,6 +670,8 @@ final class VoiceInputController {
             text: text,
             original: original,
             asrInfo: asrInfoText(for: session),
+            asrOptions: asrOptions(),
+            currentASR: currentResolvedASR(),
             modes: enhanceModesProvider(),
             currentModeID: settings.voiceEnhanceMode,
             llmOptions: llmOptions(),
@@ -671,6 +689,7 @@ final class VoiceInputController {
             onCancel: { [weak self] in self?.previewDidCancel(gen: gen) },
             onModeSwitch: { [weak self] modeID in self?.previewDidSwitchMode(gen: gen, modeID: modeID) },
             onModelSwitch: { [weak self] selection in self?.previewDidSwitchModel(gen: gen, selection: selection) },
+            onASRSwitch: { [weak self] selection in self?.previewDidSwitchASR(gen: gen, selection: selection) },
             onHistorySelect: { [weak self] token in self?.previewDidSelectHistory(gen: gen, token: token) }
         )
     }
@@ -678,6 +697,21 @@ final class VoiceInputController {
     private func llmOptions() -> [LLMSelection] {
         settings.voiceLLMProviders.flatMap { provider in
             provider.models.map { LLMSelection(provider: provider.name, model: $0) }
+        }
+    }
+
+    private func asrOptions() -> [ASRSelection] {
+        [.apple] + settings.voiceASRProviders.flatMap { provider in
+            provider.models.map { ASRSelection.remote(provider: provider.name, model: $0) }
+        }
+    }
+
+    private func currentResolvedASR() -> ASRSelection {
+        switch VoiceProviderResolver.resolveASR(
+            selection: settings.voiceASRSelection, providers: settings.voiceASRProviders
+        ) {
+        case .apple: .apple
+        case .remote(let provider, let model): .remote(provider: provider.name, model: model)
         }
     }
 
@@ -742,6 +776,26 @@ final class VoiceInputController {
                 try? await Task.sleep(for: .milliseconds(150))
                 self.pasteAction(text)
             }
+        case .reTranscribing(let context):
+            // Confirm while re-transcribing: abort it and paste the panel's
+            // current final text (based on the previous ASR result).
+            DebugLog.log("[Voice] preview confirmed during re-transcription")
+            previewPresenter.close()
+            context.task.cancel()
+            recordFinalText(text, for: context.session)
+            let target = previousApp
+            previousApp = nil
+            toIdle()
+
+            guard !text.isEmpty else { return }
+            if !context.session.asrText.isEmpty {
+                recordSessionHistory(context.session, finalText: text)
+            }
+            Task {
+                target?.activate()
+                try? await Task.sleep(for: .milliseconds(150))
+                self.pasteAction(text)
+            }
         default:
             return
         }
@@ -772,6 +826,19 @@ final class VoiceInputController {
 
             guard !text.isEmpty else { return }
             copyAction(text)
+        case .reTranscribing(let context):
+            DebugLog.log("[Voice] preview copied during re-transcription")
+            previewPresenter.close()
+            context.task.cancel()
+            recordFinalText(text, for: context.session)
+            previousApp = nil
+            toIdle()
+
+            guard !text.isEmpty else { return }
+            if !context.session.asrText.isEmpty {
+                recordSessionHistory(context.session, finalText: text)
+            }
+            copyAction(text)
         default:
             return
         }
@@ -785,6 +852,9 @@ final class VoiceInputController {
         case .enhancing(let context) where context.session != nil:
             DebugLog.log("[Voice] preview cancelled during re-enhancement")
             enhanceGeneration &+= 1
+            context.task.cancel()
+        case .reTranscribing(let context):
+            DebugLog.log("[Voice] preview cancelled during re-transcription")
             context.task.cancel()
         case .transcribing(let context) where context.panelOpen:
             DebugLog.log("[Voice] preview cancelled during transcription")
@@ -830,6 +900,101 @@ final class VoiceInputController {
         refreshPreview(session)
     }
 
+    private func previewDidSwitchASR(gen: UInt64, selection: ASRSelection) {
+        guard gen == generation else { return }
+        if case .transcribing(let context) = state, context.panelOpen {
+            // ASR still running: just remember the model for future sessions.
+            DebugLog.log("[Voice] preview ASR preselected: \(Self.describeASR(selection))")
+            settings.voiceASRSelection = selection
+            return
+        }
+        guard let session = interruptPreviewSession() else { return }
+        if settings.voiceASRSelection == selection { return }
+        settings.voiceASRSelection = selection
+        guard session.audio != nil else {
+            // Recalled history entries carry no audio; only persist the choice.
+            DebugLog.log("[Voice] ASR switch persisted, no retained audio to re-transcribe")
+            return
+        }
+        DebugLog.log("[Voice] preview ASR switched to \(Self.describeASR(selection))")
+        beginReTranscribing(session)
+    }
+
+    private func beginReTranscribing(_ session: PreviewSession) {
+        guard let audio = session.audio else { return }
+        let gen = generation
+        // The result of any in-flight enhancement would apply to the old
+        // ASR text; invalidate it.
+        enhanceGeneration &+= 1
+        let transcriber = transcriberFactory(settings)
+        let language = settings.voiceLanguage
+        let task = Task {
+            do {
+                let wavData = try await audio.wavData()
+                let text = try await transcriber.transcribe(wavData: wavData, language: language)
+                self.reTranscribeDidFinish(gen: gen, result: .success(text))
+            } catch {
+                self.reTranscribeDidFinish(gen: gen, result: .failure(error))
+            }
+        }
+        state = .reTranscribing(ReTranscribingContext(session: session, task: task))
+        activityModel.phase = .transcribing
+        previewPresenter.setEnhancing(false)
+        previewPresenter.setASRTranscribing(info: asrInfoText(for: session))
+        scheduleReTranscribeWatchdog(gen: gen)
+    }
+
+    private func reTranscribeDidFinish(gen: UInt64, result: Result<String, Error>) {
+        guard gen == generation, case .reTranscribing(let context) = state else { return }
+        let session = context.session
+
+        switch result {
+        case .success(let text) where !text.isEmpty:
+            DebugLog.log("[Voice] re-transcribed \(text.count) characters")
+            session.asrText = text
+            // The source text changed: every cached enhancement is stale.
+            session.cache.removeAll()
+            session.lastShownText = text
+            if previewHistory.contains(where: { $0.token == session.token }) {
+                syncHistoryASRText(session)
+            } else {
+                // Failed-transcription sessions weren't listed; a successful
+                // re-transcription makes them a real history entry.
+                insertHistoryEntry(for: session)
+            }
+            previewPresenter.setASRResult(text: text, asrInfo: asrInfoText(for: session))
+            becomePreviewing(session)
+            refreshPreview(session)
+        case .success:
+            DebugLog.log("[Voice] empty re-transcription, keeping previous text")
+            showReTranscribeFailure(session, message: "Empty re-transcription")
+        case .failure(let error):
+            DebugLog.log("[Voice] re-transcription failed: \(error)")
+            showReTranscribeFailure(session, message: "Re-transcription failed")
+        }
+    }
+
+    /// Failed re-transcription keeps the previous ASR text usable; sessions
+    /// that never had a transcription show the failure message instead.
+    private func showReTranscribeFailure(_ session: PreviewSession, message: String) {
+        becomePreviewing(session)
+        if session.asrText.isEmpty {
+            previewPresenter.setASRFailed(message: message)
+        } else {
+            previewPresenter.setASRResult(
+                text: session.asrText,
+                asrInfo: asrInfoText(for: session) + " · switch failed"
+            )
+        }
+    }
+
+    private static func describeASR(_ selection: ASRSelection) -> String {
+        switch selection {
+        case .apple: "apple"
+        case .remote(let provider, let model): "\(provider)/\(model)"
+        }
+    }
+
     private func previewDidSelectHistory(gen: UInt64, token: UUID) {
         guard gen == generation else { return }
         if case .transcribing(let context) = state, context.panelOpen {
@@ -871,8 +1036,9 @@ final class VoiceInputController {
         )
     }
 
-    /// The active preview session, cancelling an in-flight re-enhancement if
-    /// there is one (the caller is about to start a new one or take over).
+    /// The active preview session, cancelling an in-flight re-enhancement or
+    /// re-transcription if there is one (the caller is about to start a new
+    /// operation or take over).
     private func interruptPreviewSession() -> PreviewSession? {
         switch state {
         case .previewing(let session):
@@ -881,6 +1047,18 @@ final class VoiceInputController {
             guard let session = context.session else { return nil }
             enhanceGeneration &+= 1
             context.task.cancel()
+            return session
+        case .reTranscribing(let context):
+            context.task.cancel()
+            // Restore the ASR area and drop back to previewing so the
+            // caller takes over from a stable state.
+            let session = context.session
+            if session.asrText.isEmpty {
+                previewPresenter.setASRFailed(message: "Re-transcription cancelled")
+            } else {
+                previewPresenter.setASRResult(text: session.asrText, asrInfo: asrInfoText(for: session))
+            }
+            becomePreviewing(session)
             return session
         default:
             return nil
@@ -976,6 +1154,12 @@ final class VoiceInputController {
         previewHistory[index].results = session.cache
     }
 
+    private func syncHistoryASRText(_ session: PreviewSession) {
+        guard let index = previewHistory.firstIndex(where: { $0.token == session.token }) else { return }
+        previewHistory[index].asrText = session.asrText
+        previewHistory[index].results = session.cache
+    }
+
     private func recordFinalText(_ text: String, for session: PreviewSession) {
         guard let index = previewHistory.firstIndex(where: { $0.token == session.token }) else { return }
         previewHistory[index].finalText = text
@@ -1048,6 +1232,13 @@ final class VoiceInputController {
                 previousApp = nil
             }
             toIdle()
+        case .reTranscribing(let context):
+            DebugLog.log("[Voice] aborting re-transcription: \(reason)")
+            generation &+= 1
+            context.task.cancel()
+            previewPresenter.close()
+            previousApp = nil
+            toIdle()
         case .previewing:
             DebugLog.log("[Voice] discarding preview: \(reason)")
             generation &+= 1
@@ -1115,6 +1306,18 @@ final class VoiceInputController {
                 DebugLog.log("[Voice] transcription watchdog fired, cancelling")
                 self.abandonSession(session)
             }
+        }
+    }
+
+    private func scheduleReTranscribeWatchdog(gen: UInt64) {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [timeout = timing.transcribeTimeout] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            guard gen == self.generation, case .reTranscribing(let context) = self.state else { return }
+            DebugLog.log("[Voice] re-transcription watchdog fired, keeping previous text")
+            context.task.cancel()
+            self.showReTranscribeFailure(context.session, message: "Re-transcription timed out")
         }
     }
 

@@ -36,3 +36,42 @@ nonisolated enum WAVEncoder {
         withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
     }
 }
+
+/// Extracts the PCM samples from a 16-bit mono WAV as produced by
+/// `WAVEncoder`; used to feed retained audio back into Apple Speech.
+nonisolated enum WAVDecoder {
+    static func decodeSamples(_ data: Data) -> [Int16]? {
+        guard data.count > 44,
+              data.prefix(4) == Data("RIFF".utf8),
+              data.subdata(in: 8..<12) == Data("WAVE".utf8) else {
+            return nil
+        }
+        // Walk the chunks to find "data"; other chunks (fmt, lists) are skipped.
+        var offset = 12
+        while offset + 8 <= data.count {
+            let chunkID = data.subdata(in: offset..<(offset + 4))
+            let chunkSize = Int(readLE32(data, at: offset + 4))
+            let payloadStart = offset + 8
+            if chunkID == Data("data".utf8) {
+                let payloadEnd = min(payloadStart + chunkSize, data.count)
+                let byteCount = (payloadEnd - payloadStart) & ~1
+                guard byteCount > 0 else { return nil }
+                var samples = [Int16](repeating: 0, count: byteCount / 2)
+                _ = samples.withUnsafeMutableBytes { destination in
+                    data.copyBytes(to: destination, from: payloadStart..<(payloadStart + byteCount))
+                }
+                return samples
+            }
+            offset = payloadStart + chunkSize + (chunkSize & 1)
+        }
+        return nil
+    }
+
+    private static func readLE32(_ data: Data, at offset: Int) -> UInt32 {
+        var value: UInt32 = 0
+        _ = withUnsafeMutableBytes(of: &value) { destination in
+            data.copyBytes(to: destination, from: offset..<(offset + 4))
+        }
+        return UInt32(littleEndian: value)
+    }
+}

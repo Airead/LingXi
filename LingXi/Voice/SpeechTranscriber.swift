@@ -79,6 +79,10 @@ enum TranscriptionError: Error, Equatable {
 /// Factory for transcription sessions. One session per recording.
 protocol SpeechTranscriber: Sendable {
     func makeSession(language: VoiceLanguage) async throws -> any SpeechTranscriptionSession
+
+    /// Transcribes an already-recorded 16 kHz mono Int16 WAV (as produced by
+    /// `RetainedAudio`); backs re-transcription from the preview panel.
+    func transcribe(wavData: Data, language: VoiceLanguage) async throws -> String
 }
 
 /// A single-use transcription session fed with audio buffers.
