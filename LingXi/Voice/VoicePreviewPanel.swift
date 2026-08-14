@@ -59,6 +59,9 @@ protocol VoicePreviewPresenting: AnyObject {
     /// Shows a transcription failure in the ASR area; the panel stays open
     /// so the user can dismiss it or type a final text manually.
     func setASRFailed(message: String)
+    /// Provides the recording as WAV once converted; enables the playback
+    /// and save controls in the ASR section.
+    func setAudioAvailable(wavData: Data)
     /// Replaces the displayed result after a re-enhancement, cache hit or
     /// degrade. `original` non-nil means `text` is an enhancement result;
     /// nil means no enhancement (mode off or reverted to the ASR text).
@@ -161,6 +164,10 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
 
     func setASRFailed(message: String) {
         model?.applyASRFailure(message: message)
+    }
+
+    func setAudioAvailable(wavData: Data) {
+        model?.audioData = wavData
     }
 
     func update(
@@ -266,6 +273,8 @@ final class VoicePreviewModel {
     var isTranscribing: Bool
     /// Transcription failed or came back empty; shown in the ASR area.
     var asrFailureMessage: String?
+    /// The recording as WAV, once converted; nil for recalled entries.
+    var audioData: Data?
     var enhancedText: String?
     var finalText: String
     /// Set when the user types in the final area; blocks programmatic

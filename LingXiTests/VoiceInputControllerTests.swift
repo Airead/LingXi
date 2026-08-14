@@ -178,6 +178,22 @@ private final class FakeEnhancer: TextEnhancer, @unchecked Sendable {
     }
 }
 
+private final class FakeRetainedAudio: AudioRetaining, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _appendCount = 0
+    private var _stopped = false
+    let wav: Data
+
+    init(wav: Data = Data("RIFF-fake".utf8)) { self.wav = wav }
+
+    var appendCount: Int { lock.withLock { _appendCount } }
+    var stopped: Bool { lock.withLock { _stopped } }
+
+    nonisolated func append(_ buffer: AVAudioPCMBuffer) { lock.withLock { _appendCount += 1 } }
+    nonisolated func stopAccepting() { lock.withLock { _stopped = true } }
+    func wavData() async throws -> Data { wav }
+}
+
 private actor FakeRecorder: AudioRecording {
     private(set) var startCount = 0
     private(set) var stopCount = 0
@@ -208,11 +224,17 @@ private final class PromptSpy {
 }
 
 @MainActor
+private final class RetainerSpy {
+    var createdCount = 0
+}
+
+@MainActor
 private final class FakePreviewPresenter: VoicePreviewPresenting {
     private(set) var shown: [(text: String, original: String?)] = []
     private(set) var setups: [VoicePreviewSetup] = []
     private(set) var asrResults: [(text: String, info: String)] = []
     private(set) var asrFailures: [String] = []
+    private(set) var audioAvailable: [Data] = []
     private(set) var updates: [(text: String, original: String?, modeID: String, isCached: Bool)] = []
     private(set) var enhancingStates: [Bool] = []
     private(set) var closeCount = 0
@@ -230,6 +252,10 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
 
     func setASRFailed(message: String) {
         asrFailures.append(message)
+    }
+
+    func setAudioAvailable(wavData: Data) {
+        audioAvailable.append(wavData)
     }
 
     func update(
@@ -280,6 +306,8 @@ private struct Harness {
     let hud = FakeHUDPresenter()
     let spy = PasteSpy()
     let prompts = PromptSpy()
+    let audioRetainer = FakeRetainedAudio()
+    let retainerSpy = RetainerSpy()
     let history: ConversationHistory
     let controller: VoiceInputController
 
@@ -308,6 +336,8 @@ private struct Harness {
         let transcriber = self.transcriber
         let spy = self.spy
         let prompts = self.prompts
+        let audioRetainer = self.audioRetainer
+        let retainerSpy = self.retainerSpy
         controller = VoiceInputController(
             settings: settings,
             activityModel: activity,
@@ -323,6 +353,10 @@ private struct Harness {
                     EnhanceMode(id: "proofread", label: "纠错润色", order: 1, prompt: "p1"),
                     EnhanceMode(id: "translate_en", label: "翻译为英文", order: 2, prompt: "p2"),
                 ]
+            },
+            audioRetainerFactory: {
+                retainerSpy.createdCount += 1
+                return audioRetainer
             },
             pasteAction: { spy.pasted.append($0) },
             copyAction: { spy.copied.append($0) },
@@ -1033,6 +1067,59 @@ struct VoiceInputControllerTests {
         await runToPreview(h)
         h.controller.showLastPreview()
         #expect(h.preview.shown.count == 1)
+    }
+
+    // MARK: - Retained audio
+
+    @Test func previewSessionRetainsAudioAndPanelReceivesWav() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+        await runToPreview(h)
+
+        #expect(h.retainerSpy.createdCount == 1)
+        #expect(h.audioRetainer.stopped)
+        #expect(await waitUntil { h.preview.audioAvailable == [h.audioRetainer.wav] })
+    }
+
+    @Test func audioRetainerNotCreatedWithoutPreview() async {
+        let session = FakeSession(finishResult: .success("hello"))
+        let h = Harness(session: session)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.spy.pasted == ["hello"] })
+
+        #expect(h.retainerSpy.createdCount == 0)
+        #expect(h.preview.audioAvailable.isEmpty)
+    }
+
+    @Test func failedTranscriptionSessionKeepsAudio() async {
+        let session = FakeSession(finishResult: .failure(TranscriptionError.invalidResponse))
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.asrFailures.count == 1 })
+
+        // The failure session still owns the audio: the WAV reaches the panel.
+        #expect(await waitUntil { h.preview.audioAvailable.count == 1 })
+    }
+
+    @Test func recalledHistoryEntryHasNoAudio() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.audioAvailable.count == 1 })
+        h.preview.simulateConfirm("raw")
+        #expect(await waitUntil { h.activity.phase == .idle })
+
+        // The recalled panel must not receive the previous recording's audio.
+        h.controller.showLastPreview()
+        #expect(h.preview.shown.count == 2)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(h.preview.audioAvailable.count == 1)
     }
 
     // MARK: - Phase 3D: conversation history

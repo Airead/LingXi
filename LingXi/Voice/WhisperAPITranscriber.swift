@@ -107,7 +107,7 @@ final class WhisperAPISession: SpeechTranscriptionSession, @unchecked Sendable {
 
     nonisolated func append(_ buffer: AVAudioPCMBuffer) {
         // Copy first: the tap may reuse the buffer after the callback returns.
-        guard let copy = Self.copy(buffer) else { return }
+        guard let copy = AudioBufferConversion.copy(buffer) else { return }
         lock.withLock {
             guard !cancelled, !finished else { return }
             buffers.append(copy)
@@ -145,7 +145,7 @@ final class WhisperAPISession: SpeechTranscriptionSession, @unchecked Sendable {
         let recorded = lock.withLock { buffers }
         guard !recorded.isEmpty else { throw TranscriptionError.emptyAudio }
 
-        let samples = try Self.convertToInt16Mono16k(recorded)
+        let samples = try AudioBufferConversion.convertToInt16Mono16k(recorded)
         guard !samples.isEmpty else { throw TranscriptionError.emptyAudio }
         try Task.checkCancellation()
 
@@ -172,66 +172,5 @@ final class WhisperAPISession: SpeechTranscriptionSession, @unchecked Sendable {
             throw TranscriptionError.invalidResponse
         }
         return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    // MARK: - Audio helpers
-
-    private nonisolated static func copy(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard buffer.frameLength > 0,
-              let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
-            return nil
-        }
-        copy.frameLength = buffer.frameLength
-        let src = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
-        let dst = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
-        for (srcBuffer, dstBuffer) in zip(src, dst) {
-            guard let srcData = srcBuffer.mData, let dstData = dstBuffer.mData else { continue }
-            memcpy(dstData, srcData, Int(min(srcBuffer.mDataByteSize, dstBuffer.mDataByteSize)))
-        }
-        return copy
-    }
-
-    private nonisolated static func convertToInt16Mono16k(_ buffers: [AVAudioPCMBuffer]) throws -> [Int16] {
-        guard let sourceFormat = buffers.first?.format,
-              let targetFormat = AVAudioFormat(
-                  commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true
-              ),
-              let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-            throw TranscriptionError.emptyAudio
-        }
-
-        var samples: [Int16] = []
-        var inputIndex = 0
-        var reachedEnd = false
-        while !reachedEnd {
-            guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: 4096) else {
-                throw TranscriptionError.emptyAudio
-            }
-            var conversionError: NSError?
-            let status = converter.convert(to: output, error: &conversionError) { _, outStatus in
-                if inputIndex < buffers.count {
-                    let next = buffers[inputIndex]
-                    inputIndex += 1
-                    outStatus.pointee = .haveData
-                    return next
-                }
-                outStatus.pointee = .endOfStream
-                return nil
-            }
-            switch status {
-            case .haveData, .inputRanDry:
-                if let channel = output.int16ChannelData, output.frameLength > 0 {
-                    samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: Int(output.frameLength)))
-                }
-                if status == .inputRanDry { reachedEnd = true }
-            case .endOfStream:
-                reachedEnd = true
-            case .error:
-                throw conversionError ?? TranscriptionError.emptyAudio
-            @unknown default:
-                reachedEnd = true
-            }
-        }
-        return samples
     }
 }

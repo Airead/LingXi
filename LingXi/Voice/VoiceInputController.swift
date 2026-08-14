@@ -41,6 +41,9 @@ final class VoiceInputController {
     private let enhancePromptProvider: (String) -> String?
     /// Ordered mode list shown in the preview panel (⌘1-9 targets).
     private let enhanceModesProvider: () -> [EnhanceMode]
+    /// Creates the per-recording audio retainer backing the preview panel's
+    /// playback/save/re-transcribe features.
+    private let audioRetainerFactory: () -> any AudioRetaining
     private let pasteAction: (String) -> Void
     /// Writes to the clipboard without pasting (⌘Return in the preview).
     private let copyAction: (String) -> Void
@@ -61,6 +64,8 @@ final class VoiceInputController {
     private var previousApp: NSRunningApplication?
     /// Length of the most recent recording, attached to history records.
     private var lastAudioDuration: Double = 0
+    /// Audio of the in-flight recording, until a preview session takes it.
+    private var currentAudio: (any AudioRetaining)?
 
     private var injectedPreviewPresenter: (any VoicePreviewPresenting)?
     private lazy var previewPresenter: any VoicePreviewPresenting =
@@ -122,12 +127,22 @@ final class VoiceInputController {
         var lastShownText: String
         /// Length of the source recording in seconds; 0 for recalled entries.
         let audioDuration: Double
+        /// Retained recording for playback/save/re-transcribe; nil for
+        /// recalled history entries.
+        let audio: (any AudioRetaining)?
 
-        init(token: UUID = UUID(), asrText: String, lastShownText: String, audioDuration: Double) {
+        init(
+            token: UUID = UUID(),
+            asrText: String,
+            lastShownText: String,
+            audioDuration: Double,
+            audio: (any AudioRetaining)? = nil
+        ) {
             self.token = token
             self.asrText = asrText
             self.lastShownText = lastShownText
             self.audioDuration = audioDuration
+            self.audio = audio
         }
     }
 
@@ -152,6 +167,7 @@ final class VoiceInputController {
         enhancerFactory: ((AppSettings, String) -> any TextEnhancer)? = nil,
         enhancePromptProvider: ((String) -> String?)? = nil,
         enhanceModesProvider: (() -> [EnhanceMode])? = nil,
+        audioRetainerFactory: (() -> any AudioRetaining)? = nil,
         pasteAction: ((String) -> Void)? = nil,
         copyAction: ((String) -> Void)? = nil,
         ensureMicrophonePermission: (@Sendable () async throws -> Void)? = nil,
@@ -170,6 +186,7 @@ final class VoiceInputController {
             EnhanceModeStore().resolvePrompt(modeID: modeID)
         }
         self.enhanceModesProvider = enhanceModesProvider ?? { EnhanceModeStore().loadModes() }
+        self.audioRetainerFactory = audioRetainerFactory ?? { RetainedAudio() }
         self.pasteAction = pasteAction ?? Self.defaultPasteAction
         self.copyAction = copyAction ?? Self.defaultCopyAction
         self.ensureMicrophonePermission = ensureMicrophonePermission ?? Self.defaultMicrophonePermission
@@ -252,6 +269,10 @@ final class VoiceInputController {
             }
             : nil
 
+        // Retain the audio only when the preview panel will need it.
+        let audio: (any AudioRetaining)? = settings.voicePreviewEnabled ? audioRetainerFactory() : nil
+        currentAudio = audio
+
         let transcriber = transcriberFactory(settings)
         let language = settings.voiceLanguage
         Task {
@@ -271,6 +292,7 @@ final class VoiceInputController {
                 try await self.recorder.start(
                     sink: { buffer in
                         newSession.append(buffer)
+                        audio?.append(buffer)
                         levelMeter?.ingest(buffer)
                     },
                     onConfigurationChange: {
@@ -357,6 +379,24 @@ final class VoiceInputController {
         scheduleMaxDuration(gen: gen)
     }
 
+    /// Pushes the converted WAV to the open panel. Identity-checked against
+    /// the owning session so a history recall (which keeps the generation)
+    /// can't receive another recording's audio.
+    private func audioDidBecomeAvailable(gen: UInt64, audio: any AudioRetaining, wavData: Data) {
+        guard gen == generation else { return }
+        switch state {
+        case .transcribing(let context) where context.panelOpen:
+            guard currentAudio === audio else { return }
+        case .previewing(let session):
+            guard session.audio === audio else { return }
+        case .enhancing(let context):
+            guard context.session?.audio === audio else { return }
+        default:
+            return
+        }
+        previewPresenter.setAudioAvailable(wavData: wavData)
+    }
+
     private func transcriptionDidFinish(gen: UInt64, result: Result<String, Error>) {
         guard gen == generation, case .transcribing(let context) = state else { return }
 
@@ -365,7 +405,8 @@ final class VoiceInputController {
             DebugLog.log("[Voice] transcribed \(text.count) characters")
             if context.panelOpen {
                 let session = PreviewSession(
-                    asrText: text, lastShownText: text, audioDuration: lastAudioDuration
+                    asrText: text, lastShownText: text, audioDuration: lastAudioDuration,
+                    audio: takeCurrentAudio()
                 )
                 insertHistoryEntry(for: session)
                 previewPresenter.setASRResult(text: text, asrInfo: asrInfoText(for: session))
@@ -400,9 +441,21 @@ final class VoiceInputController {
     /// or type a final text manually. The session carries no ASR text, so
     /// mode switches and history recording are skipped for it.
     private func presentTranscriptionFailure(_ message: String) {
-        let session = PreviewSession(asrText: "", lastShownText: "", audioDuration: lastAudioDuration)
+        // The session keeps the audio: switching the ASR model in the panel
+        // can re-transcribe and recover a failed transcription.
+        let session = PreviewSession(
+            asrText: "", lastShownText: "", audioDuration: lastAudioDuration,
+            audio: takeCurrentAudio()
+        )
         becomePreviewing(session)
         previewPresenter.setASRFailed(message: message)
+    }
+
+    /// Transfers ownership of the retained audio to a new preview session.
+    private func takeCurrentAudio() -> (any AudioRetaining)? {
+        let audio = currentAudio
+        currentAudio = nil
+        return audio
     }
 
     /// Transition to previewing without touching the panel content.
@@ -461,6 +514,15 @@ final class VoiceInputController {
         let panelOpen = settings.voicePreviewEnabled
         state = .transcribing(TranscribingContext(session: session, panelOpen: panelOpen))
         activityModel.phase = .transcribing
+        currentAudio?.stopAccepting()
+        if panelOpen, let audio = currentAudio {
+            // Convert eagerly: releases the raw buffers early and enables the
+            // panel's playback/save buttons as soon as the WAV is ready.
+            Task {
+                guard let wavData = try? await audio.wavData() else { return }
+                self.audioDidBecomeAvailable(gen: gen, audio: audio, wavData: wavData)
+            }
+        }
         if panelOpen {
             // WenZi-style: the preview opens right away with the ASR area
             // in a loading state; it replaces the HUD from here on.
@@ -536,7 +598,8 @@ final class VoiceInputController {
         let session = PreviewSession(
             asrText: original ?? text,
             lastShownText: text,
-            audioDuration: lastAudioDuration
+            audioDuration: lastAudioDuration,
+            audio: takeCurrentAudio()
         )
         if original != nil {
             // Seed the cache with the initial enhancement result.
@@ -996,6 +1059,7 @@ final class VoiceInputController {
 
     private func toIdle() {
         state = .idle
+        currentAudio = nil
         activityModel.phase = .idle
         activityModel.level = 0
         activityModel.partialText = ""
