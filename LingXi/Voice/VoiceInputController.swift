@@ -28,6 +28,8 @@ struct VoiceInputTiming: Sendable {
 /// construction. Async completions carry the `generation` captured at
 /// session start; a mismatch means the session was superseded or cancelled,
 /// and the callback may only clean up after itself, never touch state.
+/// Re-enhancements inside a preview session keep the same generation (the
+/// panel's callbacks stay valid) and are invalidated via `enhanceGeneration`.
 @MainActor
 final class VoiceInputController {
     private let settings: AppSettings
@@ -37,7 +39,11 @@ final class VoiceInputController {
     private let enhancerFactory: (AppSettings, String) -> any TextEnhancer
     /// Resolves a mode ID to its system prompt; nil disables enhancement.
     private let enhancePromptProvider: (String) -> String?
+    /// Ordered mode list shown in the preview panel (⌘1-9 targets).
+    private let enhanceModesProvider: () -> [EnhanceMode]
     private let pasteAction: (String) -> Void
+    /// Writes to the clipboard without pasting (⌘Return in the preview).
+    private let copyAction: (String) -> Void
     private let ensureMicrophonePermission: @Sendable () async throws -> Void
     private let frontmostAppProvider: () -> NSRunningApplication?
     private let timing: VoiceInputTiming
@@ -45,6 +51,9 @@ final class VoiceInputController {
 
     private var monitor: VoiceKeyMonitor?
     private var generation: UInt64 = 0
+    /// Bumped for every enhancement request; guards re-enhance callbacks
+    /// whose session generation is still live.
+    private var enhanceGeneration: UInt64 = 0
     private var state: State = .idle
     private var maxDurationTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
@@ -64,8 +73,8 @@ final class VoiceInputController {
         case starting(StartingContext)
         case recording(RecordingContext)
         case transcribing(session: any SpeechTranscriptionSession)
-        case enhancing(original: String, task: Task<Void, Never>)
-        case previewing
+        case enhancing(EnhancingContext)
+        case previewing(PreviewSession)
     }
 
     private struct StartingContext {
@@ -79,6 +88,46 @@ final class VoiceInputController {
         let pressedAt: ContinuousClock.Instant
     }
 
+    private struct EnhancingContext {
+        let original: String
+        let task: Task<Void, Never>
+        /// Non-nil when this is a re-enhancement started from the preview
+        /// panel; degrade paths return to the panel instead of going idle.
+        let session: PreviewSession?
+    }
+
+    /// Per-recording preview context: the raw ASR text plus results for
+    /// every (mode, LLM model) combination tried so far.
+    final class PreviewSession {
+        nonisolated struct CacheKey: Hashable, Sendable {
+            var modeID: String
+            var provider: String
+            var model: String
+        }
+
+        let token: UUID
+        let asrText: String
+        var cache: [CacheKey: String] = [:]
+
+        init(token: UUID = UUID(), asrText: String) {
+            self.token = token
+            self.asrText = asrText
+        }
+    }
+
+    // MARK: - Preview history (in-memory, newest first)
+
+    private struct PreviewHistoryEntry {
+        let token: UUID
+        let asrText: String
+        var results: [PreviewSession.CacheKey: String]
+        var finalText: String?
+        let date: Date
+    }
+
+    private static let previewHistoryLimit = 10
+    private var previewHistory: [PreviewHistoryEntry] = []
+
     init(
         settings: AppSettings,
         activityModel: VoiceActivityModel,
@@ -86,7 +135,9 @@ final class VoiceInputController {
         transcriberFactory: ((AppSettings) -> any SpeechTranscriber)? = nil,
         enhancerFactory: ((AppSettings, String) -> any TextEnhancer)? = nil,
         enhancePromptProvider: ((String) -> String?)? = nil,
+        enhanceModesProvider: (() -> [EnhanceMode])? = nil,
         pasteAction: ((String) -> Void)? = nil,
+        copyAction: ((String) -> Void)? = nil,
         ensureMicrophonePermission: (@Sendable () async throws -> Void)? = nil,
         previewPresenter: (any VoicePreviewPresenting)? = nil,
         hudPresenter: (any VoiceHUDPresenting)? = nil,
@@ -101,7 +152,9 @@ final class VoiceInputController {
         self.enhancePromptProvider = enhancePromptProvider ?? { modeID in
             EnhanceModeStore().resolvePrompt(modeID: modeID)
         }
+        self.enhanceModesProvider = enhanceModesProvider ?? { EnhanceModeStore().loadModes() }
         self.pasteAction = pasteAction ?? Self.defaultPasteAction
+        self.copyAction = copyAction ?? Self.defaultCopyAction
         self.ensureMicrophonePermission = ensureMicrophonePermission ?? Self.defaultMicrophonePermission
         self.injectedPreviewPresenter = previewPresenter
         self.injectedHUDPresenter = hudPresenter
@@ -130,6 +183,14 @@ final class VoiceInputController {
         }
     }
 
+    /// Reopens the most recent preview from the in-memory history
+    /// (menu bar entry). Only valid while idle.
+    func showLastPreview() {
+        guard case .idle = state, let entry = previewHistory.first else { return }
+        generation &+= 1
+        openHistoryEntry(entry)
+    }
+
     // MARK: - Events (all MainActor)
 
     func fnDown() {
@@ -140,6 +201,11 @@ final class VoiceInputController {
         case .previewing:
             // A new press discards the pending preview and starts fresh.
             DebugLog.log("[Voice] new session discards pending preview")
+            previewPresenter.close()
+            previousApp = nil
+        case .enhancing(let context) where context.session != nil:
+            DebugLog.log("[Voice] new session discards re-enhancing preview")
+            context.task.cancel()
             previewPresenter.close()
             previousApp = nil
         case .starting, .recording, .transcribing, .enhancing:
@@ -274,7 +340,7 @@ final class VoiceInputController {
         case .success(let text) where !text.isEmpty:
             DebugLog.log("[Voice] transcribed \(text.count) characters")
             if let prompt = enhancePromptProvider(settings.voiceEnhanceMode) {
-                beginEnhancing(original: text, prompt: prompt)
+                beginEnhancing(original: text, prompt: prompt, session: nil)
             } else {
                 deliver(text)
             }
@@ -287,18 +353,34 @@ final class VoiceInputController {
         }
     }
 
-    private func enhanceDidFinish(gen: UInt64, original: String, result: Result<String, Error>) {
-        guard gen == generation, case .enhancing = state else { return }
+    private func enhanceDidFinish(gen: UInt64, eGen: UInt64, original: String, result: Result<String, Error>) {
+        guard gen == generation, eGen == enhanceGeneration,
+              case .enhancing(let context) = state else { return }
 
         switch result {
         case .success(let text) where !text.isEmpty:
             DebugLog.log("[Voice] enhanced \(text.count) characters")
-            deliver(text, original: original)
+            if let session = context.session {
+                session.cache[currentCacheKey()] = text
+                returnToPreview(session, text: text, original: session.asrText, isCached: false)
+            } else {
+                deliver(text, original: original)
+            }
         case .success:
             DebugLog.log("[Voice] empty enhancement, falling back to transcription")
-            deliver(original)
+            degradeEnhancement(context, original: original)
         case .failure(let error):
             DebugLog.log("[Voice] enhancement failed, falling back to transcription: \(error)")
+            degradeEnhancement(context, original: original)
+        }
+    }
+
+    /// Failed/empty enhancement: initial runs deliver the raw transcription;
+    /// panel re-enhancements return to the panel showing the ASR text.
+    private func degradeEnhancement(_ context: EnhancingContext, original: String) {
+        if let session = context.session {
+            returnToPreview(session, text: session.asrText, original: nil, isCached: false)
+        } else {
             deliver(original)
         }
     }
@@ -331,21 +413,26 @@ final class VoiceInputController {
         scheduleWatchdog(gen: gen, session: session)
     }
 
-    private func beginEnhancing(original: String, prompt: String) {
+    private func beginEnhancing(original: String, prompt: String, session: PreviewSession?) {
         let gen = generation
+        enhanceGeneration &+= 1
+        let eGen = enhanceGeneration
         let enhancer = enhancerFactory(settings, prompt)
         let task = Task {
             do {
                 let enhanced = try await enhancer.enhance(original)
-                self.enhanceDidFinish(gen: gen, original: original, result: .success(enhanced))
+                self.enhanceDidFinish(gen: gen, eGen: eGen, original: original, result: .success(enhanced))
             } catch {
-                self.enhanceDidFinish(gen: gen, original: original, result: .failure(error))
+                self.enhanceDidFinish(gen: gen, eGen: eGen, original: original, result: .failure(error))
             }
         }
-        state = .enhancing(original: original, task: task)
+        state = .enhancing(EnhancingContext(original: original, task: task, session: session))
         activityModel.phase = .enhancing
+        if session != nil {
+            previewPresenter.setEnhancing(true)
+        }
         watchdogTask?.cancel()
-        scheduleEnhanceWatchdog(gen: gen, original: original)
+        scheduleEnhanceWatchdog(gen: gen, eGen: eGen, original: original)
     }
 
     /// Delivery of a finished session's text: preview if enabled, else paste
@@ -361,24 +448,78 @@ final class VoiceInputController {
     }
 
     private func beginPreviewing(text: String, original: String?) {
+        let session = PreviewSession(asrText: original ?? text)
+        if original != nil {
+            // Seed the cache with the initial enhancement result.
+            session.cache[currentCacheKey()] = text
+        }
+        previewHistory.insert(PreviewHistoryEntry(
+            token: session.token,
+            asrText: session.asrText,
+            results: session.cache,
+            finalText: nil,
+            date: Date()
+        ), at: 0)
+        if previewHistory.count > Self.previewHistoryLimit {
+            previewHistory.removeLast(previewHistory.count - Self.previewHistoryLimit)
+        }
+        presentPreview(session: session, text: text, original: original, isCached: false)
+    }
+
+    private func presentPreview(session: PreviewSession, text: String, original: String?, isCached: Bool) {
         let gen = generation
         previousApp = frontmostAppProvider()
-        state = .previewing
+        state = .previewing(session)
         activityModel.phase = .idle
         hideHUD()
         watchdogTask?.cancel()
         watchdogTask = nil
-        previewPresenter.show(
+
+        let setup = VoicePreviewSetup(
             text: text,
             original: original,
-            onConfirm: { [weak self] edited in self?.previewDidConfirm(gen: gen, text: edited) },
-            onCancel: { [weak self] in self?.previewDidCancel(gen: gen) }
+            modes: enhanceModesProvider(),
+            currentModeID: settings.voiceEnhanceMode,
+            llmOptions: settings.voiceLLMProviders.flatMap { provider in
+                provider.models.map { LLMSelection(provider: provider.name, model: $0) }
+            },
+            currentLLM: currentResolvedLLM(),
+            isCached: isCached,
+            history: previewHistory.map { entry in
+                VoicePreviewHistoryMenuItem(id: entry.token, title: Self.historyTitle(entry))
+            }
         )
+        previewPresenter.show(setup: setup, callbacks: VoicePreviewCallbacks(
+            onConfirm: { [weak self] text in self?.previewDidConfirm(gen: gen, text: text) },
+            onCopy: { [weak self] text in self?.previewDidCopy(gen: gen, text: text) },
+            onCancel: { [weak self] in self?.previewDidCancel(gen: gen) },
+            onModeSwitch: { [weak self] modeID in self?.previewDidSwitchMode(gen: gen, modeID: modeID) },
+            onModelSwitch: { [weak self] selection in self?.previewDidSwitchModel(gen: gen, selection: selection) },
+            onHistorySelect: { [weak self] token in self?.previewDidSelectHistory(gen: gen, token: token) }
+        ))
+    }
+
+    /// Back from a re-enhancement (result, cache hit or degrade) to the
+    /// open panel.
+    private func returnToPreview(_ session: PreviewSession, text: String, original: String?, isCached: Bool) {
+        state = .previewing(session)
+        activityModel.phase = .idle
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        previewPresenter.update(
+            text: text,
+            original: original,
+            currentModeID: settings.voiceEnhanceMode,
+            currentLLM: currentResolvedLLM(),
+            isCached: isCached
+        )
+        syncHistoryResults(session)
     }
 
     private func previewDidConfirm(gen: UInt64, text: String) {
-        guard gen == generation, case .previewing = state else { return }
+        guard gen == generation, case .previewing(let session) = state else { return }
         previewPresenter.close()
+        recordFinalText(text, for: session)
         let target = previousApp
         previousApp = nil
         toIdle()
@@ -392,13 +533,153 @@ final class VoiceInputController {
         }
     }
 
+    private func previewDidCopy(gen: UInt64, text: String) {
+        guard gen == generation, case .previewing(let session) = state else { return }
+        DebugLog.log("[Voice] preview copied to clipboard without pasting")
+        previewPresenter.close()
+        recordFinalText(text, for: session)
+        previousApp = nil
+        toIdle()
+
+        guard !text.isEmpty else { return }
+        copyAction(text)
+    }
+
     private func previewDidCancel(gen: UInt64) {
-        guard gen == generation, case .previewing = state else { return }
-        DebugLog.log("[Voice] preview cancelled, text discarded")
+        guard gen == generation else { return }
+        switch state {
+        case .previewing:
+            DebugLog.log("[Voice] preview cancelled, text discarded")
+        case .enhancing(let context) where context.session != nil:
+            DebugLog.log("[Voice] preview cancelled during re-enhancement")
+            enhanceGeneration &+= 1
+            context.task.cancel()
+        default:
+            return
+        }
         previewPresenter.close()
         previousApp = nil
         toIdle()
     }
+
+    private func previewDidSwitchMode(gen: UInt64, modeID: String) {
+        guard gen == generation, let session = interruptPreviewSession() else { return }
+        if case .previewing = state, settings.voiceEnhanceMode == modeID { return }
+        DebugLog.log("[Voice] preview mode switched to \(modeID)")
+        settings.voiceEnhanceMode = modeID
+        refreshPreview(session)
+    }
+
+    private func previewDidSwitchModel(gen: UInt64, selection: LLMSelection) {
+        guard gen == generation, let session = interruptPreviewSession() else { return }
+        if case .previewing = state, settings.voiceLLMSelection == selection { return }
+        DebugLog.log("[Voice] preview LLM switched to \(selection.provider)/\(selection.model)")
+        settings.voiceLLMSelection = selection
+        refreshPreview(session)
+    }
+
+    private func previewDidSelectHistory(gen: UInt64, token: UUID) {
+        guard gen == generation, let session = interruptPreviewSession() else { return }
+        guard token != session.token,
+              let index = previewHistory.firstIndex(where: { $0.token == token }) else {
+            // Re-selecting the current entry: just make sure we're previewing.
+            if case .enhancing = state { returnToPreview(session, text: session.asrText, original: nil, isCached: false) }
+            return
+        }
+        DebugLog.log("[Voice] recalling preview from history")
+        let entry = previewHistory.remove(at: index)
+        previewHistory.insert(entry, at: 0)
+        openHistoryEntry(entry)
+    }
+
+    private func openHistoryEntry(_ entry: PreviewHistoryEntry) {
+        let session = PreviewSession(token: entry.token, asrText: entry.asrText)
+        session.cache = entry.results
+        let text = entry.finalText ?? entry.results[currentCacheKey()] ?? entry.asrText
+        presentPreview(
+            session: session,
+            text: text,
+            original: text == entry.asrText ? nil : entry.asrText,
+            isCached: false
+        )
+    }
+
+    /// The active preview session, cancelling an in-flight re-enhancement if
+    /// there is one (the caller is about to start a new one or take over).
+    private func interruptPreviewSession() -> PreviewSession? {
+        switch state {
+        case .previewing(let session):
+            return session
+        case .enhancing(let context):
+            guard let session = context.session else { return nil }
+            enhanceGeneration &+= 1
+            context.task.cancel()
+            return session
+        default:
+            return nil
+        }
+    }
+
+    /// Re-runs enhancement for the current (mode, model) combination, using
+    /// the cache when this combination was already tried in this session.
+    private func refreshPreview(_ session: PreviewSession) {
+        let modeID = settings.voiceEnhanceMode
+        if let cached = session.cache[currentCacheKey()] {
+            DebugLog.log("[Voice] preview cache hit")
+            returnToPreview(session, text: cached, original: session.asrText, isCached: true)
+            return
+        }
+        guard let prompt = enhancePromptProvider(modeID) else {
+            returnToPreview(session, text: session.asrText, original: nil, isCached: false)
+            return
+        }
+        beginEnhancing(original: session.asrText, prompt: prompt, session: session)
+    }
+
+    // MARK: - History bookkeeping
+
+    private func syncHistoryResults(_ session: PreviewSession) {
+        guard let index = previewHistory.firstIndex(where: { $0.token == session.token }) else { return }
+        previewHistory[index].results = session.cache
+    }
+
+    private func recordFinalText(_ text: String, for session: PreviewSession) {
+        guard let index = previewHistory.firstIndex(where: { $0.token == session.token }) else { return }
+        previewHistory[index].finalText = text
+        previewHistory[index].results = session.cache
+    }
+
+    private static let historyTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    private static func historyTitle(_ entry: PreviewHistoryEntry) -> String {
+        let text = entry.finalText ?? entry.asrText
+        let snippet = text.count > 30 ? String(text.prefix(30)) + "…" : text
+        return "\(historyTimeFormatter.string(from: entry.date))  \(snippet)"
+    }
+
+    // MARK: - Cache key helpers
+
+    private func currentResolvedLLM() -> LLMSelection? {
+        guard let resolved = VoiceProviderResolver.resolveLLM(
+            selection: settings.voiceLLMSelection, providers: settings.voiceLLMProviders
+        ) else { return nil }
+        return LLMSelection(provider: resolved.provider.name, model: resolved.model)
+    }
+
+    private func currentCacheKey() -> PreviewSession.CacheKey {
+        let llm = currentResolvedLLM()
+        return PreviewSession.CacheKey(
+            modeID: settings.voiceEnhanceMode,
+            provider: llm?.provider ?? "",
+            model: llm?.model ?? ""
+        )
+    }
+
+    // MARK: - Cleanup
 
     /// Cancels the given session, invalidates in-flight callbacks, returns to idle.
     private func abandonSession(_ session: any SpeechTranscriptionSession) {
@@ -421,10 +702,14 @@ final class VoiceInputController {
         case .transcribing(let session):
             DebugLog.log("[Voice] aborting transcription: \(reason)")
             abandonSession(session)
-        case .enhancing(_, let task):
+        case .enhancing(let context):
             DebugLog.log("[Voice] aborting enhancement: \(reason)")
             generation &+= 1
-            task.cancel()
+            context.task.cancel()
+            if context.session != nil {
+                previewPresenter.close()
+                previousApp = nil
+            }
             toIdle()
         case .previewing:
             DebugLog.log("[Voice] discarding preview: \(reason)")
@@ -487,17 +772,25 @@ final class VoiceInputController {
         }
     }
 
-    private func scheduleEnhanceWatchdog(gen: UInt64, original: String) {
+    private func scheduleEnhanceWatchdog(gen: UInt64, eGen: UInt64, original: String) {
         watchdogTask?.cancel()
         watchdogTask = Task { [timeout = timing.enhanceTimeout] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
-            guard gen == self.generation, case .enhancing(_, let task) = self.state else { return }
-            DebugLog.log("[Voice] enhancement watchdog fired, falling back to transcription")
+            guard gen == self.generation, eGen == self.enhanceGeneration,
+                  case .enhancing(let context) = self.state else { return }
             // Invalidate the in-flight enhance callback, then degrade.
-            self.generation &+= 1
-            task.cancel()
-            self.deliver(original)
+            if let session = context.session {
+                DebugLog.log("[Voice] re-enhancement watchdog fired, back to preview")
+                self.enhanceGeneration &+= 1
+                context.task.cancel()
+                self.returnToPreview(session, text: session.asrText, original: nil, isCached: false)
+            } else {
+                DebugLog.log("[Voice] enhancement watchdog fired, falling back to transcription")
+                self.generation &+= 1
+                context.task.cancel()
+                self.deliver(original)
+            }
         }
     }
 
@@ -551,6 +844,11 @@ final class VoiceInputController {
         let pb = ClipboardStore.prepareTransientPasteboard(types: [.string])
         pb.setString(text, forType: .string)
         KeyboardUtils.simulatePaste()
+    }
+
+    private static let defaultCopyAction: @MainActor (String) -> Void = { text in
+        let pb = ClipboardStore.prepareTransientPasteboard(types: [.string])
+        pb.setString(text, forType: .string)
     }
 
     private static let defaultMicrophonePermission: @Sendable () async throws -> Void = {

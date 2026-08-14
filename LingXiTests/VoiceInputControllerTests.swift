@@ -126,17 +126,26 @@ private final class FakeEnhancer: TextEnhancer, @unchecked Sendable {
     private var _requests: [String] = []
 
     private let manual: Bool
-    private let result: Result<String, Error>
+    /// Consumed in call order; the last one repeats.
+    private let results: [Result<String, Error>]
 
     init(result: Result<String, Error> = .success("enhanced"), manual: Bool = false) {
-        self.result = result
+        self.results = [result]
         self.manual = manual
+    }
+
+    init(results: [Result<String, Error>]) {
+        self.results = results
+        self.manual = false
     }
 
     var requests: [String] { lock.withLock { _requests } }
 
     func enhance(_ text: String) async throws -> String {
-        lock.withLock { _requests.append(text) }
+        let result: Result<String, Error> = lock.withLock {
+            _requests.append(text)
+            return results[min(_requests.count - 1, results.count - 1)]
+        }
         if !manual { return try result.get() }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { newContinuation in
@@ -190,32 +199,48 @@ private actor FakeRecorder: AudioRecording {
 @MainActor
 private final class PasteSpy {
     var pasted: [String] = []
+    var copied: [String] = []
 }
 
 @MainActor
 private final class FakePreviewPresenter: VoicePreviewPresenting {
     private(set) var shown: [(text: String, original: String?)] = []
+    private(set) var setups: [VoicePreviewSetup] = []
+    private(set) var updates: [(text: String, original: String?, modeID: String, isCached: Bool)] = []
+    private(set) var enhancingStates: [Bool] = []
     private(set) var closeCount = 0
-    private var onConfirm: (@MainActor (String) -> Void)?
-    private var onCancel: (@MainActor () -> Void)?
+    private var callbacks: VoicePreviewCallbacks?
 
-    func show(
+    func show(setup: VoicePreviewSetup, callbacks: VoicePreviewCallbacks) {
+        shown.append((setup.text, setup.original))
+        setups.append(setup)
+        self.callbacks = callbacks
+    }
+
+    func update(
         text: String,
         original: String?,
-        onConfirm: @escaping @MainActor (String) -> Void,
-        onCancel: @escaping @MainActor () -> Void
+        currentModeID: String,
+        currentLLM: LLMSelection?,
+        isCached: Bool
     ) {
-        shown.append((text, original))
-        self.onConfirm = onConfirm
-        self.onCancel = onCancel
+        updates.append((text, original, currentModeID, isCached))
+    }
+
+    func setEnhancing(_ enhancing: Bool) {
+        enhancingStates.append(enhancing)
     }
 
     func close() {
         closeCount += 1
     }
 
-    func simulateConfirm(_ text: String) { onConfirm?(text) }
-    func simulateCancel() { onCancel?() }
+    func simulateConfirm(_ text: String) { callbacks?.onConfirm(text) }
+    func simulateCopy(_ text: String) { callbacks?.onCopy(text) }
+    func simulateCancel() { callbacks?.onCancel() }
+    func simulateModeSwitch(_ modeID: String) { callbacks?.onModeSwitch(modeID) }
+    func simulateModelSwitch(_ selection: LLMSelection) { callbacks?.onModelSwitch(selection) }
+    func simulateHistorySelect(_ token: UUID) { callbacks?.onHistorySelect(token) }
 }
 
 @MainActor
@@ -267,8 +292,15 @@ private struct Harness {
             recorder: recorder,
             transcriberFactory: { _ in transcriber },
             enhancerFactory: { _, _ in enhancer },
-            enhancePromptProvider: { $0 == EnhanceMode.offModeID ? nil : "test prompt" },
+            enhancePromptProvider: { $0 == EnhanceMode.offModeID ? nil : "prompt-\($0)" },
+            enhanceModesProvider: {
+                [
+                    EnhanceMode(id: "proofread", label: "纠错润色", order: 1, prompt: "p1"),
+                    EnhanceMode(id: "translate_en", label: "翻译为英文", order: 2, prompt: "p2"),
+                ]
+            },
             pasteAction: { spy.pasted.append($0) },
+            copyAction: { spy.copied.append($0) },
             ensureMicrophonePermission: {},
             previewPresenter: preview,
             hudPresenter: hud,
@@ -775,6 +807,192 @@ struct VoiceInputControllerTests {
         try? await Task.sleep(for: .milliseconds(20))
         #expect(await h.recorder.startCount == 0)
         #expect(h.activity.phase == .idle)
+    }
+
+    // MARK: - Phase 3C: preview panel enhancements
+
+    /// Runs one full recording session up to the preview panel.
+    private func runToPreview(_ h: Harness, expectedShown: Int = 1) async {
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount >= 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == expectedShown })
+    }
+
+    @Test func commandReturnCopiesWithoutPasting() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+        await runToPreview(h)
+
+        h.preview.simulateCopy("copied text")
+        #expect(await waitUntil { h.spy.copied == ["copied text"] })
+        #expect(h.spy.pasted.isEmpty)
+        #expect(h.activity.phase == .idle)
+        #expect(h.preview.closeCount >= 1)
+    }
+
+    @Test func modeSwitchReEnhancesWithSessionASRText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(results: [.success("polished-1"), .success("polished-2")])
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        await runToPreview(h)
+        #expect(h.preview.shown[0].text == "polished-1")
+
+        h.preview.simulateModeSwitch("translate_en")
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        // The re-enhancement runs on the raw ASR text, not the previous result.
+        #expect(enhancer.requests == ["raw", "raw"])
+        #expect(h.preview.updates[0].text == "polished-2")
+        #expect(h.preview.updates[0].isCached == false)
+        #expect(h.settings.voiceEnhanceMode == "translate_en")
+        // Panel stays open the whole time.
+        #expect(h.preview.closeCount == 0)
+    }
+
+    @Test func modeSwitchBackHitsCacheWithoutEnhancerCall() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(results: [.success("polished-1"), .success("polished-2")])
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        await runToPreview(h)
+
+        h.preview.simulateModeSwitch("translate_en")
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+
+        h.preview.simulateModeSwitch("proofread")
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+        #expect(h.preview.updates[1].text == "polished-1")
+        #expect(h.preview.updates[1].isCached == true)
+        #expect(enhancer.requests.count == 2)
+    }
+
+    @Test func modelSwitchReEnhancesAndPersistsSelection() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(results: [.success("polished-1"), .success("polished-2")])
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        h.settings.voiceLLMProviders = [
+            VoiceProvider(name: "p1", baseURL: "http://x.test/v1", apiKey: "", models: ["m1", "m2"])
+        ]
+        h.settings.voiceLLMSelection = LLMSelection(provider: "p1", model: "m1")
+        await runToPreview(h)
+
+        h.preview.simulateModelSwitch(LLMSelection(provider: "p1", model: "m2"))
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "polished-2")
+        #expect(enhancer.requests.count == 2)
+        #expect(h.settings.voiceLLMSelection == LLMSelection(provider: "p1", model: "m2"))
+
+        // Back to the first model: cached, no third request.
+        h.preview.simulateModelSwitch(LLMSelection(provider: "p1", model: "m1"))
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+        #expect(h.preview.updates[1].text == "polished-1")
+        #expect(h.preview.updates[1].isCached == true)
+        #expect(enhancer.requests.count == 2)
+    }
+
+    @Test func reEnhanceWatchdogReturnsToPanelWithASRText() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(
+            session: session,
+            enhancer: enhancer,
+            enhanceEnabled: false,
+            previewEnabled: true,
+            timing: VoiceInputTiming(minHold: .zero, enhanceTimeout: .milliseconds(30))
+        )
+        await runToPreview(h)
+        #expect(h.preview.shown[0].text == "raw")
+
+        // Switching modes starts a re-enhancement that never completes.
+        h.preview.simulateModeSwitch("proofread")
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        // Watchdog degrades back to the panel showing the ASR text.
+        #expect(h.preview.updates[0].text == "raw")
+        #expect(h.preview.closeCount == 0)
+        #expect(h.spy.pasted.isEmpty)
+
+        // A late result from the abandoned re-enhancement must be discarded.
+        enhancer.complete(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.preview.updates.count == 1)
+    }
+
+    @Test func escDuringReEnhanceDiscardsAndIgnoresLateResult() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: false, previewEnabled: true)
+        await runToPreview(h)
+
+        h.preview.simulateModeSwitch("proofread")
+        #expect(await waitUntil { h.preview.enhancingStates.last == true })
+
+        h.preview.simulateCancel()
+        #expect(await waitUntil { h.activity.phase == .idle })
+        #expect(h.preview.closeCount >= 1)
+
+        enhancer.complete(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.spy.pasted.isEmpty)
+        #expect(h.preview.updates.isEmpty)
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func fnDownDuringReEnhanceStartsNewSession() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: false, previewEnabled: true)
+        await runToPreview(h)
+
+        h.preview.simulateModeSwitch("proofread")
+        #expect(await waitUntil { h.preview.enhancingStates.last == true })
+
+        // A new press discards the re-enhancing preview and records again.
+        h.controller.fnDown()
+        #expect(h.preview.closeCount >= 1)
+        #expect(await waitUntil { await h.recorder.startCount == 2 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.shown.count == 2 })
+    }
+
+    @Test func previewHistoryCappedAtTen() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        for i in 1...12 {
+            await runToPreview(h, expectedShown: i)
+            h.preview.simulateConfirm("final-\(i)")
+            #expect(await waitUntil { h.activity.phase == .idle })
+        }
+        #expect(h.preview.setups.last?.history.count == 10)
+    }
+
+    @Test func showLastPreviewReopensMostRecentEntry() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+        await runToPreview(h)
+        h.preview.simulateConfirm("final text")
+        #expect(await waitUntil { h.spy.pasted == ["final text"] })
+
+        h.controller.showLastPreview()
+        #expect(h.preview.shown.count == 2)
+        #expect(h.preview.shown[1].text == "final text")
+
+        // The recalled preview is fully functional: confirm pastes again.
+        h.preview.simulateConfirm("again")
+        #expect(await waitUntil { h.spy.pasted == ["final text", "again"] })
+    }
+
+    @Test func showLastPreviewIgnoredWithoutHistoryOrWhileBusy() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        // No history yet: nothing happens.
+        h.controller.showLastPreview()
+        #expect(h.preview.shown.isEmpty)
+
+        // While previewing: not idle, so the call is ignored.
+        await runToPreview(h)
+        h.controller.showLastPreview()
+        #expect(h.preview.shown.count == 1)
     }
 }
 
