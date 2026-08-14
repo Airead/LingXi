@@ -230,6 +230,63 @@ private final class FakeEnhancer: TextEnhancer, @unchecked Sendable {
     }
 }
 
+/// Streaming enhancer with externally driven deltas and completion.
+private final class StreamingFakeEnhancer: TextEnhancer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var onDelta: (@Sendable (String) -> Void)?
+    private var continuation: CheckedContinuation<String, Error>?
+    private var storedResult: Result<String, Error>?
+    private var _requests: [String] = []
+
+    var requests: [String] { lock.withLock { _requests } }
+
+    func enhance(_ text: String) async throws -> String {
+        try await enhanceStream(text) { _ in }
+    }
+
+    func enhanceStream(
+        _ text: String,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> String {
+        lock.withLock {
+            _requests.append(text)
+            self.onDelta = onDelta
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { newContinuation in
+                let immediate: Result<String, Error>? = lock.withLock {
+                    if let stored = storedResult { return stored }
+                    continuation = newContinuation
+                    return nil
+                }
+                if let immediate { newContinuation.resume(with: immediate) }
+            }
+        } onCancel: {
+            let pending: CheckedContinuation<String, Error>? = lock.withLock {
+                let pending = continuation
+                continuation = nil
+                return pending
+            }
+            pending?.resume(throwing: CancellationError())
+        }
+    }
+
+    func emitDelta(_ delta: String) {
+        let handler = lock.withLock { onDelta }
+        handler?(delta)
+    }
+
+    func finishStream(_ result: Result<String, Error>) {
+        let pending: CheckedContinuation<String, Error>? = lock.withLock {
+            let pending = continuation
+            continuation = nil
+            if pending == nil { storedResult = result }
+            return pending
+        }
+        pending?.resume(with: result)
+    }
+}
+
 private final class FakeRetainedAudio: AudioRetaining, @unchecked Sendable {
     private let lock = NSLock()
     private var _appendCount = 0
@@ -290,6 +347,7 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
     private(set) var asrTranscribing: [String] = []
     private(set) var updates: [(text: String, original: String?, modeID: String, isCached: Bool)] = []
     private(set) var enhancingStates: [Bool] = []
+    private(set) var deltas: [String] = []
     private(set) var closeCount = 0
     private var callbacks: VoicePreviewCallbacks?
 
@@ -327,6 +385,10 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
 
     func setEnhancing(_ enhancing: Bool) {
         enhancingStates.append(enhancing)
+    }
+
+    func appendEnhanceDelta(_ delta: String) {
+        deltas.append(delta)
     }
 
     func close() {
@@ -379,6 +441,7 @@ private struct Harness {
         historyEnabled: Bool = false,
         reTranscribeResults: [Result<String, Error>] = [.success("re-transcribed")],
         reTranscribeManual: Bool = false,
+        streamingEnhancer: StreamingFakeEnhancer? = nil,
         timing: VoiceInputTiming = VoiceInputTiming(minHold: .zero)
     ) {
         let defaults = UserDefaults(suiteName: "io.github.airead.lingxi.test.\(UUID().uuidString)")!
@@ -410,7 +473,7 @@ private struct Harness {
             transcriberFactory: { _ in transcriber },
             enhancerFactory: { _, prompt in
                 prompts.prompts.append(prompt)
-                return enhancer
+                return streamingEnhancer ?? enhancer
             },
             enhancePromptProvider: { $0 == EnhanceMode.offModeID ? nil : "prompt-\($0)" },
             enhanceModesProvider: {
@@ -1422,6 +1485,107 @@ struct VoiceInputControllerTests {
         #expect(h.settings.voiceASRSelection == remoteASR)
         #expect(h.transcriber.wavRequests.isEmpty)
         #expect(h.preview.asrTranscribing.isEmpty)
+    }
+
+    // MARK: - Streaming enhancement
+
+    @Test func streamingDeltasReachPanelAndCompleteOnce() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let streaming = StreamingFakeEnhancer()
+        let h = Harness(
+            session: session, enhanceEnabled: true, previewEnabled: true,
+            streamingEnhancer: streaming
+        )
+        await runToPreview(h)
+        #expect(await waitUntil { streaming.requests == ["raw"] })
+
+        streaming.emitDelta("pol")
+        streaming.emitDelta("ished")
+        #expect(await waitUntil { h.preview.deltas == ["pol", "ished"] })
+        #expect(h.preview.updates.isEmpty)
+
+        streaming.finishStream(.success("polished"))
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "polished")
+        // The panel's update()/apply() ends the enhancing display; no
+        // explicit setEnhancing(false) call is expected.
+        #expect(h.preview.enhancingStates == [true])
+    }
+
+    @Test func lateDeltaAfterCancelIsDiscarded() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let streaming = StreamingFakeEnhancer()
+        let h = Harness(
+            session: session, enhanceEnabled: true, previewEnabled: true,
+            streamingEnhancer: streaming
+        )
+        await runToPreview(h)
+        #expect(await waitUntil { streaming.requests == ["raw"] })
+        streaming.emitDelta("pol")
+        #expect(await waitUntil { h.preview.deltas == ["pol"] })
+
+        h.preview.simulateCancel()
+        #expect(await waitUntil { h.activity.phase == .idle })
+
+        streaming.emitDelta("late")
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.preview.deltas == ["pol"])
+    }
+
+    @Test func liveStreamKeepsEnhanceWatchdogAlive() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let streaming = StreamingFakeEnhancer()
+        let h = Harness(
+            session: session, enhanceEnabled: true, previewEnabled: true,
+            streamingEnhancer: streaming,
+            timing: VoiceInputTiming(minHold: .zero, enhanceTimeout: .milliseconds(80))
+        )
+        await runToPreview(h)
+        #expect(await waitUntil { streaming.requests == ["raw"] })
+
+        // Keep emitting deltas past the idle timeout: no degrade.
+        for i in 0..<6 {
+            streaming.emitDelta("d\(i)")
+            try? await Task.sleep(for: .milliseconds(30))
+        }
+        #expect(h.preview.updates.isEmpty)
+
+        streaming.finishStream(.success("full"))
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "full")
+    }
+
+    @Test func stalledStreamDegradesToASRTextAfterIdleTimeout() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let streaming = StreamingFakeEnhancer()
+        let h = Harness(
+            session: session, enhanceEnabled: true, previewEnabled: true,
+            streamingEnhancer: streaming,
+            timing: VoiceInputTiming(minHold: .zero, enhanceTimeout: .milliseconds(50))
+        )
+        await runToPreview(h)
+        #expect(await waitUntil { streaming.requests == ["raw"] })
+        streaming.emitDelta("pol")
+        // …then the stream stalls: the watchdog degrades to the ASR text.
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.updates[0].text == "raw")
+        #expect(h.preview.updates[0].original == nil)
+        #expect(h.preview.closeCount == 0)
+    }
+
+    @Test func directPastePathProducesNoDeltas() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let streaming = StreamingFakeEnhancer()
+        let h = Harness(session: session, enhanceEnabled: true, streamingEnhancer: streaming)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { streaming.requests == ["raw"] })
+
+        streaming.finishStream(.success("polished"))
+        #expect(await waitUntil { h.spy.pasted == ["polished"] })
+        #expect(h.preview.deltas.isEmpty)
     }
 
     // MARK: - Phase 3D: conversation history

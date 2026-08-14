@@ -193,6 +193,48 @@ struct VoicePreviewModelTests {
         #expect(model.audioData != nil)
     }
 
+    // MARK: - Streaming deltas
+
+    @Test func deltasAccumulateWhileEnhancing() {
+        let model = VoicePreviewModel(setup: makeSetup())
+        model.beginEnhancingDisplay()
+        #expect(model.enhancedText == nil)
+        #expect(model.enhanceState == .enhancing)
+
+        model.appendEnhanceDelta("pol")
+        model.appendEnhanceDelta("ished")
+        #expect(model.enhancedText == "polished")
+        // Still enhancing: the spinner stays while text streams in.
+        #expect(model.enhanceState == .enhancing)
+    }
+
+    @Test func beginEnhancingDisplayClearsPreviousResult() {
+        let model = VoicePreviewModel(setup: makeSetup())
+        #expect(model.enhancedText == "polished")
+        model.beginEnhancingDisplay()
+        #expect(model.enhancedText == nil)
+        #expect(model.isEnhancing == true)
+    }
+
+    @Test func lateDeltaAfterCompletionIsIgnored() {
+        let model = VoicePreviewModel(setup: makeSetup())
+        model.beginEnhancingDisplay()
+        model.appendEnhanceDelta("pol")
+        model.apply(
+            text: "polished", original: "raw",
+            currentModeID: "proofread", currentLLM: nil, isCached: false
+        )
+        model.appendEnhanceDelta("late")
+        #expect(model.enhancedText == "polished")
+    }
+
+    @Test func deltasDoNotTouchFinalText() {
+        let model = VoicePreviewModel(setup: makeSetup())
+        model.beginEnhancingDisplay()
+        model.appendEnhanceDelta("streaming")
+        #expect(model.finalText == "polished")
+    }
+
     @Test func savePanelSuppressesCancelOnResign() {
         let model = VoicePreviewModel(setup: makeSetup())
         #expect(model.suppressesCancelOnResign == false)

@@ -76,8 +76,11 @@ protocol VoicePreviewPresenting: AnyObject {
     /// degrade. `original` non-nil means `text` is an enhancement result;
     /// nil means no enhancement (mode off or reverted to the ASR text).
     func update(text: String, original: String?, currentModeID: String, currentLLM: LLMSelection?, isCached: Bool)
-    /// Toggles the in-panel progress indicator while re-enhancing.
+    /// Toggles the in-panel progress indicator while re-enhancing. Turning
+    /// it on clears the previous result so streamed deltas build up fresh.
     func setEnhancing(_ enhancing: Bool)
+    /// Appends one streamed chunk to the enhance area.
+    func appendEnhanceDelta(_ delta: String)
     func close()
 }
 
@@ -211,7 +214,15 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
     }
 
     func setEnhancing(_ enhancing: Bool) {
-        model?.isEnhancing = enhancing
+        if enhancing {
+            model?.beginEnhancingDisplay()
+        } else {
+            model?.isEnhancing = false
+        }
+    }
+
+    func appendEnhanceDelta(_ delta: String) {
+        model?.appendEnhanceDelta(delta)
     }
 
     func close() {
@@ -474,6 +485,20 @@ final class VoicePreviewModel {
         isTranscribing = true
         asrInfo = info
         asrFailureMessage = nil
+    }
+
+    /// Enhancement starts: clear the previous result so streamed deltas
+    /// build up from scratch (WenZi-style live display).
+    func beginEnhancingDisplay() {
+        enhancedText = nil
+        isEnhancing = true
+    }
+
+    /// Appends a streamed chunk; late deltas after completion or
+    /// cancellation are dropped.
+    func appendEnhanceDelta(_ delta: String) {
+        guard isEnhancing else { return }
+        enhancedText = (enhancedText ?? "") + delta
     }
 
     /// Applies a re-enhancement result, cache hit or degrade outcome. The

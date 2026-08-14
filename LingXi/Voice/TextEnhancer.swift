@@ -10,6 +10,23 @@ import Foundation
 /// Post-processes a transcription (proofread, punctuate, remove fillers).
 protocol TextEnhancer: Sendable {
     func enhance(_ text: String) async throws -> String
+
+    /// Streaming variant: `onDelta` receives each text chunk as it arrives
+    /// (on an arbitrary thread); the returned value is the complete text.
+    func enhanceStream(
+        _ text: String,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> String
+}
+
+extension TextEnhancer {
+    /// Non-streaming fallback: a single chunk-free request.
+    func enhanceStream(
+        _ text: String,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> String {
+        try await enhance(text)
+    }
 }
 
 // MARK: - Configuration
@@ -33,7 +50,8 @@ struct LLMEnhancerConfiguration: Sendable {
 nonisolated enum EnhanceRequestBuilder {
     static func makeRequest(
         configuration: LLMEnhancerConfiguration,
-        text: String
+        text: String,
+        stream: Bool = false
     ) throws -> URLRequest {
         let trimmed = configuration.baseURL.trimmingCharacters(in: .whitespaces)
         let base = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
@@ -67,9 +85,38 @@ nonisolated enum EnhanceRequestBuilder {
                 Message(role: "user", content: text),
             ],
             temperature: configuration.temperature,
-            stream: false
+            stream: stream
         ))
         return request
+    }
+
+    /// One server-sent event line of a streaming chat completion.
+    enum StreamEvent: Equatable {
+        case delta(String)
+        case done
+    }
+
+    /// Parses a single SSE line; nil for empty lines, comments, role-only
+    /// chunks and anything else without text content.
+    static func parseStreamLine(_ line: String) -> StreamEvent? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("data:") else { return nil }
+        let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        if payload == "[DONE]" { return .done }
+
+        struct Chunk: Decodable {
+            struct Choice: Decodable {
+                struct Delta: Decodable { let content: String? }
+                let delta: Delta?
+            }
+            let choices: [Choice]?
+        }
+        guard let decoded = try? JSONDecoder().decode(Chunk.self, from: Data(payload.utf8)),
+              let content = decoded.choices?.first?.delta?.content,
+              !content.isEmpty else {
+            return nil
+        }
+        return .delta(content)
     }
 
     static func parseResponse(_ data: Data) throws -> String {
@@ -120,5 +167,46 @@ final class LLMTextEnhancer: TextEnhancer, @unchecked Sendable {
             throw TranscriptionError.apiError(statusCode: http.statusCode, body: body)
         }
         return try EnhanceRequestBuilder.parseResponse(data)
+    }
+
+    @concurrent
+    func enhanceStream(
+        _ text: String,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> String {
+        let request = try EnhanceRequestBuilder.makeRequest(
+            configuration: configuration, text: text, stream: true
+        )
+        let (bytes, response) = try await urlSession.bytes(for: request)
+
+        guard let http = response as? HTTPURLResponse else {
+            throw TranscriptionError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            var body = Data()
+            for try await byte in bytes {
+                body.append(byte)
+                if body.count >= 500 { break }
+            }
+            throw TranscriptionError.apiError(
+                statusCode: http.statusCode,
+                body: String(data: body, encoding: .utf8) ?? ""
+            )
+        }
+
+        var full = ""
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            switch EnhanceRequestBuilder.parseStreamLine(line) {
+            case .delta(let delta):
+                full += delta
+                onDelta(delta)
+            case .done:
+                return full.trimmingCharacters(in: .whitespacesAndNewlines)
+            case nil:
+                continue
+            }
+        }
+        return full.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

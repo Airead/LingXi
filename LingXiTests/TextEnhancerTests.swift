@@ -81,6 +81,46 @@ struct EnhanceRequestBuilderTests {
             _ = try EnhanceRequestBuilder.parseResponse(Data(#"{"choices": []}"#.utf8))
         }
     }
+
+    @Test func buildsStreamingRequest() throws {
+        let request = try EnhanceRequestBuilder.makeRequest(configuration: config, text: "hello", stream: true)
+        let body = try JSONDecoder().decode(DecodedBody.self, from: try #require(request.httpBody))
+        #expect(body.stream == true)
+    }
+
+    // MARK: - SSE line parsing
+
+    @Test func parsesDeltaLine() {
+        let line = #"data: {"choices": [{"delta": {"content": "Hel"}}]}"#
+        #expect(EnhanceRequestBuilder.parseStreamLine(line) == .delta("Hel"))
+    }
+
+    @Test func parsesDoneLine() {
+        #expect(EnhanceRequestBuilder.parseStreamLine("data: [DONE]") == .done)
+        #expect(EnhanceRequestBuilder.parseStreamLine("data:[DONE]") == .done)
+    }
+
+    @Test func ignoresNonDataAndEmptyLines() {
+        #expect(EnhanceRequestBuilder.parseStreamLine("") == nil)
+        #expect(EnhanceRequestBuilder.parseStreamLine(": keep-alive comment") == nil)
+        #expect(EnhanceRequestBuilder.parseStreamLine("event: message") == nil)
+    }
+
+    @Test func ignoresRoleOnlyAndEmptyContentChunks() {
+        #expect(EnhanceRequestBuilder.parseStreamLine(
+            #"data: {"choices": [{"delta": {"role": "assistant"}}]}"#
+        ) == nil)
+        #expect(EnhanceRequestBuilder.parseStreamLine(
+            #"data: {"choices": [{"delta": {"content": ""}}]}"#
+        ) == nil)
+        #expect(EnhanceRequestBuilder.parseStreamLine(
+            #"data: {"choices": [{"delta": {"content": null}}]}"#
+        ) == nil)
+    }
+
+    @Test func ignoresMalformedJSONLine() {
+        #expect(EnhanceRequestBuilder.parseStreamLine("data: {broken json") == nil)
+    }
 }
 
 // MARK: - Enhancer with a mocked URLProtocol
@@ -148,6 +188,69 @@ struct LLMTextEnhancerTests {
         EnhanceMockURLProtocol.handler = { _ in (200, Data("not json".utf8)) }
         await #expect(throws: TranscriptionError.invalidResponse) {
             _ = try await makeEnhancer().enhance("raw text")
+        }
+    }
+
+    // MARK: - Streaming
+
+    /// Collects deltas delivered on arbitrary threads.
+    private final class DeltaCollector: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _deltas: [String] = []
+        var deltas: [String] { lock.withLock { _deltas } }
+        func append(_ delta: String) { lock.withLock { _deltas.append(delta) } }
+    }
+
+    @Test func streamsDeltasAndReturnsFullText() async throws {
+        let sse = """
+        data: {"choices": [{"delta": {"role": "assistant"}}]}
+
+        data: {"choices": [{"delta": {"content": "bet"}}]}
+
+        data: {"choices": [{"delta": {"content": "ter"}}]}
+
+        data: {"choices": [{"delta": {"content": " text"}}]}
+
+        data: [DONE]
+
+        """
+        EnhanceMockURLProtocol.handler = { request in
+            // The streaming request body must carry stream:true.
+            let body = request.httpBody ?? request.httpBodyStream.map { stream -> Data in
+                stream.open()
+                defer { stream.close() }
+                var data = Data()
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let read = stream.read(&buffer, maxLength: buffer.count)
+                    guard read > 0 else { break }
+                    data.append(buffer, count: read)
+                }
+                return data
+            } ?? Data()
+            #expect(String(data: body, encoding: .utf8)?.contains(#""stream":true"#) == true)
+            return (200, Data(sse.utf8))
+        }
+        let collector = DeltaCollector()
+        let text = try await makeEnhancer().enhanceStream("raw text") { collector.append($0) }
+        #expect(text == "better text")
+        #expect(collector.deltas == ["bet", "ter", " text"])
+    }
+
+    @Test func streamWithoutDoneStillReturnsAccumulatedText() async throws {
+        let sse = """
+        data: {"choices": [{"delta": {"content": "hi"}}]}
+
+        """
+        EnhanceMockURLProtocol.handler = { _ in (200, Data(sse.utf8)) }
+        let text = try await makeEnhancer().enhanceStream("raw") { _ in }
+        #expect(text == "hi")
+    }
+
+    @Test func streamThrowsAPIErrorOnNon2xx() async {
+        EnhanceMockURLProtocol.handler = { _ in (500, Data(#"{"error": "boom"}"#.utf8)) }
+        await #expect(throws: TranscriptionError.apiError(statusCode: 500, body: #"{"error": "boom"}"#)) {
+            _ = try await makeEnhancer().enhanceStream("raw") { _ in }
         }
     }
 }

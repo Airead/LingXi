@@ -61,6 +61,9 @@ final class VoiceInputController {
     private var state: State = .idle
     private var maxDurationTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
+    /// Last stream progress; the enhance watchdog fires on idle time, so a
+    /// live stream keeps extending its deadline.
+    private var enhanceProgressAt = ContinuousClock.now
     private var previousApp: NSRunningApplication?
     /// Length of the most recent recording, attached to history records.
     private var lastAudioDuration: Double = 0
@@ -480,6 +483,13 @@ final class VoiceInputController {
         watchdogTask = nil
     }
 
+    private func enhanceDeltaArrived(gen: UInt64, eGen: UInt64, delta: String) {
+        guard gen == generation, eGen == enhanceGeneration,
+              case .enhancing = state else { return }
+        enhanceProgressAt = clock.now
+        previewPresenter.appendEnhanceDelta(delta)
+    }
+
     private func enhanceDidFinish(gen: UInt64, eGen: UInt64, original: String, result: Result<String, Error>) {
         guard gen == generation, eGen == enhanceGeneration,
               case .enhancing(let context) = state else { return }
@@ -573,7 +583,18 @@ final class VoiceInputController {
             }
             let enhancer = self.enhancerFactory(self.settings, fullPrompt)
             do {
-                let enhanced = try await enhancer.enhance(original)
+                let enhanced: String
+                if session != nil {
+                    // Panel path: stream chunks into the enhance area.
+                    enhanced = try await enhancer.enhanceStream(original) { delta in
+                        Task { @MainActor in
+                            self.enhanceDeltaArrived(gen: gen, eGen: eGen, delta: delta)
+                        }
+                    }
+                } else {
+                    // Direct-paste path: nowhere to show deltas.
+                    enhanced = try await enhancer.enhance(original)
+                }
                 self.enhanceDidFinish(gen: gen, eGen: eGen, original: original, result: .success(enhanced))
             } catch {
                 self.enhanceDidFinish(gen: gen, eGen: eGen, original: original, result: .failure(error))
@@ -1321,11 +1342,19 @@ final class VoiceInputController {
         }
     }
 
+    /// Idle-based: a streaming enhancement extends its deadline with every
+    /// delta; the watchdog fires only after `enhanceTimeout` without progress.
     private func scheduleEnhanceWatchdog(gen: UInt64, eGen: UInt64, original: String) {
         watchdogTask?.cancel()
+        enhanceProgressAt = clock.now
         watchdogTask = Task { [timeout = timing.enhanceTimeout] in
-            try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return }
+            while true {
+                let deadline = self.enhanceProgressAt.advanced(by: timeout)
+                let now = self.clock.now
+                guard deadline > now else { break }
+                try? await Task.sleep(for: now.duration(to: deadline))
+                guard !Task.isCancelled else { return }
+            }
             guard gen == self.generation, eGen == self.enhanceGeneration,
                   case .enhancing(let context) = self.state else { return }
             // Invalidate the in-flight enhance callback, then degrade.
