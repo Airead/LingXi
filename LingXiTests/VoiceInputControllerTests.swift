@@ -203,6 +203,11 @@ private final class PasteSpy {
 }
 
 @MainActor
+private final class PromptSpy {
+    var prompts: [String] = []
+}
+
+@MainActor
 private final class FakePreviewPresenter: VoicePreviewPresenting {
     private(set) var shown: [(text: String, original: String?)] = []
     private(set) var setups: [VoicePreviewSetup] = []
@@ -264,6 +269,8 @@ private struct Harness {
     let preview = FakePreviewPresenter()
     let hud = FakeHUDPresenter()
     let spy = PasteSpy()
+    let prompts = PromptSpy()
+    let history: ConversationHistory
     let controller: VoiceInputController
 
     init(
@@ -273,6 +280,7 @@ private struct Harness {
         enhanceEnabled: Bool = false,
         previewEnabled: Bool = false,
         hudEnabled: Bool = false,
+        historyEnabled: Bool = false,
         timing: VoiceInputTiming = VoiceInputTiming(minHold: .zero)
     ) {
         let defaults = UserDefaults(suiteName: "io.github.airead.lingxi.test.\(UUID().uuidString)")!
@@ -281,17 +289,24 @@ private struct Harness {
         settings.voiceEnhanceMode = enhanceEnabled ? "proofread" : EnhanceMode.offModeID
         settings.voicePreviewEnabled = previewEnabled
         settings.voiceHUDEnabled = hudEnabled
+        settings.voiceHistoryEnabled = historyEnabled
         transcriber = FakeTranscriber(session: session, gated: gated)
         self.enhancer = enhancer
+        history = ConversationHistory(directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("lingxi-voice-history-\(UUID().uuidString)", isDirectory: true))
 
         let transcriber = self.transcriber
         let spy = self.spy
+        let prompts = self.prompts
         controller = VoiceInputController(
             settings: settings,
             activityModel: activity,
             recorder: recorder,
             transcriberFactory: { _ in transcriber },
-            enhancerFactory: { _, _ in enhancer },
+            enhancerFactory: { _, prompt in
+                prompts.prompts.append(prompt)
+                return enhancer
+            },
             enhancePromptProvider: { $0 == EnhanceMode.offModeID ? nil : "prompt-\($0)" },
             enhanceModesProvider: {
                 [
@@ -305,6 +320,7 @@ private struct Harness {
             previewPresenter: preview,
             hudPresenter: hud,
             frontmostAppProvider: { nil },
+            conversationHistory: history,
             timing: timing
         )
     }
@@ -993,6 +1009,135 @@ struct VoiceInputControllerTests {
         await runToPreview(h)
         h.controller.showLastPreview()
         #expect(h.preview.shown.count == 1)
+    }
+
+    // MARK: - Phase 3D: conversation history
+
+    @Test func previewConfirmRecordsHistoryWithCorrectionFlag() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(
+            session: session, enhancer: enhancer,
+            enhanceEnabled: true, previewEnabled: true, historyEnabled: true
+        )
+        await runToPreview(h)
+
+        h.preview.simulateConfirm("edited")
+        #expect(await waitUntil { await h.history.readRecords().count == 1 })
+        let record = await h.history.readRecords()[0]
+        #expect(record.asrText == "raw")
+        #expect(record.enhancedText == "polished")
+        #expect(record.finalText == "edited")
+        #expect(record.enhanceMode == "proofread")
+        #expect(record.previewEnabled == true)
+        #expect(record.userCorrected == true)
+        #expect(record.asrModel == "apple")
+    }
+
+    @Test func previewConfirmUneditedRecordsNoCorrection() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(
+            session: session, enhancer: enhancer,
+            enhanceEnabled: true, previewEnabled: true, historyEnabled: true
+        )
+        await runToPreview(h)
+
+        h.preview.simulateConfirm("polished")
+        #expect(await waitUntil { await h.history.readRecords().count == 1 })
+        let record = await h.history.readRecords()[0]
+        #expect(record.userCorrected == false)
+    }
+
+    @Test func previewCopyRecordsHistory() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true, historyEnabled: true)
+        await runToPreview(h)
+
+        h.preview.simulateCopy("raw")
+        #expect(await waitUntil { await h.history.readRecords().count == 1 })
+        let record = await h.history.readRecords()[0]
+        #expect(record.previewEnabled == true)
+        #expect(record.enhancedText == nil)
+    }
+
+    @Test func previewCancelRecordsNothing() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true, historyEnabled: true)
+        await runToPreview(h)
+
+        h.preview.simulateCancel()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(await h.history.readRecords().isEmpty)
+    }
+
+    @Test func directPasteRecordsWithPreviewDisabled() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, historyEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.spy.pasted == ["polished"] })
+
+        #expect(await waitUntil { await h.history.readRecords().count == 1 })
+        let record = await h.history.readRecords()[0]
+        #expect(record.previewEnabled == false)
+        #expect(record.asrText == "raw")
+        #expect(record.enhancedText == "polished")
+        #expect(record.finalText == "polished")
+        #expect(record.userCorrected == false)
+    }
+
+    @Test func historyDisabledRecordsNothing() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true, historyEnabled: false)
+        await runToPreview(h)
+
+        h.preview.simulateConfirm("final")
+        #expect(await waitUntil { h.spy.pasted == ["final"] })
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(await h.history.readRecords().isEmpty)
+    }
+
+    @Test func confirmedCorrectionInjectedIntoNextEnhancePrompt() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(
+            session: session, enhancer: enhancer,
+            enhanceEnabled: true, previewEnabled: true, historyEnabled: true
+        )
+        await runToPreview(h)
+        h.preview.simulateConfirm("fixed")
+        #expect(await waitUntil { await h.history.readRecords().count == 1 })
+
+        // The next session's prompt carries the confirmed correction.
+        await runToPreview(h, expectedShown: 2)
+        #expect(h.prompts.prompts.count == 2)
+        #expect(h.prompts.prompts[0] == "prompt-proofread")
+        #expect(h.prompts.prompts[1].hasPrefix("prompt-proofread"))
+        #expect(h.prompts.prompts[1].contains(ConversationHistory.injectionHeader))
+        #expect(h.prompts.prompts[1].contains("raw → fixed"))
+    }
+
+    @Test func historyDisabledSkipsInjection() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"))
+        let h = Harness(
+            session: session, enhancer: enhancer,
+            enhanceEnabled: true, previewEnabled: true, historyEnabled: false
+        )
+        // Pre-existing history on disk must not leak into the prompt.
+        await h.history.record(ConversationRecord(
+            timestamp: ConversationRecord.makeTimestamp(),
+            asrText: "raw", enhancedText: "x", finalText: "fixed",
+            enhanceMode: "proofread", previewEnabled: true,
+            asrModel: "apple", llmModel: "", userCorrected: true, audioDuration: 1
+        ))
+
+        await runToPreview(h)
+        #expect(h.prompts.prompts == ["prompt-proofread"])
     }
 }
 

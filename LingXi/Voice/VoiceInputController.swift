@@ -46,6 +46,7 @@ final class VoiceInputController {
     private let copyAction: (String) -> Void
     private let ensureMicrophonePermission: @Sendable () async throws -> Void
     private let frontmostAppProvider: () -> NSRunningApplication?
+    private let conversationHistory: ConversationHistory
     private let timing: VoiceInputTiming
     private let clock = ContinuousClock()
 
@@ -58,6 +59,8 @@ final class VoiceInputController {
     private var maxDurationTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var previousApp: NSRunningApplication?
+    /// Length of the most recent recording, attached to history records.
+    private var lastAudioDuration: Double = 0
 
     private var injectedPreviewPresenter: (any VoicePreviewPresenting)?
     private lazy var previewPresenter: any VoicePreviewPresenting =
@@ -108,10 +111,16 @@ final class VoiceInputController {
         let token: UUID
         let asrText: String
         var cache: [CacheKey: String] = [:]
+        /// Last text displayed in the panel, for the user-corrected check.
+        var lastShownText: String
+        /// Length of the source recording in seconds; 0 for recalled entries.
+        let audioDuration: Double
 
-        init(token: UUID = UUID(), asrText: String) {
+        init(token: UUID = UUID(), asrText: String, lastShownText: String, audioDuration: Double) {
             self.token = token
             self.asrText = asrText
+            self.lastShownText = lastShownText
+            self.audioDuration = audioDuration
         }
     }
 
@@ -142,6 +151,7 @@ final class VoiceInputController {
         previewPresenter: (any VoicePreviewPresenting)? = nil,
         hudPresenter: (any VoiceHUDPresenting)? = nil,
         frontmostAppProvider: (() -> NSRunningApplication?)? = nil,
+        conversationHistory: ConversationHistory? = nil,
         timing: VoiceInputTiming = VoiceInputTiming()
     ) {
         self.settings = settings
@@ -159,6 +169,7 @@ final class VoiceInputController {
         self.injectedPreviewPresenter = previewPresenter
         self.injectedHUDPresenter = hudPresenter
         self.frontmostAppProvider = frontmostAppProvider ?? { NSWorkspace.shared.frontmostApplication }
+        self.conversationHistory = conversationHistory ?? ConversationHistory()
         self.timing = timing
     }
 
@@ -271,7 +282,7 @@ final class VoiceInputController {
             state = .starting(context)
         case .recording(let context):
             if heldLongEnough(since: context.pressedAt) {
-                beginTranscribing(session: context.session)
+                beginTranscribing(session: context.session, pressedAt: context.pressedAt)
             } else {
                 DebugLog.log("[Voice] short press, cancelled")
                 abandonSession(context.session)
@@ -320,7 +331,7 @@ final class VoiceInputController {
         }
         if context.stopRequested {
             if heldLongEnough(since: context.pressedAt) {
-                beginTranscribing(session: session)
+                beginTranscribing(session: session, pressedAt: context.pressedAt)
             } else {
                 DebugLog.log("[Voice] short press, cancelled")
                 abandonSession(session)
@@ -393,8 +404,11 @@ final class VoiceInputController {
 
     // MARK: - Transitions
 
-    private func beginTranscribing(session: any SpeechTranscriptionSession) {
+    private func beginTranscribing(session: any SpeechTranscriptionSession, pressedAt: ContinuousClock.Instant) {
         let gen = generation
+        let held = pressedAt.duration(to: clock.now)
+        lastAudioDuration = Double(held.components.seconds)
+            + Double(held.components.attoseconds) / 1e18
         state = .transcribing(session: session)
         activityModel.phase = .transcribing
         showHUDIfEnabled()
@@ -417,8 +431,15 @@ final class VoiceInputController {
         let gen = generation
         enhanceGeneration &+= 1
         let eGen = enhanceGeneration
-        let enhancer = enhancerFactory(settings, prompt)
         let task = Task {
+            // Confirmed corrections from previous sessions are appended to
+            // the prompt; failures degrade to the bare mode prompt.
+            var fullPrompt = prompt
+            if self.settings.voiceHistoryEnabled,
+               let block = await self.conversationHistory.injectionBlock(mode: self.settings.voiceEnhanceMode) {
+                fullPrompt += "\n\n" + block
+            }
+            let enhancer = self.enhancerFactory(self.settings, fullPrompt)
             do {
                 let enhanced = try await enhancer.enhance(original)
                 self.enhanceDidFinish(gen: gen, eGen: eGen, original: original, result: .success(enhanced))
@@ -443,12 +464,24 @@ final class VoiceInputController {
             beginPreviewing(text: text, original: original)
         } else {
             pasteAction(text)
+            recordHistory(
+                asrText: original ?? text,
+                enhancedText: original != nil ? text : nil,
+                finalText: text,
+                previewEnabled: false,
+                userCorrected: false,
+                audioDuration: lastAudioDuration
+            )
             toIdle()
         }
     }
 
     private func beginPreviewing(text: String, original: String?) {
-        let session = PreviewSession(asrText: original ?? text)
+        let session = PreviewSession(
+            asrText: original ?? text,
+            lastShownText: text,
+            audioDuration: lastAudioDuration
+        )
         if original != nil {
             // Seed the cache with the initial enhancement result.
             session.cache[currentCacheKey()] = text
@@ -504,6 +537,7 @@ final class VoiceInputController {
     private func returnToPreview(_ session: PreviewSession, text: String, original: String?, isCached: Bool) {
         state = .previewing(session)
         activityModel.phase = .idle
+        session.lastShownText = text
         watchdogTask?.cancel()
         watchdogTask = nil
         previewPresenter.update(
@@ -525,6 +559,7 @@ final class VoiceInputController {
         toIdle()
 
         guard !text.isEmpty else { return }
+        recordSessionHistory(session, finalText: text)
         // Give the previous app time to become active again before ⌘V.
         Task {
             target?.activate()
@@ -542,6 +577,7 @@ final class VoiceInputController {
         toIdle()
 
         guard !text.isEmpty else { return }
+        recordSessionHistory(session, finalText: text)
         copyAction(text)
     }
 
@@ -593,9 +629,14 @@ final class VoiceInputController {
     }
 
     private func openHistoryEntry(_ entry: PreviewHistoryEntry) {
-        let session = PreviewSession(token: entry.token, asrText: entry.asrText)
-        session.cache = entry.results
         let text = entry.finalText ?? entry.results[currentCacheKey()] ?? entry.asrText
+        let session = PreviewSession(
+            token: entry.token,
+            asrText: entry.asrText,
+            lastShownText: text,
+            audioDuration: 0
+        )
+        session.cache = entry.results
         presentPreview(
             session: session,
             text: text,
@@ -634,6 +675,58 @@ final class VoiceInputController {
             return
         }
         beginEnhancing(original: session.asrText, prompt: prompt, session: session)
+    }
+
+    // MARK: - Conversation history (JSONL)
+
+    private func recordSessionHistory(_ session: PreviewSession, finalText: String) {
+        recordHistory(
+            asrText: session.asrText,
+            enhancedText: session.lastShownText != session.asrText ? session.lastShownText : nil,
+            finalText: finalText,
+            previewEnabled: true,
+            userCorrected: finalText != session.lastShownText,
+            audioDuration: session.audioDuration
+        )
+    }
+
+    private func recordHistory(
+        asrText: String,
+        enhancedText: String?,
+        finalText: String,
+        previewEnabled: Bool,
+        userCorrected: Bool,
+        audioDuration: Double
+    ) {
+        guard settings.voiceHistoryEnabled else { return }
+        let record = ConversationRecord(
+            timestamp: ConversationRecord.makeTimestamp(),
+            asrText: asrText,
+            enhancedText: enhancedText,
+            finalText: finalText,
+            enhanceMode: settings.voiceEnhanceMode,
+            previewEnabled: previewEnabled,
+            asrModel: currentASRModelDescription(),
+            llmModel: currentLLMModelDescription(),
+            userCorrected: userCorrected,
+            audioDuration: audioDuration
+        )
+        let history = conversationHistory
+        Task { await history.record(record) }
+    }
+
+    private func currentASRModelDescription() -> String {
+        switch settings.voiceASRSelection {
+        case .apple:
+            return "apple"
+        case .remote(let provider, let model):
+            return "\(provider)/\(model)"
+        }
+    }
+
+    private func currentLLMModelDescription() -> String {
+        guard let llm = currentResolvedLLM() else { return "" }
+        return "\(llm.provider)/\(llm.model)"
     }
 
     // MARK: - History bookkeeping
@@ -757,7 +850,7 @@ final class VoiceInputController {
             guard !Task.isCancelled else { return }
             guard gen == self.generation, case .recording(let context) = self.state else { return }
             DebugLog.log("[Voice] max recording duration reached")
-            self.beginTranscribing(session: context.session)
+            self.beginTranscribing(session: context.session, pressedAt: context.pressedAt)
         }
     }
 

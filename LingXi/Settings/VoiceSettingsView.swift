@@ -108,7 +108,14 @@ struct VoiceSettingsView: View {
 
             Section("Preview") {
                 Toggle("Preview before pasting", isOn: $settings.voicePreviewEnabled)
-                Text("Show the final text in a floating panel before pasting: press Return to paste (after optional edits), Escape to discard. When off, text is pasted immediately.")
+                Text("Show the final text in a floating panel before pasting: press Return to paste (after optional edits), ⌘Return to copy only, Escape to discard. ⌘1-9 switches the enhance mode. When off, text is pasted immediately.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("History") {
+                Toggle("Record conversation history", isOn: $settings.voiceHistoryEnabled)
+                Text("Log finished sessions to ~/.local/share/LingXi/conversation_history.jsonl and inject your confirmed corrections into the enhancement prompt for consistency. Stored as plain text — leave off if transcriptions may contain sensitive content.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

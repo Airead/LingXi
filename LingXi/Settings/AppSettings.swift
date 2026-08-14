@@ -170,6 +170,11 @@ final class AppSettings {
     var voiceHUDEnabled: Bool {
         didSet { guard voiceHUDEnabled != oldValue else { return }; save(.voiceHUDEnabled, value: voiceHUDEnabled) }
     }
+    /// Records finished voice sessions to a plaintext JSONL file and injects
+    /// confirmed corrections into the enhancement prompt. Off by default.
+    var voiceHistoryEnabled: Bool {
+        didSet { guard voiceHistoryEnabled != oldValue else { return }; save(.voiceHistoryEnabled, value: voiceHistoryEnabled) }
+    }
 
     // MARK: - Screenshot hotkeys (0/0 = not set)
 
@@ -294,6 +299,7 @@ final class AppSettings {
         case voiceEnhanceMode = "io.github.airead.lingxi.voiceEnhanceMode"
         case voicePreviewEnabled = "io.github.airead.lingxi.voicePreviewEnabled"
         case voiceHUDEnabled = "io.github.airead.lingxi.voiceHUDEnabled"
+        case voiceHistoryEnabled = "io.github.airead.lingxi.voiceHistoryEnabled"
         case screenshotRegionHotKeyKeyCode = "io.github.airead.lingxi.screenshotRegionHotKeyKeyCode"
         case screenshotRegionHotKeyModifiers = "io.github.airead.lingxi.screenshotRegionHotKeyModifiers"
         case screenshotFullScreenHotKeyKeyCode = "io.github.airead.lingxi.screenshotFullScreenHotKeyKeyCode"
@@ -363,6 +369,7 @@ final class AppSettings {
         voiceEnhanceMode = Self.load(defaults, .voiceEnhanceMode) ?? EnhanceMode.offModeID
         voicePreviewEnabled = Self.load(defaults, .voicePreviewEnabled) ?? false
         voiceHUDEnabled = Self.load(defaults, .voiceHUDEnabled) ?? true
+        voiceHistoryEnabled = Self.load(defaults, .voiceHistoryEnabled) ?? false
 
         screenshotRegionHotKeyKeyCode = Self.load(defaults, .screenshotRegionHotKeyKeyCode) ?? 0
         screenshotRegionHotKeyModifiers = Self.load(defaults, .screenshotRegionHotKeyModifiers) ?? 0
