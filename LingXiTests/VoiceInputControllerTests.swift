@@ -1168,6 +1168,71 @@ struct VoiceInputControllerTests {
         #expect(h.activity.phase == .idle)
     }
 
+    @Test func confirmDuringEnhancementPastesCurrentTextAndAbortsEnhance() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
+        #expect(await waitUntil { h.activity.phase == .enhancing })
+
+        // Return while the enhancement is still streaming: paste the panel's
+        // current final text (the ASR result) instead of waiting.
+        h.preview.simulateConfirm("raw")
+        #expect(await waitUntil { h.spy.pasted == ["raw"] })
+        #expect(h.activity.phase == .idle)
+        #expect(h.preview.closeCount >= 1)
+
+        // A late result from the aborted enhancement must be discarded.
+        enhancer.complete(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.spy.pasted == ["raw"])
+        #expect(h.preview.updates.isEmpty)
+        #expect(h.activity.phase == .idle)
+    }
+
+    @Test func copyDuringEnhancementCopiesCurrentTextAndAbortsEnhance() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.preview.asrResults.count == 1 })
+        #expect(await waitUntil { h.activity.phase == .enhancing })
+
+        h.preview.simulateCopy("raw")
+        #expect(await waitUntil { h.spy.copied == ["raw"] })
+        #expect(h.spy.pasted.isEmpty)
+        #expect(h.activity.phase == .idle)
+        #expect(h.preview.closeCount >= 1)
+
+        enhancer.complete(.success("late"))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(h.spy.copied == ["raw"])
+        #expect(h.preview.updates.isEmpty)
+    }
+
+    @Test func confirmWithEmptyTextDuringEnhancementPastesNothing() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(manual: true)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnUp()
+        #expect(await waitUntil { h.activity.phase == .enhancing })
+
+        h.preview.simulateConfirm("")
+        #expect(await waitUntil { h.activity.phase == .idle })
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(h.spy.pasted.isEmpty)
+    }
+
     @Test func fnDownDuringReEnhanceStartsNewSession() async {
         let session = FakeSession(finishResult: .success("raw"))
         let enhancer = FakeEnhancer(manual: true)

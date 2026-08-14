@@ -856,6 +856,28 @@ final class VoiceInputController {
                 try? await Task.sleep(for: .milliseconds(150))
                 self.pasteAction(text)
             }
+        case .enhancing(let context):
+            // Confirm while enhancing: abort the enhancement and paste the
+            // panel's current final text (the ASR result or the user's edits).
+            guard let session = context.session else { return }
+            DebugLog.log("[Voice] preview confirmed during enhancement, aborting enhance")
+            previewPresenter.close()
+            enhanceGeneration &+= 1
+            context.task.cancel()
+            recordFinalText(text, for: session)
+            let target = previousApp
+            previousApp = nil
+            toIdle()
+
+            guard !text.isEmpty else { return }
+            if !session.asrText.isEmpty {
+                recordSessionHistory(session, finalText: text)
+            }
+            Task {
+                target?.activate()
+                try? await Task.sleep(for: .milliseconds(150))
+                self.pasteAction(text)
+            }
         default:
             return
         }
@@ -897,6 +919,21 @@ final class VoiceInputController {
             guard !text.isEmpty else { return }
             if !context.session.asrText.isEmpty {
                 recordSessionHistory(context.session, finalText: text)
+            }
+            copyAction(text)
+        case .enhancing(let context):
+            guard let session = context.session else { return }
+            DebugLog.log("[Voice] preview copied during enhancement, aborting enhance")
+            previewPresenter.close()
+            enhanceGeneration &+= 1
+            context.task.cancel()
+            recordFinalText(text, for: session)
+            previousApp = nil
+            toIdle()
+
+            guard !text.isEmpty else { return }
+            if !session.asrText.isEmpty {
+                recordSessionHistory(session, finalText: text)
             }
             copyAction(text)
         default:
@@ -1466,10 +1503,23 @@ final class VoiceInputController {
         ))
     }
 
+    /// How long the target app gets to read the pasteboard after ⌘V before
+    /// the previous clipboard content is put back.
+    private static let clipboardRestoreDelay: Duration = .milliseconds(500)
+
     private static let defaultPasteAction: @MainActor (String) -> Void = { text in
+        let snapshot = PasteboardSnapshot(pasteboard: NSPasteboard.general)
         let pb = ClipboardStore.prepareTransientPasteboard(types: [.string])
         pb.setString(text, forType: .string)
         KeyboardUtils.simulatePaste()
+        let writtenChangeCount = pb.changeCount
+        Task {
+            await snapshot.restore(
+                to: pb,
+                after: clipboardRestoreDelay,
+                ifChangeCountEquals: writtenChangeCount
+            )
+        }
     }
 
     private static let defaultCopyAction: @MainActor (String) -> Void = { text in
