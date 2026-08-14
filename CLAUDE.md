@@ -40,6 +40,24 @@ All app caches are stored in `~/.cache/LingXi/`:
 
 Use `RegistryManager.cacheDirectory` as the root for all cache operations.
 
+## Release
+
+Releases are fully automated by CI (`.github/workflows/release.yml`), triggered by pushing a `v*` tag to GitHub (`origin`). CI extracts the version from the tag, sets `MARKETING_VERSION`, builds, signs, packages a DMG, and creates the GitHub Release — no manual version bump is needed.
+
+To release version `X.Y.Z`:
+
+```bash
+git push origin main       # make sure the release commits are on GitHub
+git tag vX.Y.Z             # tag the release commit
+git push origin vX.Y.Z     # triggers the Release workflow
+```
+
+Notes:
+
+- Tags must be pushed to `origin` (GitHub); the `bwga` remote is a mirror and does not trigger CI.
+- A tag containing `-` (e.g. `v0.1.0-beta.1`) is published as a prerelease.
+- Local release builds (`make build-release` / `make build-dmg`) derive the version from the latest reachable git tag.
+
 ## Reference
 
 - Review [docs/ai-swift-macos-best-practices.md](docs/ai-swift-macos-best-practices.md) for AI-assisted Swift macOS development best practices including Swift 6.2 concurrency, SwiftUI architecture, and testing strategy.
