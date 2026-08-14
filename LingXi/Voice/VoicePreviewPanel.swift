@@ -4,8 +4,10 @@
 //
 
 import AppKit
+import AVFoundation
 import Carbon.HIToolbox
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Presenting protocol (test seam)
 
@@ -90,6 +92,8 @@ private enum VoicePreviewLayout {
 final class VoicePreviewPanel: VoicePreviewPresenting {
     private var panel: KeyCapturePanel?
     private var model: VoicePreviewModel?
+    private var player: AVAudioPlayer?
+    private var playbackDelegate: PlaybackDelegate?
 
     func show(setup: VoicePreviewSetup, callbacks: VoicePreviewCallbacks) {
         close()
@@ -145,6 +149,11 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         newPanel.onCommandFlagChanged = { [weak model] held in
             model?.cmdHeld = held
         }
+        // A file dialog (or popover) steals key status; don't treat that
+        // as clicking away from the panel.
+        newPanel.shouldCancelOnResign = { [weak model] in
+            !(model?.suppressesCancelOnResign ?? false)
+        }
 
         model.onConfirmTap = confirm
         model.onCopyTap = copy
@@ -152,6 +161,8 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         model.onModeSwitch = callbacks.onModeSwitch
         model.onModelSwitch = callbacks.onModelSwitch
         model.onHistorySelect = callbacks.onHistorySelect
+        model.onPlayToggle = { [weak self] in self?.togglePlayback() }
+        model.onSaveAudio = { [weak self] in self?.saveAudio() }
 
         positionPanel(newPanel)
         newPanel.makeKeyAndOrderFront(nil)
@@ -191,6 +202,9 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
     }
 
     func close() {
+        player?.stop()
+        player = nil
+        playbackDelegate = nil
         guard let p = panel else { return }
         panel = nil
         model = nil
@@ -203,12 +217,84 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         p.orderOut(nil)
     }
 
+    // MARK: Audio playback & save
+
+    private func togglePlayback() {
+        guard let model else { return }
+        if let player, player.isPlaying {
+            player.pause()
+            model.isPlaying = false
+            return
+        }
+        if player == nil {
+            guard let data = model.audioData,
+                  let newPlayer = try? AVAudioPlayer(data: data) else {
+                DebugLog.log("[Voice] preview playback unavailable")
+                return
+            }
+            let delegate = PlaybackDelegate { [weak self] in
+                self?.model?.isPlaying = false
+            }
+            newPlayer.delegate = delegate
+            playbackDelegate = delegate
+            player = newPlayer
+        }
+        player?.play()
+        model.isPlaying = true
+    }
+
+    private func saveAudio() {
+        guard let model, let data = model.audioData else { return }
+        model.savePanelShown = true
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.wav]
+        savePanel.nameFieldStringValue =
+            "LingXi-Recording-\(Self.saveNameFormatter.string(from: Date())).wav"
+        NSApp.activate(ignoringOtherApps: true)
+        savePanel.begin { [weak self] response in
+            Task { @MainActor in
+                guard let self else { return }
+                self.model?.savePanelShown = false
+                // Restore key status so Return/Esc keep working.
+                self.panel?.makeKeyAndOrderFront(nil)
+                guard response == .OK, let url = savePanel.url else { return }
+                do {
+                    try data.write(to: url)
+                    DebugLog.log("[Voice] recording saved to \(url.path)")
+                } catch {
+                    DebugLog.log("[Voice] failed to save recording: \(error)")
+                }
+            }
+        }
+    }
+
+    private static let saveNameFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
+    }()
+
     private func positionPanel(_ panel: NSPanel) {
         guard let screen = NSScreen.main else { return }
         let sf = screen.visibleFrame
         let x = sf.midX - panel.frame.width / 2
         let y = sf.minY + VoicePreviewLayout.bottomOffset
         panel.setFrameOrigin(NSPoint(x: x, y: max(sf.minY, min(y, sf.maxY - panel.frame.height))))
+    }
+}
+
+/// Hops the finish callback back to the MainActor; AVAudioPlayer calls its
+/// delegate on an arbitrary thread.
+private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate, @unchecked Sendable {
+    private let onFinish: @MainActor () -> Void
+
+    init(onFinish: @escaping @MainActor () -> Void) {
+        self.onFinish = onFinish
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        let onFinish = onFinish
+        Task { @MainActor in onFinish() }
     }
 }
 
@@ -222,6 +308,9 @@ private final class KeyCapturePanel: NSPanel {
     var onEscape: (() -> Void)?
     var onDigit: ((Int) -> Void)?
     var onCommandFlagChanged: ((Bool) -> Void)?
+    /// Returning false suppresses the cancel-on-resign behavior while a
+    /// child window (save dialog, popover) holds key status.
+    var shouldCancelOnResign: (() -> Bool)?
 
     override var canBecomeKey: Bool { true }
 
@@ -256,7 +345,7 @@ private final class KeyCapturePanel: NSPanel {
     override func resignKey() {
         super.resignKey()
         // Clicking elsewhere dismisses the preview (discard).
-        if isVisible {
+        if isVisible, shouldCancelOnResign?() ?? true {
             onEscape?()
         }
     }
@@ -275,6 +364,15 @@ final class VoicePreviewModel {
     var asrFailureMessage: String?
     /// The recording as WAV, once converted; nil for recalled entries.
     var audioData: Data?
+    var isPlaying = false
+    /// A modal save dialog is open; suppresses cancel-on-resign.
+    var savePanelShown = false
+
+    /// Key status is expected to move to a child window (save dialog,
+    /// popover); losing it must not dismiss the panel.
+    var suppressesCancelOnResign: Bool {
+        savePanelShown
+    }
     var enhancedText: String?
     var finalText: String
     /// Set when the user types in the final area; blocks programmatic
@@ -293,6 +391,8 @@ final class VoicePreviewModel {
     var onModeSwitch: (@MainActor (String) -> Void)?
     var onModelSwitch: (@MainActor (LLMSelection) -> Void)?
     var onHistorySelect: (@MainActor (UUID) -> Void)?
+    var onPlayToggle: (@MainActor () -> Void)?
+    var onSaveAudio: (@MainActor () -> Void)?
     var onConfirmTap: (@MainActor () -> Void)?
     var onCopyTap: (@MainActor () -> Void)?
     var onCancelTap: (@MainActor () -> Void)?
@@ -410,6 +510,26 @@ private struct VoicePreviewContent: View {
                 Text(model.asrInfo)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                if model.audioData != nil {
+                    Button {
+                        model.onPlayToggle?()
+                    } label: {
+                        Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Play recording")
+                    Button {
+                        model.onSaveAudio?()
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Save recording as WAV")
+                }
                 Spacer()
             }
             readOnlyContainer {

@@ -180,4 +180,25 @@ struct VoicePreviewModelTests {
         let model = VoicePreviewModel(setup: makeTranscribingSetup(currentModeID: EnhanceMode.offModeID))
         #expect(model.enhanceState == .off)
     }
+
+    // MARK: - Retained audio (playback / save)
+
+    @Test func audioControlsHiddenUntilWavArrives() {
+        let model = VoicePreviewModel(setup: makeSetup())
+        // audioData drives the play/save buttons' visibility.
+        #expect(model.audioData == nil)
+        #expect(model.isPlaying == false)
+
+        model.audioData = Data("RIFF-fake".utf8)
+        #expect(model.audioData != nil)
+    }
+
+    @Test func savePanelSuppressesCancelOnResign() {
+        let model = VoicePreviewModel(setup: makeSetup())
+        #expect(model.suppressesCancelOnResign == false)
+        model.savePanelShown = true
+        #expect(model.suppressesCancelOnResign == true)
+        model.savePanelShown = false
+        #expect(model.suppressesCancelOnResign == false)
+    }
 }
