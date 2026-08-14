@@ -498,23 +498,45 @@ final class VoiceInputController {
     // MARK: - Defaults
 
     private static let defaultTranscriberFactory: @MainActor (AppSettings) -> any SpeechTranscriber = { settings in
-        switch settings.voiceBackend {
+        let selection = settings.voiceASRSelection
+        switch VoiceProviderResolver.resolveASR(selection: selection, providers: settings.voiceASRProviders) {
         case .apple:
-            AppleSpeechTranscriber()
-        case .whisperAPI:
-            WhisperAPITranscriber(configuration: WhisperAPIConfiguration(
-                baseURL: settings.voiceAPIBaseURL,
-                apiKey: settings.voiceAPIKey,
-                model: settings.voiceAPIModel
+            if selection != .apple {
+                DebugLog.log("[Voice] ASR selection unresolved, falling back to Apple Speech")
+            }
+            return AppleSpeechTranscriber()
+        case .remote(let provider, let model):
+            if selection != .remote(provider: provider.name, model: model) {
+                DebugLog.log("[Voice] ASR model unresolved, using \(provider.name)/\(model)")
+            }
+            return WhisperAPITranscriber(configuration: WhisperAPIConfiguration(
+                baseURL: provider.baseURL,
+                apiKey: provider.apiKey,
+                model: model
             ))
         }
     }
 
     private static let defaultEnhancerFactory: @MainActor (AppSettings) -> any TextEnhancer = { settings in
-        LLMTextEnhancer(configuration: LLMEnhancerConfiguration(
-            baseURL: settings.voiceEnhanceBaseURL,
-            apiKey: settings.voiceEnhanceAPIKey,
-            model: settings.voiceEnhanceModel,
+        let selection = settings.voiceLLMSelection
+        guard let resolved = VoiceProviderResolver.resolveLLM(
+            selection: selection, providers: settings.voiceLLMProviders
+        ) else {
+            // No provider configured: the enhancer will fail and the
+            // controller degrades to the raw transcription.
+            DebugLog.log("[Voice] no LLM provider configured for enhancement")
+            return LLMTextEnhancer(configuration: LLMEnhancerConfiguration(
+                baseURL: "", apiKey: "", model: "",
+                systemPrompt: settings.voiceEnhancePrompt
+            ))
+        }
+        if resolved.provider.name != selection.provider || resolved.model != selection.model {
+            DebugLog.log("[Voice] LLM selection unresolved, using \(resolved.provider.name)/\(resolved.model)")
+        }
+        return LLMTextEnhancer(configuration: LLMEnhancerConfiguration(
+            baseURL: resolved.provider.baseURL,
+            apiKey: resolved.provider.apiKey,
+            model: resolved.model,
             systemPrompt: settings.voiceEnhancePrompt
         ))
     }

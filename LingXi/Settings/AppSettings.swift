@@ -142,44 +142,23 @@ final class AppSettings {
     var voiceInputEnabled: Bool {
         didSet { guard voiceInputEnabled != oldValue else { return }; save(.voiceInputEnabled, value: voiceInputEnabled) }
     }
-    var voiceBackend: VoiceBackend {
-        didSet { guard voiceBackend != oldValue else { return }; save(.voiceBackend, value: voiceBackend.rawValue) }
+    var voiceASRProviders: [VoiceProvider] {
+        didSet { guard voiceASRProviders != oldValue else { return }; saveCodable(.voiceASRProviders, value: voiceASRProviders) }
     }
-    var voiceAPIBaseURL: String {
-        didSet {
-            if voiceAPIBaseURL.trimmingCharacters(in: .whitespaces).isEmpty { voiceAPIBaseURL = oldValue; return }
-            guard voiceAPIBaseURL != oldValue else { return }; save(.voiceAPIBaseURL, value: voiceAPIBaseURL)
-        }
+    var voiceASRSelection: ASRSelection {
+        didSet { guard voiceASRSelection != oldValue else { return }; saveCodable(.voiceASRSelection, value: voiceASRSelection) }
     }
-    var voiceAPIKey: String {
-        didSet { guard voiceAPIKey != oldValue else { return }; save(.voiceAPIKey, value: voiceAPIKey) }
+    var voiceLLMProviders: [VoiceProvider] {
+        didSet { guard voiceLLMProviders != oldValue else { return }; saveCodable(.voiceLLMProviders, value: voiceLLMProviders) }
     }
-    var voiceAPIModel: String {
-        didSet {
-            if voiceAPIModel.trimmingCharacters(in: .whitespaces).isEmpty { voiceAPIModel = oldValue; return }
-            guard voiceAPIModel != oldValue else { return }; save(.voiceAPIModel, value: voiceAPIModel)
-        }
+    var voiceLLMSelection: LLMSelection {
+        didSet { guard voiceLLMSelection != oldValue else { return }; saveCodable(.voiceLLMSelection, value: voiceLLMSelection) }
     }
     var voiceLanguage: VoiceLanguage {
         didSet { guard voiceLanguage != oldValue else { return }; save(.voiceLanguage, value: voiceLanguage.rawValue) }
     }
     var voiceEnhanceEnabled: Bool {
         didSet { guard voiceEnhanceEnabled != oldValue else { return }; save(.voiceEnhanceEnabled, value: voiceEnhanceEnabled) }
-    }
-    var voiceEnhanceBaseURL: String {
-        didSet {
-            if voiceEnhanceBaseURL.trimmingCharacters(in: .whitespaces).isEmpty { voiceEnhanceBaseURL = oldValue; return }
-            guard voiceEnhanceBaseURL != oldValue else { return }; save(.voiceEnhanceBaseURL, value: voiceEnhanceBaseURL)
-        }
-    }
-    var voiceEnhanceAPIKey: String {
-        didSet { guard voiceEnhanceAPIKey != oldValue else { return }; save(.voiceEnhanceAPIKey, value: voiceEnhanceAPIKey) }
-    }
-    var voiceEnhanceModel: String {
-        didSet {
-            if voiceEnhanceModel.trimmingCharacters(in: .whitespaces).isEmpty { voiceEnhanceModel = oldValue; return }
-            guard voiceEnhanceModel != oldValue else { return }; save(.voiceEnhanceModel, value: voiceEnhanceModel)
-        }
     }
     var voiceEnhancePrompt: String {
         didSet {
@@ -298,10 +277,15 @@ final class AppSettings {
         case disabledPlugins = "io.github.airead.lingxi.disabledPlugins"
         case leaderKeyEnabled = "io.github.airead.lingxi.leaderKeyEnabled"
         case voiceInputEnabled = "io.github.airead.lingxi.voiceInputEnabled"
+        // Legacy single-endpoint keys, read once by migrateVoiceProviders().
         case voiceBackend = "io.github.airead.lingxi.voiceBackend"
         case voiceAPIBaseURL = "io.github.airead.lingxi.voiceAPIBaseURL"
         case voiceAPIKey = "io.github.airead.lingxi.voiceAPIKey"
         case voiceAPIModel = "io.github.airead.lingxi.voiceAPIModel"
+        case voiceASRProviders = "io.github.airead.lingxi.voiceASRProviders"
+        case voiceASRSelection = "io.github.airead.lingxi.voiceASRSelection"
+        case voiceLLMProviders = "io.github.airead.lingxi.voiceLLMProviders"
+        case voiceLLMSelection = "io.github.airead.lingxi.voiceLLMSelection"
         case voiceLanguage = "io.github.airead.lingxi.voiceLanguage"
         case voiceEnhanceEnabled = "io.github.airead.lingxi.voiceEnhanceEnabled"
         case voiceEnhanceBaseURL = "io.github.airead.lingxi.voiceEnhanceBaseURL"
@@ -368,17 +352,14 @@ final class AppSettings {
         leaderKeyEnabled = Self.load(defaults, .leaderKeyEnabled) ?? true
 
         voiceInputEnabled = Self.load(defaults, .voiceInputEnabled) ?? false
-        let voiceBackendRaw: String? = Self.load(defaults, .voiceBackend)
-        voiceBackend = voiceBackendRaw.flatMap { VoiceBackend(rawValue: $0) } ?? .apple
-        voiceAPIBaseURL = Self.load(defaults, .voiceAPIBaseURL) ?? "https://api.openai.com/v1"
-        voiceAPIKey = Self.load(defaults, .voiceAPIKey) ?? ""
-        voiceAPIModel = Self.load(defaults, .voiceAPIModel) ?? "whisper-1"
+        Self.migrateVoiceProvidersIfNeeded(defaults)
+        voiceASRProviders = Self.loadCodable(defaults, .voiceASRProviders) ?? []
+        voiceASRSelection = Self.loadCodable(defaults, .voiceASRSelection) ?? .apple
+        voiceLLMProviders = Self.loadCodable(defaults, .voiceLLMProviders) ?? []
+        voiceLLMSelection = Self.loadCodable(defaults, .voiceLLMSelection) ?? LLMSelection(provider: "", model: "")
         let voiceLanguageRaw: String? = Self.load(defaults, .voiceLanguage)
         voiceLanguage = voiceLanguageRaw.flatMap { VoiceLanguage(rawValue: $0) } ?? .auto
         voiceEnhanceEnabled = Self.load(defaults, .voiceEnhanceEnabled) ?? false
-        voiceEnhanceBaseURL = Self.load(defaults, .voiceEnhanceBaseURL) ?? "http://localhost:11434/v1"
-        voiceEnhanceAPIKey = Self.load(defaults, .voiceEnhanceAPIKey) ?? ""
-        voiceEnhanceModel = Self.load(defaults, .voiceEnhanceModel) ?? "qwen3"
         voiceEnhancePrompt = Self.load(defaults, .voiceEnhancePrompt) ?? LLMEnhancerConfiguration.defaultSystemPrompt
         voicePreviewEnabled = Self.load(defaults, .voicePreviewEnabled) ?? false
         voiceHUDEnabled = Self.load(defaults, .voiceHUDEnabled) ?? true
@@ -400,6 +381,81 @@ final class AppSettings {
 
     private static func load<T>(_ defaults: UserDefaults, _ key: Key) -> T? {
         defaults.object(forKey: key.rawValue) as? T
+    }
+
+    private func saveCodable<T: Encodable>(_ key: Key, value: T) {
+        do {
+            defaults.set(try JSONEncoder().encode(value), forKey: key.rawValue)
+        } catch {
+            DebugLog.log("[Settings] failed to encode \(key.rawValue): \(error)")
+        }
+    }
+
+    /// Decoding failure (corrupt or incompatible data) falls back to nil so
+    /// callers substitute the default instead of crashing or wiping settings.
+    private static func loadCodable<T: Decodable>(_ defaults: UserDefaults, _ key: Key) -> T? {
+        guard let data = defaults.object(forKey: key.rawValue) as? Data else { return nil }
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            DebugLog.log("[Settings] failed to decode \(key.rawValue), using default: \(error)")
+            return nil
+        }
+    }
+
+    // MARK: - Voice provider migration
+
+    /// One-shot migration from the Phase 2 single-endpoint keys to provider
+    /// lists. Runs only while the new selection key is absent; always writes
+    /// it so the migration never repeats.
+    private static func migrateVoiceProvidersIfNeeded(_ defaults: UserDefaults) {
+        guard defaults.object(forKey: Key.voiceASRSelection.rawValue) == nil else { return }
+
+        func write<T: Encodable>(_ key: Key, _ value: T) {
+            if let data = try? JSONEncoder().encode(value) {
+                defaults.set(data, forKey: key.rawValue)
+            }
+        }
+
+        // ASR: only carry over a provider the user actually configured.
+        let hadASRConfig = defaults.object(forKey: Key.voiceAPIBaseURL.rawValue) != nil
+            || defaults.object(forKey: Key.voiceAPIKey.rawValue) != nil
+            || defaults.object(forKey: Key.voiceAPIModel.rawValue) != nil
+            || defaults.object(forKey: Key.voiceBackend.rawValue) != nil
+        var asrSelection = ASRSelection.apple
+        if hadASRConfig {
+            let model = defaults.string(forKey: Key.voiceAPIModel.rawValue) ?? "whisper-1"
+            let provider = VoiceProvider(
+                name: "default",
+                baseURL: defaults.string(forKey: Key.voiceAPIBaseURL.rawValue) ?? "https://api.openai.com/v1",
+                apiKey: defaults.string(forKey: Key.voiceAPIKey.rawValue) ?? "",
+                models: [model]
+            )
+            write(.voiceASRProviders, [provider])
+            if defaults.string(forKey: Key.voiceBackend.rawValue) == VoiceBackend.whisperAPI.rawValue {
+                asrSelection = .remote(provider: provider.name, model: model)
+            }
+            DebugLog.log("[Settings] migrated legacy ASR endpoint to provider list")
+        }
+        write(.voiceASRSelection, asrSelection)
+
+        // LLM: same treatment for the enhancement endpoint.
+        let hadLLMConfig = defaults.object(forKey: Key.voiceEnhanceBaseURL.rawValue) != nil
+            || defaults.object(forKey: Key.voiceEnhanceAPIKey.rawValue) != nil
+            || defaults.object(forKey: Key.voiceEnhanceModel.rawValue) != nil
+            || (defaults.object(forKey: Key.voiceEnhanceEnabled.rawValue) as? Bool) == true
+        if hadLLMConfig {
+            let model = defaults.string(forKey: Key.voiceEnhanceModel.rawValue) ?? "qwen3"
+            let provider = VoiceProvider(
+                name: "default",
+                baseURL: defaults.string(forKey: Key.voiceEnhanceBaseURL.rawValue) ?? "http://localhost:11434/v1",
+                apiKey: defaults.string(forKey: Key.voiceEnhanceAPIKey.rawValue) ?? "",
+                models: [model]
+            )
+            write(.voiceLLMProviders, [provider])
+            write(.voiceLLMSelection, LLMSelection(provider: provider.name, model: model))
+            DebugLog.log("[Settings] migrated legacy LLM endpoint to provider list")
+        }
     }
 
     // MARK: - Launch at login

@@ -814,15 +814,12 @@ struct VoiceSettingsPersistenceTests {
     @Test func defaults() {
         let settings = AppSettings(defaults: makeDefaults())
         #expect(settings.voiceInputEnabled == false)
-        #expect(settings.voiceBackend == .apple)
-        #expect(settings.voiceAPIBaseURL == "https://api.openai.com/v1")
-        #expect(settings.voiceAPIKey == "")
-        #expect(settings.voiceAPIModel == "whisper-1")
+        #expect(settings.voiceASRProviders.isEmpty)
+        #expect(settings.voiceASRSelection == .apple)
+        #expect(settings.voiceLLMProviders.isEmpty)
+        #expect(settings.voiceLLMSelection == LLMSelection(provider: "", model: ""))
         #expect(settings.voiceLanguage == .auto)
         #expect(settings.voiceEnhanceEnabled == false)
-        #expect(settings.voiceEnhanceBaseURL == "http://localhost:11434/v1")
-        #expect(settings.voiceEnhanceAPIKey == "")
-        #expect(settings.voiceEnhanceModel == "qwen3")
         #expect(settings.voiceEnhancePrompt == LLMEnhancerConfiguration.defaultSystemPrompt)
         #expect(settings.voicePreviewEnabled == false)
         #expect(settings.voiceHUDEnabled == true)
@@ -830,47 +827,56 @@ struct VoiceSettingsPersistenceTests {
 
     @Test func roundTrip() {
         let defaults = makeDefaults()
+        let groq = VoiceProvider(
+            name: "groq", baseURL: "https://api.groq.com/openai/v1",
+            apiKey: "gsk_test", models: ["whisper-large-v3", "whisper-large-v3-turbo"]
+        )
+        let ollama = VoiceProvider(
+            name: "ollama", baseURL: "http://localhost:11434/v1",
+            apiKey: "", models: ["qwen3"]
+        )
+
         let settings1 = AppSettings(defaults: defaults)
         settings1.voiceInputEnabled = true
-        settings1.voiceBackend = .whisperAPI
-        settings1.voiceAPIBaseURL = "https://api.groq.com/openai/v1"
-        settings1.voiceAPIKey = "gsk_test"
-        settings1.voiceAPIModel = "whisper-large-v3"
+        settings1.voiceASRProviders = [groq]
+        settings1.voiceASRSelection = .remote(provider: "groq", model: "whisper-large-v3")
+        settings1.voiceLLMProviders = [ollama]
+        settings1.voiceLLMSelection = LLMSelection(provider: "ollama", model: "qwen3")
         settings1.voiceLanguage = .chinese
         settings1.voiceEnhanceEnabled = true
-        settings1.voiceEnhanceBaseURL = "https://api.example.com/v1"
-        settings1.voiceEnhanceAPIKey = "sk-enhance"
-        settings1.voiceEnhanceModel = "gpt-test"
         settings1.voiceEnhancePrompt = "custom prompt"
         settings1.voicePreviewEnabled = true
         settings1.voiceHUDEnabled = false
 
         let settings2 = AppSettings(defaults: defaults)
         #expect(settings2.voiceInputEnabled == true)
-        #expect(settings2.voiceBackend == .whisperAPI)
-        #expect(settings2.voiceAPIBaseURL == "https://api.groq.com/openai/v1")
-        #expect(settings2.voiceAPIKey == "gsk_test")
-        #expect(settings2.voiceAPIModel == "whisper-large-v3")
+        #expect(settings2.voiceASRProviders == [groq])
+        #expect(settings2.voiceASRSelection == .remote(provider: "groq", model: "whisper-large-v3"))
+        #expect(settings2.voiceLLMProviders == [ollama])
+        #expect(settings2.voiceLLMSelection == LLMSelection(provider: "ollama", model: "qwen3"))
         #expect(settings2.voiceLanguage == .chinese)
         #expect(settings2.voiceEnhanceEnabled == true)
-        #expect(settings2.voiceEnhanceBaseURL == "https://api.example.com/v1")
-        #expect(settings2.voiceEnhanceAPIKey == "sk-enhance")
-        #expect(settings2.voiceEnhanceModel == "gpt-test")
         #expect(settings2.voiceEnhancePrompt == "custom prompt")
         #expect(settings2.voicePreviewEnabled == true)
         #expect(settings2.voiceHUDEnabled == false)
     }
 
-    @Test func rejectsEmptyBaseURLAndModel() {
+    @Test func corruptProviderDataFallsBackToDefaults() {
+        let defaults = makeDefaults()
+        defaults.set(Data("not json".utf8), forKey: "io.github.airead.lingxi.voiceASRProviders")
+        defaults.set(Data("not json".utf8), forKey: "io.github.airead.lingxi.voiceASRSelection")
+        defaults.set(Data("not json".utf8), forKey: "io.github.airead.lingxi.voiceLLMProviders")
+        defaults.set(Data("not json".utf8), forKey: "io.github.airead.lingxi.voiceLLMSelection")
+
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.voiceASRProviders.isEmpty)
+        #expect(settings.voiceASRSelection == .apple)
+        #expect(settings.voiceLLMProviders.isEmpty)
+        #expect(settings.voiceLLMSelection == LLMSelection(provider: "", model: ""))
+    }
+
+    @Test func rejectsEmptyPrompt() {
         let settings = AppSettings(defaults: makeDefaults())
-        settings.voiceAPIBaseURL = "  "
-        #expect(settings.voiceAPIBaseURL == "https://api.openai.com/v1")
-        settings.voiceAPIModel = ""
-        #expect(settings.voiceAPIModel == "whisper-1")
-        settings.voiceEnhanceBaseURL = " "
-        #expect(settings.voiceEnhanceBaseURL == "http://localhost:11434/v1")
-        settings.voiceEnhanceModel = ""
-        #expect(settings.voiceEnhanceModel == "qwen3")
         settings.voiceEnhancePrompt = "  "
         #expect(settings.voiceEnhancePrompt == LLMEnhancerConfiguration.defaultSystemPrompt)
     }
