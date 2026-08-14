@@ -1202,6 +1202,72 @@ struct VoiceInputControllerTests {
         #expect(h.preview.shown.count == 1)
     }
 
+    // MARK: - Fn+Z preview history
+
+    @Test func fnPreviewHistoryCancelsRecordingAndRecallsLastPreview() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+        await runToPreview(h)
+        h.preview.simulateConfirm("final text")
+        #expect(await waitUntil { h.spy.pasted == ["final text"] })
+
+        // New Fn hold, then Z: the recording is dropped, the last preview
+        // reopens with its confirmed text.
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 2 })
+        h.controller.fnPreviewHistory()
+        #expect(await waitUntil { h.preview.shown.count == 2 })
+        #expect(h.preview.shown[1].text == "final text")
+        #expect(session.cancelled)
+
+        // The recalled preview is fully functional: confirm pastes again.
+        h.preview.simulateConfirm("again")
+        #expect(await waitUntil { h.spy.pasted == ["final text", "again"] })
+    }
+
+    @Test func fnPreviewHistoryWithoutHistoryJustCancelsRecording() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        h.controller.fnDown()
+        #expect(await waitUntil { await h.recorder.startCount == 1 })
+        h.controller.fnPreviewHistory()
+
+        #expect(await waitUntil { h.activity.phase == .idle })
+        #expect(h.preview.shown.isEmpty)
+        #expect(session.cancelled)
+        #expect(h.spy.pasted.isEmpty)
+    }
+
+    @Test func fnPreviewHistoryDuringStartupCancelsPendingSession() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, gated: true, previewEnabled: true)
+
+        h.controller.fnDown()
+        h.controller.fnPreviewHistory()
+        #expect(h.activity.phase == .idle)
+
+        // The late engine start takes the stale path and cleans up.
+        h.transcriber.releaseGate()
+        #expect(await waitUntil { session.cancelled })
+        #expect(h.spy.pasted.isEmpty)
+    }
+
+    @Test func fnPreviewHistoryIgnoredWhileIdleOrPreviewing() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let h = Harness(session: session, previewEnabled: true)
+
+        // Idle: nothing happens.
+        h.controller.fnPreviewHistory()
+        #expect(h.preview.shown.isEmpty)
+
+        // Previewing: the open panel keeps its state.
+        await runToPreview(h)
+        h.controller.fnPreviewHistory()
+        #expect(h.preview.shown.count == 1)
+        #expect(h.preview.closeCount == 0)
+    }
+
     // MARK: - Retained audio
 
     @Test func previewSessionRetainsAudioAndPanelReceivesWav() async {
@@ -1981,6 +2047,27 @@ struct FnKeyTransitionTests {
     @Test func ignoresOtherKeycodes() {
         // Arrow keys etc. carry the Fn flag bit but are not the Fn key.
         #expect(VoiceKeyMonitor.fnTransition(keycode: 123, flags: fnFlag, wasDown: false) == nil)
+    }
+}
+
+// MARK: - Fn keyDown action pure function
+
+struct FnKeyDownActionTests {
+
+    @Test func fnZRequestsPreviewHistory() {
+        #expect(VoiceKeyMonitor.keyDownAction(
+            keycode: VoiceKeyMonitor.zKeycode, fnIsDown: true
+        ) == .previewHistory)
+    }
+
+    @Test func otherKeysInterruptTheHold() {
+        // e.g. Fn+arrow: Fn is a combo modifier, not push-to-talk.
+        #expect(VoiceKeyMonitor.keyDownAction(keycode: 123, fnIsDown: true) == .interrupt)
+    }
+
+    @Test func noActionWithoutFnHeld() {
+        #expect(VoiceKeyMonitor.keyDownAction(keycode: VoiceKeyMonitor.zKeycode, fnIsDown: false) == nil)
+        #expect(VoiceKeyMonitor.keyDownAction(keycode: 123, fnIsDown: false) == nil)
     }
 }
 

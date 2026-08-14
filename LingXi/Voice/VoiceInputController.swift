@@ -360,6 +360,26 @@ final class VoiceInputController {
         }
     }
 
+    /// Fn+Z (WenZi-style): cancel the in-flight recording and recall the
+    /// most recent preview from the in-memory history.
+    func fnPreviewHistory() {
+        switch state {
+        case .starting:
+            // Engine startup in flight; bump the generation so engineDidStart
+            // takes the stale path and cleans up the session it created.
+            DebugLog.log("[Voice] fn+z during startup, cancelling")
+            generation &+= 1
+            toIdle()
+        case .recording(let context):
+            DebugLog.log("[Voice] fn+z cancels recording, recalling last preview")
+            abandonSession(context.session)
+        case .idle, .transcribing, .enhancing, .previewing, .reTranscribing:
+            return
+        }
+        guard let entry = previewHistory.first else { return }
+        openHistoryEntry(entry)
+    }
+
     // MARK: - Async completions (gen-guarded)
 
     private func engineDidStart(gen: UInt64, session: (any SpeechTranscriptionSession)?, error: Error?) {
@@ -1460,4 +1480,5 @@ extension VoiceInputController: VoiceKeyMonitorDelegate {
     func voiceKeyDidPress() { fnDown() }
     func voiceKeyDidRelease() { fnUp() }
     func voiceKeyWasInterrupted() { fnInterrupted() }
+    func voiceKeyPreviewHistoryRequested() { fnPreviewHistory() }
 }

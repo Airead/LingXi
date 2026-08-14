@@ -15,6 +15,16 @@ protocol VoiceKeyMonitorDelegate: AnyObject {
     /// Another key was pressed while Fn was held — Fn is being used as a
     /// combo modifier (e.g. Fn+arrow), not as push-to-talk.
     func voiceKeyWasInterrupted()
+    /// Z was pressed while Fn was held (WenZi-style preview-history
+    /// shortcut). The Z key event is swallowed by the tap.
+    func voiceKeyPreviewHistoryRequested()
+}
+
+/// What a keyDown during an Fn hold means, extracted as a pure function
+/// for testability.
+enum FnKeyDownAction: Equatable {
+    case interrupt
+    case previewHistory
 }
 
 /// Fn key state transition, extracted as a pure function for testability.
@@ -23,8 +33,9 @@ enum FnKeyTransition: Equatable {
     case released
 }
 
-/// Monitors the Fn key globally via a listen-only CGEventTap to drive
-/// push-to-talk voice input. Never modifies the event stream.
+/// Monitors the Fn key globally via a CGEventTap to drive push-to-talk
+/// voice input. The tap is active only to swallow the Fn+Z preview-history
+/// shortcut; every other event passes through unmodified.
 ///
 /// Runs on a dedicated background thread with its own CFRunLoop.
 ///
@@ -42,6 +53,7 @@ final class VoiceKeyMonitor: @unchecked Sendable {
     private let lock = NSLock()
     private var fnIsDown = false
     private var interruptedThisHold = false
+    private var previewRequestedThisHold = false
     private var eventTap: CFMachPort?
     private var runLoop: CFRunLoop?
 
@@ -54,7 +66,15 @@ final class VoiceKeyMonitor: @unchecked Sendable {
     // MARK: - Fn transition (pure)
 
     nonisolated static let fnKeycode: UInt16 = 63
+    /// kVK_ANSI_Z
+    nonisolated static let zKeycode: UInt16 = 6
     nonisolated static let fnFlagMask = CGEventFlags.maskSecondaryFn.rawValue
+
+    /// Meaning of a keyDown while Fn is held; nil when Fn is not held.
+    nonisolated static func keyDownAction(keycode: UInt16, fnIsDown: Bool) -> FnKeyDownAction? {
+        guard fnIsDown else { return nil }
+        return keycode == zKeycode ? .previewHistory : .interrupt
+    }
 
     /// Only flagsChanged events for the physical Fn key (keycode 63) are
     /// considered; other keys (e.g. arrow keys) also carry the Fn flag bit.
@@ -93,6 +113,7 @@ final class VoiceKeyMonitor: @unchecked Sendable {
             thread = nil
             fnIsDown = false
             interruptedThisHold = false
+            previewRequestedThisHold = false
             return (t, l, had, down)
         }
 
@@ -125,7 +146,7 @@ final class VoiceKeyMonitor: @unchecked Sendable {
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            options: .defaultTap,
             eventsOfInterest: mask,
             callback: VoiceKeyMonitor.eventTapCallback,
             userInfo: retained.toOpaque()
@@ -156,26 +177,30 @@ final class VoiceKeyMonitor: @unchecked Sendable {
     private static let eventTapCallback: CGEventTapCallBack = { _, type, event, userInfo in
         guard let userInfo else { return Unmanaged.passUnretained(event) }
         let monitor = Unmanaged<VoiceKeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-        monitor.handleEvent(type: type, event: event)
-        // Listen-only tap: the return value is ignored, never swallow.
-        return Unmanaged.passUnretained(event)
+        let swallow = monitor.handleEvent(type: type, event: event)
+        return swallow ? nil : Unmanaged.passUnretained(event)
     }
 
     // MARK: - Event handling
 
-    private func handleEvent(type: CGEventType, event: CGEvent) {
+    /// Returns true when the event must be swallowed (Fn+Z only).
+    private func handleEvent(type: CGEventType, event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             handleTapDisabled()
-            return
+            return false
         }
 
         let keycode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags.rawValue
 
         switch type {
-        case .flagsChanged: handleFlagsChanged(keycode: keycode, flags: flags)
-        case .keyDown:      handleKeyDown()
-        default:            break
+        case .flagsChanged:
+            handleFlagsChanged(keycode: keycode, flags: flags)
+            return false
+        case .keyDown:
+            return handleKeyDown(keycode: keycode)
+        default:
+            return false
         }
     }
 
@@ -188,6 +213,7 @@ final class VoiceKeyMonitor: @unchecked Sendable {
             case .pressed:
                 fnIsDown = true
                 interruptedThisHold = false
+                previewRequestedThisHold = false
             case .released:
                 fnIsDown = false
             }
@@ -208,17 +234,39 @@ final class VoiceKeyMonitor: @unchecked Sendable {
         }
     }
 
-    private func handleKeyDown() {
-        let interrupted: Bool = lock.withLock {
-            guard fnIsDown, !interruptedThisHold else { return false }
-            interruptedThisHold = true
-            return true
+    /// Returns true when the key event must be swallowed. Fn+Z requests the
+    /// preview history (autorepeats stay swallowed but notify only once per
+    /// hold); any other key marks Fn as a combo modifier.
+    private func handleKeyDown(keycode: UInt16) -> Bool {
+        var swallow = false
+        let action: FnKeyDownAction? = lock.withLock {
+            guard let action = Self.keyDownAction(keycode: keycode, fnIsDown: fnIsDown) else {
+                return nil
+            }
+            switch action {
+            case .previewHistory:
+                swallow = true
+                guard !previewRequestedThisHold else { return nil }
+                previewRequestedThisHold = true
+            case .interrupt:
+                guard !interruptedThisHold else { return nil }
+                interruptedThisHold = true
+            }
+            return action
         }
-        if interrupted {
+        switch action {
+        case .previewHistory:
+            DispatchQueue.main.async { [weak self] in
+                self?.delegate?.voiceKeyPreviewHistoryRequested()
+            }
+        case .interrupt:
             DispatchQueue.main.async { [weak self] in
                 self?.delegate?.voiceKeyWasInterrupted()
             }
+        case nil:
+            break
         }
+        return swallow
     }
 
     /// macOS disables event taps that are too slow (or on user input for
