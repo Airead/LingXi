@@ -237,14 +237,6 @@ final class VoiceInputController {
         }
     }
 
-    /// Reopens the most recent preview from the in-memory history
-    /// (menu bar entry). Only valid while idle.
-    func showLastPreview() {
-        guard case .idle = state, let entry = previewHistory.first else { return }
-        generation &+= 1
-        openHistoryEntry(entry)
-    }
-
     // MARK: - Events (all MainActor)
 
     func fnDown() {

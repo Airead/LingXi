@@ -26,7 +26,7 @@ struct LingXiApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarMenuView(voiceController: { [holder = panelHolder] in holder.voiceInputController })
+            MenuBarMenuView()
         } label: {
             MenuBarIconView(activity: voiceActivity)
         }
@@ -183,19 +183,10 @@ private struct MenuBarIconView: View {
 }
 
 private struct MenuBarMenuView: View {
-    var voiceController: @MainActor () -> VoiceInputController?
     private let updater = UpdateController.shared
-
-    init(voiceController: @escaping @MainActor () -> VoiceInputController?) {
-        self.voiceController = voiceController
-    }
 
     var body: some View {
         updateMenuItems
-        Button("Show Last Preview") {
-            voiceController()?.showLastPreview()
-        }
-        Divider()
         Button("About LingXi") {
             AppDelegate.showAbout()
         }

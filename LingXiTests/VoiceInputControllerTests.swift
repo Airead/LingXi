@@ -1048,6 +1048,14 @@ struct VoiceInputControllerTests {
         #expect(await waitUntil { h.preview.asrResults.count == expectedShown })
     }
 
+    /// Recalls the most recent preview-history entry through the Fn+Z path
+    /// (hold Fn, then Z) — the only remaining recall entry point.
+    private func recallLastPreview(_ h: Harness) async {
+        h.controller.fnDown()
+        #expect(await waitUntil { h.activity.phase == .recording })
+        h.controller.fnPreviewHistory()
+    }
+
     @Test func commandReturnCopiesWithoutPasting() async {
         let session = FakeSession(finishResult: .success("raw"))
         let h = Harness(session: session, previewEnabled: true)
@@ -1262,36 +1270,6 @@ struct VoiceInputControllerTests {
         #expect(h.preview.setups.last?.history.count == 10)
     }
 
-    @Test func showLastPreviewReopensMostRecentEntry() async {
-        let session = FakeSession(finishResult: .success("raw"))
-        let h = Harness(session: session, previewEnabled: true)
-        await runToPreview(h)
-        h.preview.simulateConfirm("final text")
-        #expect(await waitUntil { h.spy.pasted == ["final text"] })
-
-        h.controller.showLastPreview()
-        #expect(h.preview.shown.count == 2)
-        #expect(h.preview.shown[1].text == "final text")
-
-        // The recalled preview is fully functional: confirm pastes again.
-        h.preview.simulateConfirm("again")
-        #expect(await waitUntil { h.spy.pasted == ["final text", "again"] })
-    }
-
-    @Test func showLastPreviewIgnoredWithoutHistoryOrWhileBusy() async {
-        let session = FakeSession(finishResult: .success("raw"))
-        let h = Harness(session: session, previewEnabled: true)
-
-        // No history yet: nothing happens.
-        h.controller.showLastPreview()
-        #expect(h.preview.shown.isEmpty)
-
-        // While previewing: not idle, so the call is ignored.
-        await runToPreview(h)
-        h.controller.showLastPreview()
-        #expect(h.preview.shown.count == 1)
-    }
-
     // MARK: - Fn+Z preview history
 
     @Test func fnPreviewHistoryCancelsRecordingAndRecallsLastPreview() async {
@@ -1405,8 +1383,8 @@ struct VoiceInputControllerTests {
         #expect(await waitUntil { h.activity.phase == .idle })
 
         // The recalled panel must not receive the previous recording's audio.
-        h.controller.showLastPreview()
-        #expect(h.preview.shown.count == 2)
+        await recallLastPreview(h)
+        #expect(await waitUntil { h.preview.shown.count == 2 })
         try? await Task.sleep(for: .milliseconds(50))
         #expect(h.preview.audioAvailable.count == 1)
     }
@@ -1626,8 +1604,8 @@ struct VoiceInputControllerTests {
         #expect(await waitUntil { h.spy.pasted == ["re-transcribed"] })
 
         // The recovered session became a preview-history entry.
-        h.controller.showLastPreview()
-        #expect(h.preview.shown.count == 2)
+        await recallLastPreview(h)
+        #expect(await waitUntil { h.preview.shown.count == 2 })
         #expect(h.preview.shown[1].text == "re-transcribed")
     }
 
@@ -1639,8 +1617,8 @@ struct VoiceInputControllerTests {
         h.preview.simulateConfirm("raw")
         #expect(await waitUntil { h.activity.phase == .idle })
 
-        h.controller.showLastPreview()
-        #expect(h.preview.shown.count == 2)
+        await recallLastPreview(h)
+        #expect(await waitUntil { h.preview.shown.count == 2 })
         h.preview.simulateASRSwitch(remoteASR)
         try? await Task.sleep(for: .milliseconds(20))
         #expect(h.settings.voiceASRSelection == remoteASR)
@@ -1772,8 +1750,8 @@ struct VoiceInputControllerTests {
         h.preview.simulateConfirm("polished")
         #expect(await waitUntil { h.activity.phase == .idle })
 
-        h.controller.showLastPreview()
-        #expect(h.preview.shown.count == 2)
+        await recallLastPreview(h)
+        #expect(await waitUntil { h.preview.shown.count == 2 })
         #expect(h.preview.tokenUsages.last == Self.sampleUsage)
     }
 
