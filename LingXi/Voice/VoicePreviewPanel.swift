@@ -96,7 +96,6 @@ private enum VoicePreviewLayout {
     /// Height without the mode segment and enhance section.
     static let compactHeight: CGFloat = 280
     static let cornerRadius: CGFloat = 12
-    static let bottomOffset: CGFloat = 140
     static let readOnlyAreaHeight: CGFloat = 74
 }
 
@@ -313,7 +312,7 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
         guard let screen = NSScreen.main else { return }
         let sf = screen.visibleFrame
         let x = sf.midX - panel.frame.width / 2
-        let y = sf.minY + VoicePreviewLayout.bottomOffset
+        let y = sf.midY - panel.frame.height / 2
         panel.setFrameOrigin(NSPoint(x: x, y: max(sf.minY, min(y, sf.maxY - panel.frame.height))))
     }
 }
