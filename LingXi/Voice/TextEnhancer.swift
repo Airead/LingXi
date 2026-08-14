@@ -5,18 +5,49 @@
 
 import Foundation
 
+// MARK: - Token usage
+
+/// LLM token usage of one enhancement request, shown in the preview panel.
+nonisolated struct TokenUsage: Sendable, Equatable {
+    var promptTokens: Int
+    var completionTokens: Int
+    var totalTokens: Int
+    /// Cached input tokens; 0 when the provider does not report cache info.
+    var cacheReadTokens: Int
+
+    /// WenZi-style suffix, e.g. "Tokens: 1,234 (↑80+487 ↓89)" — on a cache
+    /// hit the up part is "cached+uncached". Nil when nothing was reported.
+    var displayText: String? {
+        guard totalTokens > 0 else { return nil }
+        let up = cacheReadTokens > 0
+            ? "↑\(Self.formatted(cacheReadTokens))+\(Self.formatted(promptTokens - cacheReadTokens))"
+            : "↑\(Self.formatted(promptTokens))"
+        return "Tokens: \(Self.formatted(totalTokens)) (\(up) ↓\(Self.formatted(completionTokens)))"
+    }
+
+    private static func formatted(_ n: Int) -> String {
+        n.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US")))
+    }
+}
+
+/// Result of one enhancement request.
+nonisolated struct EnhanceOutcome: Sendable, Equatable {
+    var text: String
+    var usage: TokenUsage?
+}
+
 // MARK: - Protocol
 
 /// Post-processes a transcription (proofread, punctuate, remove fillers).
 protocol TextEnhancer: Sendable {
-    func enhance(_ text: String) async throws -> String
+    func enhance(_ text: String) async throws -> EnhanceOutcome
 
     /// Streaming variant: `onDelta` receives each text chunk as it arrives
-    /// (on an arbitrary thread); the returned value is the complete text.
+    /// (on an arbitrary thread); the returned value is the complete result.
     func enhanceStream(
         _ text: String,
         onDelta: @escaping @Sendable (String) -> Void
-    ) async throws -> String
+    ) async throws -> EnhanceOutcome
 }
 
 extension TextEnhancer {
@@ -24,7 +55,7 @@ extension TextEnhancer {
     func enhanceStream(
         _ text: String,
         onDelta: @escaping @Sendable (String) -> Void
-    ) async throws -> String {
+    ) async throws -> EnhanceOutcome {
         try await enhance(text)
     }
 }
@@ -91,11 +122,17 @@ nonisolated enum EnhanceRequestBuilder {
             let role: String
             let content: String
         }
+        struct StreamOptions: Encodable {
+            let include_usage: Bool
+        }
         struct Body: Encodable {
             let model: String
             let messages: [Message]
             let temperature: Double
             let stream: Bool
+            /// Asks for a final usage chunk; omitted for non-streaming
+            /// requests (usage comes in the response body there).
+            let stream_options: StreamOptions?
         }
         request.httpBody = try JSONEncoder().encode(Body(
             model: configuration.model,
@@ -104,24 +141,54 @@ nonisolated enum EnhanceRequestBuilder {
                 Message(role: "user", content: text),
             ],
             temperature: configuration.temperature,
-            stream: stream
+            stream: stream,
+            stream_options: stream ? StreamOptions(include_usage: true) : nil
         ))
         return request
+    }
+
+    /// OpenAI-compatible usage payload; the cache-read count tries
+    /// `prompt_tokens_details.cached_tokens` (OpenAI standard) first, then
+    /// `prompt_cache_hit_tokens` (DeepSeek).
+    private struct UsagePayload: Decodable {
+        struct Details: Decodable { let cached_tokens: Int? }
+        let prompt_tokens: Int?
+        let completion_tokens: Int?
+        let total_tokens: Int?
+        let prompt_tokens_details: Details?
+        let prompt_cache_hit_tokens: Int?
+
+        var tokenUsage: TokenUsage {
+            let cached: Int = if let c = prompt_tokens_details?.cached_tokens, c > 0 {
+                c
+            } else {
+                prompt_cache_hit_tokens ?? 0
+            }
+            return TokenUsage(
+                promptTokens: prompt_tokens ?? 0,
+                completionTokens: completion_tokens ?? 0,
+                totalTokens: total_tokens ?? 0,
+                cacheReadTokens: cached
+            )
+        }
     }
 
     /// One server-sent event line of a streaming chat completion.
     enum StreamEvent: Equatable {
         case delta(String)
+        /// The dedicated usage chunk requested via `include_usage`.
+        case usage(TokenUsage)
         case done
     }
 
-    /// Parses a single SSE line; nil for empty lines, comments, role-only
-    /// chunks and anything else without text content.
-    static func parseStreamLine(_ line: String) -> StreamEvent? {
+    /// Parses a single SSE line into its events; empty for comments,
+    /// role-only chunks and anything else without content or usage. A chunk
+    /// carrying both text and usage yields both events.
+    static func parseStreamLine(_ line: String) -> [StreamEvent] {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.hasPrefix("data:") else { return nil }
+        guard trimmed.hasPrefix("data:") else { return [] }
         let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-        if payload == "[DONE]" { return .done }
+        if payload == "[DONE]" { return [.done] }
 
         struct Chunk: Decodable {
             struct Choice: Decodable {
@@ -129,28 +196,38 @@ nonisolated enum EnhanceRequestBuilder {
                 let delta: Delta?
             }
             let choices: [Choice]?
+            let usage: UsagePayload?
         }
-        guard let decoded = try? JSONDecoder().decode(Chunk.self, from: Data(payload.utf8)),
-              let content = decoded.choices?.first?.delta?.content,
-              !content.isEmpty else {
-            return nil
+        guard let decoded = try? JSONDecoder().decode(Chunk.self, from: Data(payload.utf8)) else {
+            return []
         }
-        return .delta(content)
+        var events: [StreamEvent] = []
+        if let content = decoded.choices?.first?.delta?.content, !content.isEmpty {
+            events.append(.delta(content))
+        }
+        if let usage = decoded.usage?.tokenUsage, usage.totalTokens > 0 {
+            events.append(.usage(usage))
+        }
+        return events
     }
 
-    static func parseResponse(_ data: Data) throws -> String {
+    static func parseResponse(_ data: Data) throws -> EnhanceOutcome {
         struct Response: Decodable {
             struct Choice: Decodable {
                 struct Message: Decodable { let content: String }
                 let message: Message
             }
             let choices: [Choice]
+            let usage: UsagePayload?
         }
         guard let decoded = try? JSONDecoder().decode(Response.self, from: data),
               let content = decoded.choices.first?.message.content else {
             throw TranscriptionError.invalidResponse
         }
-        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return EnhanceOutcome(
+            text: content.trimmingCharacters(in: .whitespacesAndNewlines),
+            usage: decoded.usage?.tokenUsage
+        )
     }
 }
 
@@ -173,7 +250,7 @@ final class LLMTextEnhancer: TextEnhancer, @unchecked Sendable {
     }
 
     @concurrent
-    func enhance(_ text: String) async throws -> String {
+    func enhance(_ text: String) async throws -> EnhanceOutcome {
         let request = try EnhanceRequestBuilder.makeRequest(configuration: configuration, text: text)
         let (data, response) = try await urlSession.data(for: request)
         try Task.checkCancellation()
@@ -192,7 +269,7 @@ final class LLMTextEnhancer: TextEnhancer, @unchecked Sendable {
     func enhanceStream(
         _ text: String,
         onDelta: @escaping @Sendable (String) -> Void
-    ) async throws -> String {
+    ) async throws -> EnhanceOutcome {
         let request = try EnhanceRequestBuilder.makeRequest(
             configuration: configuration, text: text, stream: true
         )
@@ -214,18 +291,27 @@ final class LLMTextEnhancer: TextEnhancer, @unchecked Sendable {
         }
 
         var full = ""
+        var usage: TokenUsage?
         for try await line in bytes.lines {
             try Task.checkCancellation()
-            switch EnhanceRequestBuilder.parseStreamLine(line) {
-            case .delta(let delta):
-                full += delta
-                onDelta(delta)
-            case .done:
-                return full.trimmingCharacters(in: .whitespacesAndNewlines)
-            case nil:
-                continue
+            for event in EnhanceRequestBuilder.parseStreamLine(line) {
+                switch event {
+                case .delta(let delta):
+                    full += delta
+                    onDelta(delta)
+                case .usage(let reported):
+                    usage = reported
+                case .done:
+                    return EnhanceOutcome(
+                        text: full.trimmingCharacters(in: .whitespacesAndNewlines),
+                        usage: usage
+                    )
+                }
             }
         }
-        return full.trimmingCharacters(in: .whitespacesAndNewlines)
+        return EnhanceOutcome(
+            text: full.trimmingCharacters(in: .whitespacesAndNewlines),
+            usage: usage
+        )
     }
 }

@@ -84,6 +84,8 @@ protocol VoicePreviewPresenting: AnyObject {
     /// The full system prompt behind the displayed enhancement (mode prompt
     /// plus history injection); nil hides/disables the prompt viewer.
     func setSystemPrompt(_ prompt: String?)
+    /// Token usage of the displayed enhancement; nil hides the token info.
+    func setTokenUsage(_ usage: TokenUsage?)
     func close()
 }
 
@@ -233,6 +235,10 @@ final class VoicePreviewPanel: VoicePreviewPresenting {
 
     func setSystemPrompt(_ prompt: String?) {
         model?.systemPrompt = prompt
+    }
+
+    func setTokenUsage(_ usage: TokenUsage?) {
+        model?.tokenUsage = usage
     }
 
     func close() {
@@ -403,6 +409,8 @@ final class VoicePreviewModel {
     var savePanelShown = false
     /// System prompt of the displayed enhancement; nil disables the viewer.
     var systemPrompt: String?
+    /// Token usage of the displayed enhancement; nil hides the info line.
+    var tokenUsage: TokenUsage?
     var promptPopoverShown = false
 
     /// Key status is expected to move to a child window (save dialog,
@@ -505,6 +513,7 @@ final class VoicePreviewModel {
     /// build up from scratch (WenZi-style live display).
     func beginEnhancingDisplay() {
         enhancedText = nil
+        tokenUsage = nil
         isEnhancing = true
     }
 
@@ -712,6 +721,11 @@ private struct VoicePreviewContent: View {
                     .onDisappear { model.onPromptPopoverDismissed?() }
                 }
                 enhanceStateView
+                if let tokens = model.tokenUsage?.displayText {
+                    Text(tokens)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
             }
             readOnlyContainer(background: Color.accentColor.opacity(0.06)) {

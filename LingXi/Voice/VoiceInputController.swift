@@ -138,6 +138,9 @@ final class VoiceInputController {
         /// The full system prompt (mode prompt + history injection) each
         /// combination was enhanced with, for the panel's prompt viewer.
         var prompts: [CacheKey: String] = [:]
+        /// Token usage reported for each combination, for the panel's
+        /// token info line.
+        var usages: [CacheKey: TokenUsage] = [:]
         /// Last text displayed in the panel, for the user-corrected check.
         var lastShownText: String
         /// Length of the source recording in seconds; 0 for recalled entries.
@@ -167,6 +170,7 @@ final class VoiceInputController {
         let token: UUID
         var asrText: String
         var results: [PreviewSession.CacheKey: String]
+        var usages: [PreviewSession.CacheKey: TokenUsage]
         var finalText: String?
         let date: Date
     }
@@ -513,18 +517,19 @@ final class VoiceInputController {
         previewPresenter.appendEnhanceDelta(delta)
     }
 
-    private func enhanceDidFinish(gen: UInt64, eGen: UInt64, original: String, result: Result<String, Error>) {
+    private func enhanceDidFinish(gen: UInt64, eGen: UInt64, original: String, result: Result<EnhanceOutcome, Error>) {
         guard gen == generation, eGen == enhanceGeneration,
               case .enhancing(let context) = state else { return }
 
         switch result {
-        case .success(let text) where !text.isEmpty:
-            DebugLog.log("[Voice] enhanced \(text.count) characters")
+        case .success(let outcome) where !outcome.text.isEmpty:
+            DebugLog.log("[Voice] enhanced \(outcome.text.count) characters")
             if let session = context.session {
-                session.cache[currentCacheKey()] = text
-                returnToPreview(session, text: text, original: session.asrText, isCached: false)
+                session.cache[currentCacheKey()] = outcome.text
+                session.usages[currentCacheKey()] = outcome.usage
+                returnToPreview(session, text: outcome.text, original: session.asrText, isCached: false)
             } else {
-                deliver(text, original: original)
+                deliver(outcome.text, original: original)
             }
         case .success:
             DebugLog.log("[Voice] empty enhancement, falling back to transcription")
@@ -612,7 +617,7 @@ final class VoiceInputController {
             }
             let enhancer = self.enhancerFactory(self.settings, fullPrompt)
             do {
-                let enhanced: String
+                let enhanced: EnhanceOutcome
                 if session != nil {
                     // Panel path: stream chunks into the enhance area.
                     enhanced = try await enhancer.enhanceStream(original) { delta in
@@ -678,6 +683,7 @@ final class VoiceInputController {
             token: session.token,
             asrText: session.asrText,
             results: session.cache,
+            usages: session.usages,
             finalText: nil,
             date: Date()
         ), at: 0)
@@ -786,8 +792,10 @@ final class VoiceInputController {
             currentLLM: currentResolvedLLM(),
             isCached: isCached
         )
-        // Degrades and mode-off carry no enhancement, hence no prompt.
+        // Degrades and mode-off carry no enhancement, hence no prompt
+        // and no token info.
         previewPresenter.setSystemPrompt(original != nil ? session.prompts[currentCacheKey()] : nil)
+        previewPresenter.setTokenUsage(original != nil ? session.usages[currentCacheKey()] : nil)
         syncHistoryResults(session)
     }
 
@@ -1007,6 +1015,7 @@ final class VoiceInputController {
             // The source text changed: every cached enhancement is stale.
             session.cache.removeAll()
             session.prompts.removeAll()
+            session.usages.removeAll()
             session.lastShownText = text
             if previewHistory.contains(where: { $0.token == session.token }) {
                 syncHistoryASRText(session)
@@ -1081,12 +1090,16 @@ final class VoiceInputController {
             audioDuration: 0
         )
         session.cache = entry.results
+        session.usages = entry.usages
         presentPreview(
             session: session,
             text: text,
             original: text == entry.asrText ? nil : entry.asrText,
             isCached: false
         )
+        if text != entry.asrText {
+            previewPresenter.setTokenUsage(session.usages[currentCacheKey()])
+        }
     }
 
     /// The active preview session, cancelling an in-flight re-enhancement or
@@ -1205,18 +1218,21 @@ final class VoiceInputController {
     private func syncHistoryResults(_ session: PreviewSession) {
         guard let index = previewHistory.firstIndex(where: { $0.token == session.token }) else { return }
         previewHistory[index].results = session.cache
+        previewHistory[index].usages = session.usages
     }
 
     private func syncHistoryASRText(_ session: PreviewSession) {
         guard let index = previewHistory.firstIndex(where: { $0.token == session.token }) else { return }
         previewHistory[index].asrText = session.asrText
         previewHistory[index].results = session.cache
+        previewHistory[index].usages = session.usages
     }
 
     private func recordFinalText(_ text: String, for session: PreviewSession) {
         guard let index = previewHistory.firstIndex(where: { $0.token == session.token }) else { return }
         previewHistory[index].finalText = text
         previewHistory[index].results = session.cache
+        previewHistory[index].usages = session.usages
     }
 
     private static let historyTimeFormatter: DateFormatter = {

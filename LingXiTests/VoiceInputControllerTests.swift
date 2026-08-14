@@ -180,20 +180,28 @@ private final class FakeEnhancer: TextEnhancer, @unchecked Sendable {
     private let manual: Bool
     /// Consumed in call order; the last one repeats.
     private let results: [Result<String, Error>]
+    /// Attached to every successful outcome.
+    private let usage: TokenUsage?
 
-    init(result: Result<String, Error> = .success("enhanced"), manual: Bool = false) {
+    init(result: Result<String, Error> = .success("enhanced"), manual: Bool = false, usage: TokenUsage? = nil) {
         self.results = [result]
         self.manual = manual
+        self.usage = usage
     }
 
-    init(results: [Result<String, Error>]) {
+    init(results: [Result<String, Error>], usage: TokenUsage? = nil) {
         self.results = results
         self.manual = false
+        self.usage = usage
     }
 
     var requests: [String] { lock.withLock { _requests } }
 
-    func enhance(_ text: String) async throws -> String {
+    func enhance(_ text: String) async throws -> EnhanceOutcome {
+        EnhanceOutcome(text: try await enhanceText(text), usage: usage)
+    }
+
+    private func enhanceText(_ text: String) async throws -> String {
         let result: Result<String, Error> = lock.withLock {
             _requests.append(text)
             return results[min(_requests.count - 1, results.count - 1)]
@@ -238,20 +246,32 @@ private final class StreamingFakeEnhancer: TextEnhancer, @unchecked Sendable {
     private var storedResult: Result<String, Error>?
     private var _requests: [String] = []
 
+    /// Attached to every successful outcome; settable before finishStream.
+    private var _usage: TokenUsage?
+
     var requests: [String] { lock.withLock { _requests } }
 
-    func enhance(_ text: String) async throws -> String {
+    func setUsage(_ usage: TokenUsage?) {
+        lock.withLock { _usage = usage }
+    }
+
+    func enhance(_ text: String) async throws -> EnhanceOutcome {
         try await enhanceStream(text) { _ in }
     }
 
     func enhanceStream(
         _ text: String,
         onDelta: @escaping @Sendable (String) -> Void
-    ) async throws -> String {
+    ) async throws -> EnhanceOutcome {
         lock.withLock {
             _requests.append(text)
             self.onDelta = onDelta
         }
+        let text = try await streamText()
+        return EnhanceOutcome(text: text, usage: lock.withLock { _usage })
+    }
+
+    private func streamText() async throws -> String {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { newContinuation in
                 let immediate: Result<String, Error>? = lock.withLock {
@@ -349,6 +369,7 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
     private(set) var enhancingStates: [Bool] = []
     private(set) var deltas: [String] = []
     private(set) var systemPrompts: [String?] = []
+    private(set) var tokenUsages: [TokenUsage?] = []
     private(set) var closeCount = 0
     private var callbacks: VoicePreviewCallbacks?
 
@@ -394,6 +415,10 @@ private final class FakePreviewPresenter: VoicePreviewPresenting {
 
     func setSystemPrompt(_ prompt: String?) {
         systemPrompts.append(prompt)
+    }
+
+    func setTokenUsage(_ usage: TokenUsage?) {
+        tokenUsages.append(usage)
     }
 
     func close() {
@@ -1613,6 +1638,78 @@ struct VoiceInputControllerTests {
         h.preview.simulateModeSwitch(EnhanceMode.offModeID)
         #expect(await waitUntil { h.preview.updates.count == 2 })
         #expect(h.preview.systemPrompts.last == .some(nil))
+    }
+
+    // MARK: - Token usage
+
+    private static let sampleUsage = TokenUsage(
+        promptTokens: 100, completionTokens: 20, totalTokens: 120, cacheReadTokens: 30
+    )
+
+    @Test func panelReceivesTokenUsageAndCacheHitRestoresIt() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(
+            results: [.success("polished-1"), .success("polished-2")],
+            usage: Self.sampleUsage
+        )
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.tokenUsages.last == Self.sampleUsage)
+
+        h.preview.simulateModeSwitch("translate_en")
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+
+        // Back to the cached combination: its usage is restored without
+        // another enhancer call.
+        h.preview.simulateModeSwitch("proofread")
+        #expect(await waitUntil { h.preview.updates.count == 3 })
+        #expect(h.preview.updates[2].isCached == true)
+        #expect(h.preview.tokenUsages.last == Self.sampleUsage)
+        #expect(enhancer.requests.count == 2)
+    }
+
+    @Test func modeOffClearsTokenUsage() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"), usage: Self.sampleUsage)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        #expect(h.preview.tokenUsages.last == Self.sampleUsage)
+
+        h.preview.simulateModeSwitch(EnhanceMode.offModeID)
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+        #expect(h.preview.tokenUsages.last == .some(nil))
+    }
+
+    @Test func enhanceFailureClearsTokenUsage() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(
+            results: [.success("polished"), .failure(TranscriptionError.invalidResponse)],
+            usage: Self.sampleUsage
+        )
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+
+        // The failed re-enhancement reverts to the ASR text: no token info.
+        h.preview.simulateModeSwitch("translate_en")
+        #expect(await waitUntil { h.preview.updates.count == 2 })
+        #expect(h.preview.tokenUsages.last == .some(nil))
+    }
+
+    @Test func recalledHistoryEntryRestoresTokenUsage() async {
+        let session = FakeSession(finishResult: .success("raw"))
+        let enhancer = FakeEnhancer(result: .success("polished"), usage: Self.sampleUsage)
+        let h = Harness(session: session, enhancer: enhancer, enhanceEnabled: true, previewEnabled: true)
+        await runToPreview(h)
+        #expect(await waitUntil { h.preview.updates.count == 1 })
+        h.preview.simulateConfirm("polished")
+        #expect(await waitUntil { h.activity.phase == .idle })
+
+        h.controller.showLastPreview()
+        #expect(h.preview.shown.count == 2)
+        #expect(h.preview.tokenUsages.last == Self.sampleUsage)
     }
 
     // MARK: - Streaming enhancement
